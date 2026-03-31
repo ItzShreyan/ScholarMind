@@ -86,3 +86,4 @@ supabase/
 
 This structure keeps AI orchestration, persistence, auth, and UI concerns isolated and scalable.
 # ScholarMind
+# ScholarMind
