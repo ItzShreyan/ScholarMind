@@ -84,17 +84,68 @@ function titleCase(value: string) {
   return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function cleanLine(line: string) {
+  return line.replace(/\|/g, "/").trim();
+}
+
+function markdownBullets(lines: string[]) {
+  return lines.map((line) => `- ${cleanLine(line)}`).join("\n");
+}
+
+function markdownTable(headers: string[], rows: string[][]) {
+  const header = `| ${headers.join(" | ")} |`;
+  const divider = `| ${headers.map(() => "---").join(" | ")} |`;
+  const body = rows.map((row) => `| ${row.map((cell) => cleanLine(cell)).join(" | ")} |`).join("\n");
+  return [header, divider, body].filter(Boolean).join("\n");
+}
+
+function wantsTable(prompt: string) {
+  return /\btable|compare|comparison|differences|pros|cons|formula|grid\b/i.test(prompt);
+}
+
+function wantsDiagram(prompt: string) {
+  return /\bdiagram|map|flow|process|timeline|relationship|connections?\b/i.test(prompt);
+}
+
+function looksLikeMaths(prompt: string, context?: string) {
+  return /\bmath|maths|equation|formula|algebra|geometry|trigonometry|calculus|probability|graph|angle|triangle\b/i.test(
+    `${prompt} ${context || ""}`
+  );
+}
+
+function rootTopic(input: AIRequest, keywords: string[]) {
+  const promptWords = normalizeText(input.prompt).split(/\s+/).filter(Boolean);
+  return titleCase((keywords[0] || promptWords.slice(0, 3).join(" ") || "Topic").replace(/[^a-z0-9 -]/gi, ""));
+}
+
+function buildMermaidMap(input: AIRequest, keywords: string[]) {
+  const topic = rootTopic(input, keywords);
+  const nodes = keywords.slice(0, 5);
+
+  if (!nodes.length) {
+    return "";
+  }
+
+  return [
+    "```mermaid",
+    "graph TD",
+    `  root[${topic}]`,
+    ...nodes.map((keyword, index) => `  root --> node${index}[${titleCase(keyword)}]`),
+    "```"
+  ].join("\n");
+}
+
 function summaryResponse(input: AIRequest) {
   const lines = pickLines(input, 5);
-  return `Local fallback response\n\n${lines.map((line) => `- ${line}`).join("\n")}`;
+  return ["## Fast Summary", "", markdownBullets(lines)].join("\n");
 }
 
 function flashcardResponse(input: AIRequest) {
   const lines = pickLines(input, 6);
   const keywords = keywordsFrom(input, 6);
   const cards = lines.map((line, index) => ({
-    front: keywords[index] ? `What should you remember about ${titleCase(keywords[index])}?` : `Flashcard ${index + 1}`,
-    back: line
+    front: keywords[index] ? titleCase(keywords[index]) : `Flashcard ${index + 1}`,
+    back: cleanLine(line).slice(0, 160)
   }));
 
   return JSON.stringify(cards, null, 2);
@@ -111,10 +162,10 @@ function quizResponse(input: AIRequest) {
       .map(titleCase);
 
     return {
-      question: `Which key idea best matches this revision point: "${line}"?`,
-      options: [answer, ...distractors].slice(0, 4),
-      answer,
-      explanation: line
+      question: `Which idea best matches this point: "${cleanLine(line).slice(0, 120)}"?`,
+      options: [answer, ...distractors].slice(0, 4).map((option, optionIndex) => `${String.fromCharCode(65 + optionIndex)}. ${option}`),
+      answer: `A. ${answer}`,
+      explanation: cleanLine(line).slice(0, 140)
     };
   });
 
@@ -122,62 +173,150 @@ function quizResponse(input: AIRequest) {
 }
 
 function chatResponse(input: AIRequest) {
-  const lines = pickLines(input, 4);
-  const keywordList = keywordsFrom(input, 4);
+  const lines = pickLines(input, 5);
+  const keywords = keywordsFrom(input, 5);
 
-  if (input.context) {
+  if (!input.context) {
     return [
-      "Local fallback response",
+      "## Add a source first",
       "",
-      `Question: ${input.prompt}`,
+      "Upload notes, PDFs, screenshots, or a verified web source so the chat can answer from real study material.",
       "",
-      "Most relevant points from your material:",
-      ...lines.map((line) => `- ${line}`),
-      keywordList.length ? `\nFocus topics: ${keywordList.map(titleCase).join(", ")}.` : ""
-    ]
-      .filter(Boolean)
-      .join("\n");
+      "## When sources are added",
+      "",
+      "- I can explain the topic in simpler language.",
+      "- I can turn it into a revision table or a concept diagram.",
+      "- I can help with maths steps, formula comparisons, and recall checks."
+    ].join("\n");
+  }
+
+  if (wantsDiagram(input.prompt)) {
+    return [
+      "## Visual breakdown",
+      "",
+      buildMermaidMap(input, keywords),
+      "",
+      "## What to notice",
+      "",
+      markdownBullets(lines)
+    ].join("\n");
+  }
+
+  if (wantsTable(input.prompt) || looksLikeMaths(input.prompt, input.context)) {
+    const rows = lines.slice(0, 4).map((line, index) => [
+      titleCase(keywords[index] || `Point ${index + 1}`),
+      line,
+      `Recall ${index + 1}`
+    ]);
+
+    return [
+      "## Clear answer",
+      "",
+      lines[0] || "Use the source material to anchor the explanation.",
+      "",
+      "## Revision table",
+      "",
+      markdownTable(["Idea", "From your material", "What to check"], rows),
+      "",
+      "## Maths-style check",
+      "",
+      "1. Identify the rule, formula, or definition being tested.",
+      "2. Match it to an example from the source.",
+      "3. Say why the method works before moving on."
+    ].join("\n");
   }
 
   return [
-    "Local fallback response",
+    "## Direct answer",
     "",
-    `Question: ${input.prompt}`,
+    lines[0] || "Use the uploaded material as the anchor for this answer.",
     "",
-    "I do not have uploaded study material yet, so answer quality will improve once notes or PDFs are added.",
-    "For now, break the topic into core ideas, definitions, examples, and likely exam questions."
+    "## Key points",
+    "",
+    markdownBullets(lines.slice(1).length ? lines.slice(1) : lines),
+    keywords.length
+      ? ["", "## Focus terms", "", markdownBullets(keywords.map(titleCase))].join("\n")
+      : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function examResponse(input: AIRequest) {
+  const keywords = keywordsFrom(input, 6);
+  const lines = pickLines(input, 6);
+  const title = titleCase(
+    normalizeText(input.prompt).replace(/^generate\s+/i, "").split(/\s+/).slice(0, 6).join(" ") || "Study Mock Exam"
+  );
+
+  return [
+    `# ${title}`,
+    "",
+    "## Instructions",
+    "",
+    "- Answer every question.",
+    "- Use the uploaded material as your main evidence base.",
+    "- Show method clearly where the question expects explanation or maths reasoning.",
+    "",
+    "## Section A",
+    "",
+    ...lines.slice(0, 3).map((line, index) => `${index + 1}. ${line} (4 marks)`),
+    "",
+    "## Section B",
+    "",
+    ...keywords.slice(0, 3).map((keyword, index) => `${index + 4}. Explain ${titleCase(keyword)} in depth and apply it to a fresh example. (6 marks)`),
+    "",
+    "## Mark Scheme Snapshot",
+    "",
+    markdownTable(
+      ["Question", "What earns marks"],
+      lines.slice(0, 4).map((line, index) => [`Q${index + 1}`, line])
+    )
   ].join("\n");
 }
 
 function conceptResponse(input: AIRequest) {
-  const keywords = keywordsFrom(input, 8);
-  const lines = pickLines(input, Math.max(4, keywords.length));
+  const keywords = keywordsFrom(input, 6);
+  const lines = pickLines(input, Math.max(4, keywords.length || 4));
 
   return [
-    "Local fallback response",
+    "## Concept map",
     "",
-    ...keywords.map((keyword, index) => `- ${titleCase(keyword)}: ${lines[index] || "Review this concept in your material."}`)
+    buildMermaidMap(input, keywords),
+    "",
+    "## Anchor ideas",
+    "",
+    markdownTable(
+      ["Concept", "Why it matters"],
+      lines.slice(0, 5).map((line, index) => [titleCase(keywords[index] || `Concept ${index + 1}`), line])
+    )
   ].join("\n");
 }
 
 function eli10Response(input: AIRequest) {
   const lines = pickLines(input, 3);
   return [
-    "Local fallback response",
+    "## Simple explanation",
     "",
-    "Simple explanation:",
-    ...lines.map((line) => `- ${line.replace(/\butilize\b/gi, "use").replace(/\bapproximately\b/gi, "about")}`)
+    markdownBullets(lines.map((line) => line.replace(/\butilize\b/gi, "use").replace(/\bapproximately\b/gi, "about")))
   ].join("\n");
 }
 
 function hardModeResponse(input: AIRequest) {
   const keywords = keywordsFrom(input, 5);
+  const lines = pickLines(input, 5);
+
   return [
-    "Local fallback response",
+    "## Exam Trap Radar",
     "",
-    ...keywords.map(
-      (keyword, index) =>
-        `${index + 1}. Explain ${titleCase(keyword)} without memorized wording, then compare it with a closely related idea.`
+    markdownTable(
+      ["Trap", "Why students fall for it", "Correct move", "Self-check"],
+      lines.map((line, index) => [
+        titleCase(keywords[index] || `Trap ${index + 1}`),
+        line,
+        `State the accurate version of ${keywords[index] || "the idea"} in your own words.`,
+        `Can you justify ${keywords[index] || "it"} without copying the notes?`
+      ])
     )
   ].join("\n");
 }
@@ -186,10 +325,19 @@ function studyPlanResponse(input: AIRequest) {
   const keywords = keywordsFrom(input, 7);
   const fallbackTopics = keywords.length ? keywords : ["core ideas", "definitions", "examples", "practice"];
 
-  return fallbackTopics
-    .slice(0, 7)
-    .map((topic, index) => `Day ${index + 1}: Review ${titleCase(topic)}, then do a short recall check and one written explanation.`)
-    .join("\n");
+  return [
+    "## Revision plan",
+    "",
+    markdownTable(
+      ["Day", "Focus", "Task", "Check"],
+      fallbackTopics.slice(0, 7).map((topic, index) => [
+        `Day ${index + 1}`,
+        titleCase(topic),
+        `Review ${titleCase(topic)} and turn it into one spoken explanation.`,
+        "Do one quick recall check."
+      ])
+    )
+  ].join("\n");
 }
 
 function insightsResponse(input: AIRequest) {
@@ -197,13 +345,13 @@ function insightsResponse(input: AIRequest) {
   const lines = pickLines(input, 3);
 
   return [
-    "Local fallback response",
+    "## Review first",
     "",
-    "Review these first:",
-    ...keywords.map((keyword) => `- ${titleCase(keyword)}`),
+    markdownBullets(keywords.map(titleCase)),
     "",
-    "Useful next steps:",
-    ...lines.map((line) => `- ${line}`)
+    "## Next actions",
+    "",
+    markdownBullets(lines)
   ].join("\n");
 }
 
@@ -217,6 +365,8 @@ function localResponse(input: AIRequest) {
       return quizResponse(input);
     case "chat":
       return chatResponse(input);
+    case "exam":
+      return examResponse(input);
     case "concepts":
       return conceptResponse(input);
     case "eli10":

@@ -3,7 +3,9 @@
 import { DragEvent as ReactDragEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Brain,
+  ChevronLeft,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   CheckCircle2,
   Copy,
@@ -17,12 +19,15 @@ import {
   Search,
   SendHorizonal,
   Timer,
+  Trash2,
   Upload,
   WandSparkles,
   X
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { Button } from "@/components/ui/Button";
+import { defaultExamGeneratorDailyLimit } from "@/lib/ai/preview";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 import {
   defaultMaxUploadFileSizeMb,
@@ -37,6 +42,7 @@ type AIAction =
   | "summary"
   | "flashcards"
   | "quiz"
+  | "exam"
   | "insights"
   | "eli10"
   | "hard_mode"
@@ -86,21 +92,47 @@ type WebSourceItem = {
   trustLabel: string;
 };
 
+type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
+
+const sourceEngineOptions: Array<{
+  key: SourceSearchEngine;
+  label: string;
+  copy: string;
+}> = [
+  {
+    key: "scholar",
+    label: "Scholar",
+    copy: "Academic papers and trusted learning sources first."
+  },
+  {
+    key: "google",
+    label: "Google",
+    copy: "Broader web search with a source-quality warning."
+  },
+  {
+    key: "duckduckgo",
+    label: "DuckDuckGo",
+    copy: "Open-web search for quick explainers and references."
+  }
+];
+
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
   { key: "flashcards", label: "Flashcards", copy: "Turn the notes into quick active-recall prompts." },
   { key: "quiz", label: "Quiz", copy: "Generate multiple-choice questions from the uploaded sources." },
+  { key: "exam", label: "Exam Generator", copy: "Build a full GCSE, A-Level, or custom mock paper from the source stack." },
   { key: "insights", label: "Insights", copy: "Spot weak areas and decide what to review next." },
   { key: "eli10", label: "ELI10", copy: "Re-explain the source material in simple language." },
-  { key: "hard_mode", label: "Hard Mode", copy: "Push the material into tougher exam-style prompts." },
+  { key: "hard_mode", label: "Exam Trap Radar", copy: "Surface likely mistakes, hidden traps, and the corrections that matter." },
   { key: "study_plan", label: "Study Plan", copy: "Split the uploaded notes into a practical review sequence." },
-  { key: "concepts", label: "Concept Map", copy: "Pull out the ideas that should anchor the study session." }
+  { key: "concepts", label: "Concept Map", copy: "Pull out the ideas, links, tables, or diagrams that anchor the session." }
 ];
 
 const toolTones: Record<AIAction, string> = {
   summary: "border-[rgba(57,208,255,0.22)] bg-[rgba(57,208,255,0.1)]",
   flashcards: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.1)]",
   quiz: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.1)]",
+  exam: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.08)]",
   insights: "border-[rgba(255,125,89,0.24)] bg-[rgba(255,125,89,0.1)]",
   eli10: "border-[rgba(255,255,255,0.18)] bg-white/10",
   hard_mode: "border-[rgba(255,125,89,0.26)] bg-[rgba(255,125,89,0.12)]",
@@ -111,8 +143,8 @@ const toolTones: Record<AIAction, string> = {
 function createToolDraft(action: AIAction): ToolDraft {
   return {
     action,
-    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : 5,
-    difficulty: action === "hard_mode" ? "exam" : "foundation",
+    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 8 : 5,
+    difficulty: action === "hard_mode" || action === "exam" ? "exam" : "foundation",
     focus: ""
   };
 }
@@ -143,6 +175,146 @@ function normalizeLine(line: string) {
     .replace(/^[-*]\s+/, "")
     .replace(/^\d+\.\s+/, "")
     .trim();
+}
+
+function clipText(text: string, limit: number) {
+  return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
+}
+
+function cleanCardText(text: string) {
+  return cleanGeneratedText(text)
+    .replace(/^question:\s*/i, "")
+    .replace(/^source:\s*[^\n]+/gim, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeFlashcards(items: FlashcardItem[] | null) {
+  if (!items?.length) return null;
+
+  const normalized = items
+    .map((item, index) => {
+      const front = clipText(cleanCardText(item.front || `Flashcard ${index + 1}`), 96);
+      const back = clipText(cleanCardText(item.back || ""), 220);
+      return {
+        front: front || `Flashcard ${index + 1}`,
+        back: back || "Review the uploaded sources and try generating this flashcard again."
+      };
+    })
+    .filter((item) => item.front || item.back);
+
+  return normalized.length ? normalized : null;
+}
+
+function parseFlashcardsFallback(text: string) {
+  const cleaned = cleanGeneratedText(text);
+  const matches = Array.from(
+    cleaned.matchAll(/(?:Flashcard\s*\d+)?\s*Front:\s*([\s\S]+?)\s*Back:\s*([\s\S]+?)(?=(?:Flashcard\s*\d+)?\s*Front:|$)/gi)
+  );
+
+  if (!matches.length) return null;
+
+  return matches.map((match) => ({
+    front: cleanCardText(match[1]),
+    back: cleanCardText(match[2])
+  }));
+}
+
+function normalizeQuizAnswer(answer: string | undefined, options: string[]) {
+  const rawAnswer = cleanCardText(answer || "");
+  if (!rawAnswer) return "";
+
+  const letterMatch = rawAnswer.match(/^[A-D]/i)?.[0]?.toUpperCase();
+  if (!letterMatch) return rawAnswer;
+
+  return options.find((option) => option.trim().toUpperCase().startsWith(letterMatch)) || rawAnswer;
+}
+
+function normalizeQuizItems(items: QuizItem[] | null) {
+  if (!items?.length) return null;
+
+  const normalized = items
+    .map((item) => {
+      const options = (item.options ?? []).map((option) => cleanCardText(option)).filter(Boolean).slice(0, 4);
+      return {
+        question: clipText(cleanCardText(item.question || ""), 220),
+        options,
+        answer: normalizeQuizAnswer(item.answer, options),
+        explanation: clipText(cleanCardText(item.explanation || ""), 220)
+      };
+    })
+    .filter((item) => item.question);
+
+  return normalized.length ? normalized : null;
+}
+
+function parseQuizFallback(text: string) {
+  const cleaned = cleanGeneratedText(text);
+  const blocks = cleaned
+    .split(/\n\s*\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  const questions: QuizItem[] = [];
+  let current: QuizItem | null = null;
+
+  const pushCurrent = () => {
+    if (!current?.question) return;
+    questions.push({
+      question: current.question,
+      options: current.options?.filter(Boolean) ?? [],
+      answer: current.answer,
+      explanation: current.explanation
+    });
+  };
+
+  for (const block of blocks) {
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const hasQuestion = lines.some((line) => /^(question\s*\d+|q\d+|\d+[.)])/i.test(line));
+    if (hasQuestion) {
+      pushCurrent();
+      current = { question: "", options: [] };
+    }
+
+    for (const line of lines) {
+      if (!current) {
+        current = { question: "", options: [] };
+      }
+
+      if (/^(question\s*\d+|q\d+|\d+[.)])/i.test(line)) {
+        current.question = cleanCardText(line.replace(/^(question\s*\d+|q\d+|\d+[.)])[:.)-\s]*/i, ""));
+        continue;
+      }
+
+      if (/^[A-D][.)-]/i.test(line)) {
+        current.options = [...(current.options ?? []), cleanCardText(line)];
+        continue;
+      }
+
+      if (/^answer:/i.test(line)) {
+        current.answer = cleanCardText(line.replace(/^answer:/i, ""));
+        continue;
+      }
+
+      if (/^explanation:/i.test(line)) {
+        current.explanation = cleanCardText(line.replace(/^explanation:/i, ""));
+        continue;
+      }
+
+      if (!current.question) {
+        current.question = cleanCardText(line);
+      } else if (!current.explanation) {
+        current.explanation = cleanCardText(line);
+      }
+    }
+  }
+
+  pushCurrent();
+  return questions.length ? questions : null;
 }
 
 function parseOutputCards(text: string, action: AIAction): OutputCard[] {
@@ -207,9 +379,11 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
 
   switch (draft.action) {
     case "quiz":
-      return `${preface} Generate ${count} multiple-choice questions. Return only JSON with this exact shape: [{"question":"...","options":["A","B","C","D"],"answer":"...","explanation":"..."}].`;
+      return `${preface} Generate ${count} multiple-choice questions. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
     case "flashcards":
-      return `${preface} Generate ${count} flashcards. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
+      return `${preface} Generate ${count} flashcards. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
+    case "exam":
+      return `${preface} Generate a full ${focus} mock exam in markdown. Include a title, short instructions, clearly numbered questions, mark allocations, a balance of short and extended responses, and a compact mark scheme table at the end. Keep it realistic for GCSE, A-Level, or the level named in the focus.`;
     case "summary":
       return `${preface} Return ${count} short bullet points, one per line, each highlighting a key revision takeaway.`;
     case "insights":
@@ -217,14 +391,34 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
     case "eli10":
       return `${preface} Return ${count} short bullet points that explain the material in simple language without losing accuracy.`;
     case "hard_mode":
-      return `${preface} Return ${count} difficult recall or exam-style prompts, one per line, that test understanding rather than memorization.`;
+      return `${preface} Return a markdown table with ${count} likely exam traps. Use the columns Trap | Why students fall for it | Correct move | Self-check.`;
     case "study_plan":
       return `${preface} Return a ${count}-step study plan as one line per day using the format "Day 1: ...".`;
     case "concepts":
-      return `${preface} Return ${count} lines in the format "Concept: why it matters" so the result can be turned into a concept deck.`;
+      return `${preface} Return either a concise markdown table or a mermaid diagram when it helps explain the topic links. If neither helps, return ${count} lines in the format "Concept: why it matters".`;
     default:
       return preface;
   }
+}
+
+function looksRichOutput(text: string) {
+  return /```mermaid/i.test(text) || /\|.+\|/.test(text) || /^#{1,3}\s/m.test(text);
+}
+
+function trustBadgeTone(trustLabel: string) {
+  if (trustLabel === "Verified") {
+    return "bg-[rgba(121,247,199,0.18)] text-[var(--accent-mint)]";
+  }
+
+  if (trustLabel === "Scholar") {
+    return "bg-[rgba(57,208,255,0.18)] text-[var(--accent-sky)]";
+  }
+
+  if (trustLabel === "Trusted") {
+    return "bg-[rgba(255,209,102,0.18)] text-[var(--accent-gold)]";
+  }
+
+  return "bg-white/10 text-[var(--fg)]";
 }
 
 function buildAiContext(files: FileItem[]) {
@@ -280,6 +474,7 @@ export function StudyWorkspace({
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
   const [revealedFlashcards, setRevealedFlashcards] = useState<Record<number, boolean>>({});
+  const [toolCardIndex, setToolCardIndex] = useState(0);
   const [restoredStudio, setRestoredStudio] = useState(false);
   const [showStudioBrowser, setShowStudioBrowser] = useState(false);
   const [studioBrowserRefreshing, setStudioBrowserRefreshing] = useState(false);
@@ -289,12 +484,15 @@ export function StudyWorkspace({
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
   const [sourceModalMode, setSourceModalMode] = useState<"upload" | "web">("upload");
   const [sourceModalQuery, setSourceModalQuery] = useState("");
+  const [sourceSearchEngine, setSourceSearchEngine] = useState<SourceSearchEngine>("scholar");
   const [sourceModalLoading, setSourceModalLoading] = useState(false);
   const [sourceModalError, setSourceModalError] = useState("");
+  const [sourceSearchWarning, setSourceSearchWarning] = useState("");
   const [sourceModalReason, setSourceModalReason] = useState("Add a file or a verified web source to unlock chat and tools.");
   const [sourceSearchResults, setSourceSearchResults] = useState<WebSourceItem[]>([]);
   const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
   const [sourcePromptedForStudio, setSourcePromptedForStudio] = useState<string | null>(null);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
   const [preview, setPreview] = useState<PreviewState>({
     open: false,
     loading: false,
@@ -381,6 +579,7 @@ export function StudyWorkspace({
   const closeSourceModal = () => {
     setSourceModalOpen(false);
     setSourceModalError("");
+    setSourceSearchWarning("");
   };
 
   const openSourceModal = (
@@ -394,11 +593,17 @@ export function StudyWorkspace({
   };
 
   const parsedQuiz = useMemo(
-    () => (activeAction === "quiz" ? parseJsonBlock<QuizItem[]>(output) : null),
+    () =>
+      activeAction === "quiz"
+        ? normalizeQuizItems(parseJsonBlock<QuizItem[]>(output) ?? parseQuizFallback(output))
+        : null,
     [activeAction, output]
   );
   const parsedFlashcards = useMemo(
-    () => (activeAction === "flashcards" ? parseJsonBlock<FlashcardItem[]>(output) : null),
+    () =>
+      activeAction === "flashcards"
+        ? normalizeFlashcards(parseJsonBlock<FlashcardItem[]>(output) ?? parseFlashcardsFallback(output))
+        : null,
     [activeAction, output]
   );
   const parsedCards = useMemo(() => parseOutputCards(output, activeAction), [activeAction, output]);
@@ -406,6 +611,7 @@ export function StudyWorkspace({
   useEffect(() => {
     setRevealedQuiz({});
     setRevealedFlashcards({});
+    setToolCardIndex(0);
   }, [activeAction, output]);
 
   useEffect(() => {
@@ -680,12 +886,14 @@ export function StudyWorkspace({
 
     setSourceModalLoading(true);
     setSourceModalError("");
+    setSourceSearchWarning("");
+    setSourceSearchResults([]);
 
     try {
       const response = await fetch("/api/sources/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query })
+        body: JSON.stringify({ query, engine: sourceSearchEngine })
       });
       const json = await response.json();
 
@@ -694,6 +902,7 @@ export function StudyWorkspace({
       }
 
       setSourceSearchResults(Array.isArray(json.results) ? json.results : []);
+      setSourceSearchWarning(typeof json.warning === "string" ? json.warning : "");
       setSourceModalMode("web");
 
       if (!json.results?.length) {
@@ -703,6 +912,39 @@ export function StudyWorkspace({
       setSourceModalError((error as Error).message || "Unable to search the web right now.");
     } finally {
       setSourceModalLoading(false);
+    }
+  };
+
+  const removeFile = async (file: FileItem) => {
+    setDeletingFileId(file.id);
+    setStatusNote("");
+
+    try {
+      const response = await fetch(`/api/files/${file.id}`, {
+        method: "DELETE"
+      });
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw new Error(json.error || "Unable to remove this source.");
+      }
+
+      const sessionId = activeSessionId;
+      if (!sessionId) return;
+
+      setFilesBySession((current) => ({
+        ...current,
+        [sessionId]: (current[sessionId] ?? []).filter((currentFile) => currentFile.id !== file.id)
+      }));
+      setStatusNote(`${file.file_name} was removed from this studio.`);
+
+      if (preview.file?.id === file.id) {
+        closePreview();
+      }
+    } catch (error) {
+      setStatusNote((error as Error).message || "Unable to remove this source.");
+    } finally {
+      setDeletingFileId(null);
     }
   };
 
@@ -912,8 +1154,12 @@ export function StudyWorkspace({
         typeof json.usage?.dailyRemaining === "number"
           ? ` ${json.usage.dailyRemaining} AI run(s) left today in the free preview.`
           : "";
+      const examUsage =
+        action === "exam" && typeof json.usage?.examDailyRemaining === "number"
+          ? ` ${json.usage.examDailyRemaining} full exam generation(s) left today.`
+          : "";
       setStatusNote(
-        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}`
+        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}${examUsage}`
       );
       return true;
     } catch (error) {
@@ -1008,7 +1254,7 @@ export function StudyWorkspace({
     setTab("tools");
 
     if (toolsLocked) {
-      const message = "Upload at least one file or add a web source to unlock summaries, quizzes, flashcards, and the other study tools.";
+      const message = "Upload at least one file or add a web source to unlock summaries, quizzes, flashcards, exam generation, and the other study tools.";
       setStatusNote(message);
       openSourceModal(message);
     } else {
@@ -1039,85 +1285,211 @@ export function StudyWorkspace({
   };
 
   const renderToolResults = () => {
+    const moveToolCard = (step: number, total: number) => {
+      setToolCardIndex((current) => {
+        if (!total) return 0;
+        return (current + step + total) % total;
+      });
+    };
+
+    const renderDeckHeader = ({
+      total,
+      index,
+      eyebrow,
+      caption
+    }: {
+      total: number;
+      index: number;
+      eyebrow: string;
+      caption: string;
+    }) => (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">{eyebrow}</p>
+          <p className="muted mt-2 text-sm">{caption}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
+            {index + 1} / {total}
+          </div>
+          <button
+            type="button"
+            onClick={() => moveToolCard(-1, total)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 transition hover:bg-white/16"
+            aria-label="Previous card"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => moveToolCard(1, total)}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 transition hover:bg-white/16"
+            aria-label="Next card"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+
     if (activeAction === "quiz" && parsedQuiz?.length) {
-      return parsedQuiz.map((item, index) => {
-        const isOpen = Boolean(revealedQuiz[index]);
-        return (
+      const currentIndex = Math.min(toolCardIndex, parsedQuiz.length - 1);
+      const item = parsedQuiz[currentIndex];
+      const isOpen = Boolean(revealedQuiz[currentIndex]);
+
+      return (
+        <div className="space-y-3">
+          {renderDeckHeader({
+            total: parsedQuiz.length,
+            index: currentIndex,
+            eyebrow: "Quiz Deck",
+            caption: "Swipe or move through the questions one by one."
+          })}
           <motion.article
-            key={`${item.question}-${index}`}
-            initial={{ opacity: 0, y: 10 }}
+            key={`${item.question}-${currentIndex}`}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`rounded-[24px] border px-4 py-4 text-sm ${toolTones.quiz}`}
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            onDragEnd={(_, info) => {
+              if (info.offset.x <= -90) moveToolCard(1, parsedQuiz.length);
+              if (info.offset.x >= 90) moveToolCard(-1, parsedQuiz.length);
+            }}
+            className={`rounded-[30px] border px-5 py-5 text-sm shadow-[0_24px_60px_rgba(6,10,24,0.18)] ${toolTones.quiz}`}
           >
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-mint)]">
-              Question {index + 1}
+              Question {currentIndex + 1}
             </p>
-            <p className="mt-3 font-semibold">{item.question}</p>
+            <p className="mt-4 text-lg font-semibold leading-8">{item.question}</p>
             {item.options?.length ? (
-              <div className="mt-3 space-y-2">
+              <div className="mt-5 space-y-3">
                 {item.options.map((option) => (
-                  <div key={option} className="rounded-[16px] bg-white/10 px-3 py-2 text-xs">
+                  <div key={option} className="rounded-[18px] bg-white/10 px-4 py-3 text-sm leading-7">
                     {option}
                   </div>
                 ))}
               </div>
             ) : null}
-            <button
-              type="button"
-              onClick={() => setRevealedQuiz((current) => ({ ...current, [index]: !isOpen }))}
-              className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-2 text-xs font-medium"
-            >
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              {isOpen ? "Hide answer" : "Reveal answer"}
-            </button>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <Button
+                onClick={() => setRevealedQuiz((current) => ({ ...current, [currentIndex]: !isOpen }))}
+                variant="secondary"
+                size="sm"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {isOpen ? "Hide answer" : "Reveal answer"}
+              </Button>
+              <Button onClick={() => moveToolCard(1, parsedQuiz.length)} variant="ghost" size="sm">
+                Next question
+              </Button>
+            </div>
             {isOpen ? (
-              <div className="mt-3 rounded-[18px] bg-white/12 p-3 text-xs">
+              <div className="mt-4 rounded-[22px] bg-white/12 p-4 text-sm">
                 {item.answer ? <p className="font-semibold">Answer: {item.answer}</p> : null}
-                {item.explanation ? <p className="muted mt-2">{item.explanation}</p> : null}
+                {item.explanation ? <p className="muted mt-2 leading-7">{item.explanation}</p> : null}
               </div>
             ) : null}
           </motion.article>
-        );
-      });
+        </div>
+      );
     }
 
     if (activeAction === "flashcards" && parsedFlashcards?.length) {
-      return parsedFlashcards.map((item, index) => {
-        const isOpen = Boolean(revealedFlashcards[index]);
-        return (
+      const currentIndex = Math.min(toolCardIndex, parsedFlashcards.length - 1);
+      const item = parsedFlashcards[currentIndex];
+      const isOpen = Boolean(revealedFlashcards[currentIndex]);
+
+      return (
+        <div className="space-y-3">
+          {renderDeckHeader({
+            total: parsedFlashcards.length,
+            index: currentIndex,
+            eyebrow: "Flashcard Deck",
+            caption: "Tap the card to flip it, then swipe or move to the next one."
+          })}
           <motion.button
-            key={`${item.front}-${index}`}
+            key={`${item.front}-${currentIndex}-${isOpen ? "back" : "front"}`}
             type="button"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
+            initial={{ opacity: 0, y: 12, rotateY: isOpen ? 0 : 6 }}
+            animate={{ opacity: 1, y: 0, rotateY: 0 }}
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            onDragEnd={(_, info) => {
+              if (info.offset.x <= -90) moveToolCard(1, parsedFlashcards.length);
+              if (info.offset.x >= 90) moveToolCard(-1, parsedFlashcards.length);
+            }}
             whileHover={{ y: -2 }}
-            onClick={() => setRevealedFlashcards((current) => ({ ...current, [index]: !isOpen }))}
-            className={`w-full rounded-[24px] border px-4 py-4 text-left text-sm ${toolTones.flashcards}`}
+            onClick={() => setRevealedFlashcards((current) => ({ ...current, [currentIndex]: !isOpen }))}
+            className={`w-full rounded-[34px] border px-6 py-8 text-left shadow-[0_24px_60px_rgba(6,10,24,0.22)] ${toolTones.flashcards}`}
           >
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
-              Flashcard {index + 1}
+            <p className="text-xs font-semibold uppercase tracking-[0.26em] text-[var(--accent-gold)]">
+              Flashcard {currentIndex + 1}
             </p>
-            <p className="mt-3 font-semibold">{isOpen ? item.back : item.front}</p>
-            <p className="muted mt-3 text-xs">{isOpen ? "Tap to flip back" : "Tap to reveal the answer"}</p>
+            <div className="mt-8 min-h-[13rem]">
+              <p className="text-2xl font-semibold leading-[1.35] md:text-[2rem]">
+                {isOpen ? item.back : item.front}
+              </p>
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+              <p className="muted text-xs">{isOpen ? "Tap to flip back" : "Tap to reveal the answer"}</p>
+              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
+                Swipe for next
+                <ChevronRight className="h-3.5 w-3.5" />
+              </div>
+            </div>
           </motion.button>
-        );
-      });
+        </div>
+      );
+    }
+
+    if (output && looksRichOutput(output)) {
+      return (
+        <motion.article
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`rounded-[26px] border px-5 py-5 ${toolTones[activeAction]}`}
+        >
+          <RichStudyText content={output} />
+        </motion.article>
+      );
     }
 
     if (parsedCards.length) {
-      return parsedCards.map((card, index) => (
-        <motion.article
-          key={`${card.title}-${index}`}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`rounded-[24px] border px-4 py-4 text-sm ${toolTones[activeAction]}`}
-        >
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
-            {card.title}
-          </p>
-          <p className="mt-3">{card.body}</p>
-        </motion.article>
-      ));
+      const currentIndex = Math.min(toolCardIndex, parsedCards.length - 1);
+      const card = parsedCards[currentIndex];
+
+      return (
+        <div className="space-y-3">
+          {renderDeckHeader({
+            total: parsedCards.length,
+            index: currentIndex,
+            eyebrow: "Study Card",
+            caption: "Move through one generated revision card at a time."
+          })}
+          <motion.article
+            key={`${card.title}-${currentIndex}`}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            drag="x"
+            dragConstraints={{ left: 0, right: 0 }}
+            onDragEnd={(_, info) => {
+              if (info.offset.x <= -90) moveToolCard(1, parsedCards.length);
+              if (info.offset.x >= 90) moveToolCard(-1, parsedCards.length);
+            }}
+            className={`rounded-[30px] border px-6 py-6 text-sm shadow-[0_24px_60px_rgba(6,10,24,0.18)] ${toolTones[activeAction]}`}
+          >
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
+              {card.title}
+            </p>
+            <p className="mt-5 text-lg leading-8">{card.body}</p>
+            <div className="mt-6 flex justify-end">
+              <Button onClick={() => moveToolCard(1, parsedCards.length)} variant="ghost" size="sm">
+                Next card
+              </Button>
+            </div>
+          </motion.article>
+        </div>
+      );
     }
 
     return (
@@ -1125,7 +1497,7 @@ export function StudyWorkspace({
         <p className="font-semibold">Pick a tool to open the mini generator.</p>
         <p className="muted mt-2">
           {toolsLocked
-            ? "Upload a file first, then generate quizzes, flashcards, summaries, and the rest from your own sources."
+            ? "Upload a file first, then generate quizzes, flashcards, exams, summaries, and the rest from your own sources."
             : "Choose a tool, customise it in the popup, and the result stack will appear here."}
         </p>
       </div>
@@ -1175,7 +1547,7 @@ export function StudyWorkspace({
         ))}
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)_24rem]">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[19rem_minmax(0,1fr)_26rem]">
         <aside className={`${tab !== "files" ? "hidden lg:block" : "block"}`}>
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="mb-4 flex items-center justify-between">
@@ -1282,20 +1654,22 @@ export function StudyWorkspace({
             ) : null}
 
             <div className="mt-5">
-              <label className="glass smooth-hover flex cursor-pointer items-center justify-center gap-2 rounded-[22px] px-4 py-3 text-sm font-medium">
+              <Button
+                onClick={() =>
+                  openSourceModal(
+                    currentFiles.length
+                      ? "Add more files or search verified sources to expand this studio."
+                      : "Add a file or a verified web source to unlock chat and tools.",
+                    currentFiles.length ? "web" : "upload"
+                  )
+                }
+                variant="secondary"
+                size="sm"
+                className="w-full justify-center"
+              >
                 <Upload className="h-4 w-4" />
-                Upload files
-                <input
-                  type="file"
-                  multiple
-                  accept={uploadAcceptAttribute}
-                  className="hidden"
-                  onChange={(event) => {
-                    uploadFiles(Array.from(event.target.files ?? []));
-                    event.currentTarget.value = "";
-                  }}
-                />
-              </label>
+                Add sources
+              </Button>
             </div>
 
             <motion.div
@@ -1354,25 +1728,49 @@ export function StudyWorkspace({
               <div className="hide-scrollbar max-h-[24rem] space-y-2 overflow-auto pr-1">
                 {currentFiles.length ? (
                   currentFiles.map((file) => (
-                    <motion.button
+                    <motion.div
                       key={file.id}
-                      type="button"
                       whileHover={{ y: -2 }}
-                      onClick={() => openFilePreview(file)}
-                      className="w-full rounded-[22px] bg-white/14 p-3 text-left transition hover:bg-white/18"
+                      className="rounded-[22px] bg-white/14 p-3 transition hover:bg-white/18"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <p className="text-sm font-semibold">
-                          <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
-                          {file.file_name}
-                        </p>
-                        <div className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]">
-                          <Eye className="h-3 w-3" />
-                          Open
+                        <button type="button" onClick={() => openFilePreview(file)} className="min-w-0 flex-1 text-left">
+                          <p className="text-sm font-semibold">
+                            <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
+                            {file.file_name}
+                          </p>
+                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openFilePreview(file)}
+                            className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]"
+                          >
+                            <Eye className="h-3 w-3" />
+                            Open
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              removeFile(file);
+                            }}
+                            disabled={deletingFileId === file.id}
+                            className="inline-flex items-center gap-1 rounded-full bg-[rgba(255,125,89,0.14)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--accent-coral)] transition hover:bg-[rgba(255,125,89,0.22)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {deletingFileId === file.id ? (
+                              <LoaderCircle className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3" />
+                            )}
+                            Remove
+                          </button>
                         </div>
                       </div>
-                      <p className="muted mt-2 line-clamp-3 text-xs">{file.extracted_text}</p>
-                    </motion.button>
+                      <button type="button" onClick={() => openFilePreview(file)} className="mt-2 w-full text-left">
+                        <p className="muted line-clamp-3 text-xs">{file.extracted_text}</p>
+                      </button>
+                    </motion.div>
                   ))
                 ) : (
                   <div className="rounded-[22px] bg-white/12 px-4 py-4 text-sm">
@@ -1396,7 +1794,7 @@ export function StudyWorkspace({
               </div>
             </div>
 
-            <div className="hide-scrollbar mt-4 max-h-[34rem] min-h-[28rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4">
+            <div className="hide-scrollbar mt-4 max-h-[32rem] min-h-[25rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4">
               {!currentFiles.length ? (
                 <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
                   <p className="font-semibold">Upload sources or files to continue</p>
@@ -1417,13 +1815,17 @@ export function StudyWorkspace({
                     key={`${message.role}-${index}`}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`max-w-[85%] rounded-[24px] px-4 py-3 text-sm ${
+                    className={`max-w-[88%] rounded-[28px] px-5 py-4 ${
                       message.role === "user"
                         ? "ml-auto bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
                         : "bg-white/16"
                     }`}
                   >
-                    {message.content}
+                    {message.role === "user" ? (
+                      <p className="whitespace-pre-wrap text-[15px] leading-8 md:text-base">{message.content}</p>
+                    ) : (
+                      <RichStudyText content={message.content} />
+                    )}
                   </motion.div>
                 ))
               )}
@@ -1431,11 +1833,11 @@ export function StudyWorkspace({
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="max-w-[18rem] rounded-[24px] bg-white/16 px-4 py-3 text-sm"
+                  className="max-w-[20rem] rounded-[28px] bg-white/16 px-5 py-4 text-sm"
                 >
                   <div className="flex items-center gap-2">
                     <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                    <p className="font-semibold">Reading your sources...</p>
+                    <p className="font-semibold">Reading your sources and shaping the answer...</p>
                   </div>
                   <div className="mt-3 flex gap-2">
                     {[0, 1, 2].map((item) => (
@@ -1516,10 +1918,10 @@ export function StudyWorkspace({
               ))}
             </div>
 
-            <div className="mt-4 rounded-[24px] bg-white/12 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-sky)]">
+              <div className="mt-4 rounded-[24px] bg-white/12 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-sky)]">
                     Mini Generator
                   </p>
                   <p className="mt-2 text-sm font-semibold">
@@ -1531,15 +1933,20 @@ export function StudyWorkspace({
                 </div>
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                <div className="rounded-full bg-white/10 px-3 py-2">Count: {toolDraft.count}</div>
-                <div className="rounded-full bg-white/10 px-3 py-2">
-                  Difficulty: {toolDraft.difficulty === "exam" ? "Exam" : "Foundation"}
+                <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                  <div className="rounded-full bg-white/10 px-3 py-2">Count: {toolDraft.count}</div>
+                  <div className="rounded-full bg-white/10 px-3 py-2">
+                    Difficulty: {toolDraft.difficulty === "exam" ? "Exam" : "Foundation"}
+                  </div>
+                  <div className="rounded-full bg-white/10 px-3 py-2">
+                    Focus: {toolDraft.focus.trim() || "General coverage"}
+                  </div>
+                  {toolDraft.action === "exam" ? (
+                    <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-2 text-[var(--accent-gold)]">
+                      Limit: {defaultExamGeneratorDailyLimit} full exam generations per day
+                    </div>
+                  ) : null}
                 </div>
-                <div className="rounded-full bg-white/10 px-3 py-2">
-                  Focus: {toolDraft.focus.trim() || "General coverage"}
-                </div>
-              </div>
 
               <div className="mt-4 flex items-center gap-2">
                 <Button onClick={() => openTool(activeAction)} className="flex-1 justify-center" disabled={loading}>
@@ -1656,6 +2063,25 @@ export function StudyWorkspace({
                     Browse files
                   </button>
                   <div className="flex-[1.4] rounded-[20px] border border-white/10 bg-black/10 p-4">
+                    <div className="mb-3 flex flex-wrap gap-2">
+                {sourceEngineOptions.map((option) => (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => {
+                            setSourceSearchEngine(option.key);
+                            setSourceSearchWarning("");
+                          }}
+                          className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                            sourceSearchEngine === option.key
+                              ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
+                              : "bg-white/10"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                     <div className="flex items-center gap-3">
                       <Search className="h-4 w-4 text-[var(--accent-sky)]" />
                       <input
@@ -1667,7 +2093,11 @@ export function StudyWorkspace({
                             searchWebSources();
                           }
                         }}
-                        placeholder="Search the web for a topic or chapter..."
+                        placeholder={
+                          sourceSearchEngine === "scholar"
+                            ? "Search scholar-style sources for a topic, paper, or chapter..."
+                            : `Search ${sourceSearchEngine === "google" ? "Google" : "DuckDuckGo"} for a topic or chapter...`
+                        }
                         className="w-full bg-transparent text-sm outline-none"
                       />
                       <button
@@ -1681,7 +2111,7 @@ export function StudyWorkspace({
                       </button>
                     </div>
                     <p className="muted mt-3 text-xs">
-                      Verified and trusted web results can be imported straight into this studio if you do not have notes yet.
+                      {sourceEngineOptions.find((option) => option.key === sourceSearchEngine)?.copy}
                     </p>
                   </div>
                 </div>
@@ -1707,6 +2137,12 @@ export function StudyWorkspace({
                   </div>
                 ) : null}
 
+                {sourceSearchWarning ? (
+                  <div className="mt-4 rounded-[20px] bg-[rgba(255,209,102,0.12)] px-4 py-3 text-sm text-[rgba(255,248,229,0.96)]">
+                    {sourceSearchWarning}
+                  </div>
+                ) : null}
+
                 <div className="mt-4 space-y-3">
                   {sourceModalMode === "web" && sourceSearchResults.length ? (
                     sourceSearchResults.map((result) => (
@@ -1715,12 +2151,24 @@ export function StudyWorkspace({
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="text-sm font-semibold">{result.title}</p>
-                              <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]">
+                              <span
+                                className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${trustBadgeTone(result.trustLabel)}`}
+                              >
+                                {(result.trustLabel === "Verified" || result.trustLabel === "Scholar") ? (
+                                  <CheckCircle2 className="h-3 w-3" />
+                                ) : (
+                                  <Globe2 className="h-3 w-3" />
+                                )}
                                 {result.trustLabel}
                               </span>
                               <span className="rounded-full bg-white/10 px-2 py-1 text-[10px]">{result.source}</span>
                             </div>
                             <p className="muted mt-2 text-xs leading-5">{result.snippet}</p>
+                            {result.trustLabel === "Web" ? (
+                              <p className="mt-2 text-[11px] text-[rgba(255,248,229,0.82)]">
+                                Open-web result. Double-check it before revising from it.
+                              </p>
+                            ) : null}
                             <a
                               href={result.url}
                               target="_blank"
@@ -1744,9 +2192,9 @@ export function StudyWorkspace({
                     ))
                   ) : sourceModalMode === "web" && !sourceModalLoading ? (
                     <div className="rounded-[22px] border border-dashed border-white/12 bg-white/6 px-4 py-6 text-sm">
-                      <p className="font-semibold">Search for a trusted explainer, article, or reference page.</p>
+                      <p className="font-semibold">Search for a scholar-style source, trusted explainer, article, or reference page.</p>
                       <p className="muted mt-2">
-                        Imported web sources become part of this studio just like uploaded notes, so chat and tools stay source-grounded.
+                        Scholar mode is the default, and you can switch to Google or DuckDuckGo if you want a wider search. Imported web sources become part of this studio just like uploaded notes, so chat and tools stay source-grounded.
                       </p>
                     </div>
                   ) : null}
@@ -1884,6 +2332,11 @@ export function StudyWorkspace({
                         <p className="mt-2">
                           Generate inside this popup, then use the interactive result stack to quiz yourself, flip flashcards, or skim the summary without leaving the studio.
                         </p>
+                        {toolDraft.action === "exam" ? (
+                          <p className="mt-3 text-xs text-[rgba(255,248,229,0.88)]">
+                            Full exam generation is capped at {defaultExamGeneratorDailyLimit} times per day in the free preview.
+                          </p>
+                        ) : null}
                       </div>
                     )}
 
@@ -1914,14 +2367,31 @@ export function StudyWorkspace({
                 </p>
                 <h3 className="mt-1 truncate text-lg font-semibold">{preview.file?.file_name || "File preview"}</h3>
               </div>
-              <button
-                type="button"
-                onClick={closePreview}
-                className="glass inline-flex rounded-full p-2.5"
-                aria-label="Close source preview"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {preview.file ? (
+                  <button
+                    type="button"
+                    onClick={() => removeFile(preview.file as FileItem)}
+                    disabled={deletingFileId === preview.file.id}
+                    className="inline-flex items-center gap-2 rounded-full bg-[rgba(255,125,89,0.14)] px-3 py-2 text-xs font-medium text-[var(--accent-coral)] transition hover:bg-[rgba(255,125,89,0.22)] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {deletingFileId === preview.file.id ? (
+                      <LoaderCircle className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4" />
+                    )}
+                    Remove
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="glass inline-flex rounded-full p-2.5"
+                  aria-label="Close source preview"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             <div className="hide-scrollbar flex-1 overflow-auto p-5">

@@ -1,4 +1,8 @@
-import { defaultFreePreviewDailyLimit, defaultFreePreviewHourlyLimit } from "@/lib/ai/preview";
+import {
+  defaultExamGeneratorDailyLimit,
+  defaultFreePreviewDailyLimit,
+  defaultFreePreviewHourlyLimit
+} from "@/lib/ai/preview";
 
 type UsageEntry = {
   id: string;
@@ -19,12 +23,18 @@ type ReservationResult =
     };
 
 const usageStore = new Map<string, UsageEntry[]>();
+const examUsageStore = new Map<string, UsageEntry[]>();
 
 export const freePreviewHourlyLimit = Math.max(1, Number(process.env.AI_HOURLY_LIMIT ?? defaultFreePreviewHourlyLimit));
 export const freePreviewDailyLimit = Math.max(1, Number(process.env.AI_DAILY_LIMIT ?? defaultFreePreviewDailyLimit));
+export const examGeneratorDailyLimit = Math.max(1, Number(process.env.AI_EXAM_DAILY_LIMIT ?? defaultExamGeneratorDailyLimit));
 
 function getUsageKey(actorKey: string) {
   return `ai:${actorKey}`;
+}
+
+function getExamUsageKey(actorKey: string) {
+  return `ai:exam:${actorKey}`;
 }
 
 function pruneEntries(entries: UsageEntry[], now: number) {
@@ -75,6 +85,48 @@ export function releaseAiUsage(actorKey: string, token: string) {
   );
 }
 
+export function reserveExamUsage(actorKey: string): ReservationResult {
+  const now = Date.now();
+  const usageKey = getExamUsageKey(actorKey);
+  const currentEntries = pruneEntries(examUsageStore.get(usageKey) ?? [], now);
+  const dailyCount = currentEntries.length;
+
+  if (dailyCount >= examGeneratorDailyLimit) {
+    examUsageStore.set(usageKey, currentEntries);
+    return {
+      allowed: false,
+      hourlyRemaining: 0,
+      dailyRemaining: Math.max(0, examGeneratorDailyLimit - dailyCount)
+    };
+  }
+
+  const token = `${now}-${Math.random().toString(36).slice(2, 10)}`;
+  currentEntries.push({ id: token, timestamp: now });
+  examUsageStore.set(usageKey, currentEntries);
+
+  return {
+    allowed: true,
+    token,
+    hourlyRemaining: 0,
+    dailyRemaining: Math.max(0, examGeneratorDailyLimit - (dailyCount + 1))
+  };
+}
+
+export function releaseExamUsage(actorKey: string, token: string) {
+  const usageKey = getExamUsageKey(actorKey);
+  const currentEntries = examUsageStore.get(usageKey);
+  if (!currentEntries?.length) return;
+
+  examUsageStore.set(
+    usageKey,
+    currentEntries.filter((entry) => entry.id !== token)
+  );
+}
+
 export function formatAiLimitMessage() {
   return `Free preview limit reached. You can use up to ${freePreviewHourlyLimit} AI generations per hour and ${freePreviewDailyLimit} per day while Pro is still coming soon.`;
+}
+
+export function formatExamLimitMessage() {
+  return `Exam generator limit reached. You can generate up to ${examGeneratorDailyLimit} full mock exam${examGeneratorDailyLimit === 1 ? "" : "s"} per day in the free preview.`;
 }

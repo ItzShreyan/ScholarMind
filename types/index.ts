@@ -3,6 +3,7 @@ export type AIAction =
   | "flashcards"
   | "quiz"
   | "chat"
+  | "exam"
   | "concepts"
   | "eli10"
   | "hard_mode"

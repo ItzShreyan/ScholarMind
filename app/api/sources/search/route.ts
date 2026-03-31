@@ -4,7 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { searchWebSources } from "@/lib/sources/web";
 
 const schema = z.object({
-  query: z.string().min(2).max(120)
+  query: z.string().min(2).max(120),
+  engine: z.enum(["scholar", "google", "duckduckgo"]).default("scholar")
 });
 
 export async function POST(req: Request) {
@@ -19,8 +20,8 @@ export async function POST(req: Request) {
 
   try {
     const body = schema.parse(await req.json());
-    const results = await searchWebSources(body.query);
-    return NextResponse.json({ results });
+    const results = await searchWebSources(body.query, body.engine);
+    return NextResponse.json(results);
   } catch (error) {
     return NextResponse.json(
       {

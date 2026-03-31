@@ -9,7 +9,6 @@ import {
   Lock,
   MessageSquare,
   Sparkles,
-  Timer,
   WandSparkles
 } from "lucide-react";
 import { motion, useScroll, useTransform } from "framer-motion";
@@ -20,41 +19,45 @@ import { Badge } from "@/components/ui/Badge";
 import { buttonVariants } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
-import { defaultFreePreviewDailyLimit, defaultFreePreviewHourlyLimit } from "@/lib/ai/preview";
+import {
+  defaultExamGeneratorDailyLimit,
+  defaultFreePreviewDailyLimit,
+  defaultFreePreviewHourlyLimit
+} from "@/lib/ai/preview";
 
 const studyFeatures = [
   {
-    icon: FileText,
-    title: "Short summaries",
-    copy: "Turn long lecture notes, textbook sections, or revision sheets into concise bullet summaries."
+    icon: CheckCircle2,
+    title: "Scholar-first source search",
+    copy: "Start with academic and trusted learning sources by default, then widen out to Google or DuckDuckGo when needed."
   },
   {
     icon: MessageSquare,
-    title: "Q&A on your material",
-    copy: "Ask follow-up questions and get answers based on the same notes, transcript, or PDF you uploaded."
+    title: "Readable AI answers",
+    copy: "Ask grounded questions and get cleaner responses with better spacing, revision tables, and clearer step-by-step explanations."
   },
   {
     icon: Brain,
-    title: "Custom quizzes",
-    copy: "Generate practice questions that move from simple recall into harder concept checks."
+    title: "Exam Trap Radar",
+    copy: "Surface common mistakes, why students fall for them, and what to check before the real exam."
   },
   {
-    icon: WandSparkles,
-    title: "Flashcards and study plans",
-    copy: "Build flashcards, revision tasks, and next-step study plans from one session."
+    icon: FileText,
+    title: "Tables, diagrams, and maths help",
+    copy: "Turn sources into quizzes, flashcards, concept maps, comparison tables, full mock exams, and clearer maths revision support."
   }
 ];
 
 const studyModes = [
   {
     title: "What goes in",
-    copy: "Text, lecture transcripts, textbook pages, screenshots, and images of handwritten notes.",
-    bullets: ["Paste text directly", "Upload PDFs", "Use note images or screenshots"]
+    copy: "Your own files first, with scholar-style web sources ready when you do not have notes nearby.",
+    bullets: ["Upload PDFs, docs, tables, and note images", "Import trusted web sources into a studio", "Keep sources grouped by notebook-style studios"]
   },
   {
     title: "What comes out",
-    copy: "A short revision sheet, instant Q&A, flashcards, quizzes, and spaced review prompts.",
-    bullets: ["Summary and key concepts", "Practice questions", "Flashcards and reminders"]
+    copy: "A cleaner revision workspace with generated practice, visual explanations, and source-grounded chat.",
+    bullets: ["Summaries, quiz sets, and flashcards", "Concept tables and mermaid diagrams", "Exam Trap Radar and study-plan outputs"]
   }
 ];
 
@@ -64,16 +67,16 @@ const faqs = [
     a: "Yes. The flow is built around your own text, images, lecture notes, and transcripts."
   },
   {
-    q: "What can it generate from one upload?",
-    a: "Summaries, follow-up answers, quiz questions, flashcards, and review prompts from the same material."
+    q: "What if I do not have notes yet?",
+    a: "The source picker starts in scholar mode so students can pull in academic and trusted web sources before they start revising."
   },
   {
-    q: "Who is it aimed at?",
-    a: "Students and adult learners who are trying to digest dense material faster and revise more actively."
+    q: "Can it help with maths revision too?",
+    a: "Yes. Chat and tools can now format clearer worked explanations, revision tables, and diagrams when the topic needs them."
   },
   {
-    q: "Why use this instead of rewriting notes by hand?",
-    a: "It cuts down the manual rewrite step and pushes the learner faster into recall, questioning, and spaced review."
+    q: "What feels unique here?",
+    a: "Exam Trap Radar is built to catch likely misconceptions and turn them into practical self-checks instead of generic summary text."
   }
 ];
 
@@ -133,8 +136,8 @@ export default function LandingPage() {
                 Upload notes. Get a short summary, quiz questions, flashcards, and instant Q&A.
               </h1>
               <p className="muted max-w-2xl text-base md:text-lg">
-                Built for students who are overloaded with dense textbooks, long lecture notes, and revision
-                material they do not want to rewrite by hand.
+                Built for students who need one place to upload notes, pull in verified web sources, ask grounded
+                questions, and turn everything into revision-ready outputs without rewriting it all by hand.
               </p>
             </div>
 
@@ -151,19 +154,19 @@ export default function LandingPage() {
             <div className="grid gap-3 sm:grid-cols-3">
               {[
                 {
-                  icon: FileText,
-                  label: "Summary",
-                  copy: "Generate a short revision sheet from long source material."
+                  icon: CheckCircle2,
+                  label: "Verified sources",
+                  copy: "Start with scholar-style and trusted learning sources when your own files are missing."
                 },
                 {
                   icon: MessageSquare,
-                  label: "Questions",
-                  copy: "Ask about the material and get grounded answers."
+                  label: "Clear chat",
+                  copy: "Read spaced-out answers, tables, and diagrams instead of dense response blocks."
                 },
                 {
-                  icon: Timer,
-                  label: "Review",
-                  copy: "Create flashcards and set the next revision step."
+                  icon: Brain,
+                  label: "Trap radar",
+                  copy: "Spot exam mistakes before they show up in real questions."
                 }
               ].map((item) => (
                 <div key={item.label} className="glass rounded-[26px] p-4">
@@ -194,20 +197,19 @@ export default function LandingPage() {
                     Made for study material
                   </p>
                   <h2 className="mt-2 text-3xl font-semibold md:text-4xl">
-                    Textbooks, lecture notes, transcripts, and revision packs can all feed the same session.
+                    Textbooks, lecture notes, transcripts, scholar-style web sources, and revision packs can all feed the same studio.
                   </h2>
                 </div>
                 <p className="muted max-w-md text-sm">
-                  The point is not to create another place to decorate notes. It is to turn dense material
-                  into something faster to revise from.
+                  The point is not to create another place to decorate notes. It is to build a source-grounded study stack that can answer questions, generate practice, and expose misconceptions quickly.
                 </p>
               </CardHeader>
             </Card>
 
             <div className="grid gap-4">
               {[
-                { value: "Text + Image", label: "Input from pasted notes, PDFs, and screenshots" },
-                { value: "Quiz + Flashcards", label: "Practice layer built from the same source material" }
+                { value: "Scholar + Web", label: "Default search starts with academic and trusted learning sources" },
+                { value: "Tables + Diagrams", label: "Visual outputs for concept links, maths revision, and comparisons" }
               ].map((stat) => (
                 <Card key={stat.label}>
                   <CardHeader>
@@ -258,7 +260,7 @@ export default function LandingPage() {
               </Badge>
               <h2 className="text-3xl font-semibold">Everything is free right now, with sensible AI limits.</h2>
               <p className="muted text-sm md:text-base">
-                While ScholarMind is still in preview, summaries, quizzes, flashcards, and grounded Q&amp;A stay open to everyone.
+                While ScholarMind is still in preview, scholar search, grounded chat, quizzes, flashcards, and visual study outputs stay open to everyone.
               </p>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -267,11 +269,14 @@ export default function LandingPage() {
                 <p className="muted mt-2">
                   Up to {defaultFreePreviewHourlyLimit} AI runs per hour and {defaultFreePreviewDailyLimit} per day to keep the shared API budget healthy while features are free.
                 </p>
+                <p className="muted mt-2">
+                  Full mock exam generation is separately capped at {defaultExamGeneratorDailyLimit} per day because it is a heavier AI run.
+                </p>
               </div>
               <div className="rounded-[24px] bg-white/20 px-4 py-4">
                 <p className="font-semibold">Included right now</p>
                 <p className="muted mt-2">
-                  Upload sources, open study studios, preview files, ask source-grounded questions, and generate revision tools from the same material.
+                  Upload sources, remove or preview files, search scholar-style references, ask source-grounded questions, and generate revision tools from the same material.
                 </p>
               </div>
             </CardContent>
@@ -316,7 +321,7 @@ export default function LandingPage() {
               <h2 className="text-4xl font-semibold">Feed the session once, then revise from several angles.</h2>
               <p className="muted text-sm md:text-base">
                 Students can move from source material into summaries, question answering, recall practice,
-                and next-step review without rebuilding the context each time.
+                tables, diagrams, and next-step review without rebuilding the context each time.
               </p>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2">
@@ -367,11 +372,10 @@ export default function LandingPage() {
                   Ready for revision
                 </Badge>
                 <h2 className="mt-5 text-4xl font-semibold md:text-5xl">
-                  Paste a lecture transcript or upload notes and start revising.
+                  Open a studio, add sources, and turn them into revision-ready answers.
                 </h2>
                 <p className="muted mx-auto mt-3 max-w-2xl text-sm md:text-base">
-                  Use one session to summarise, ask questions, generate a quiz, build flashcards, and plan
-                  the next review.
+                  Use one studio to summarise, ask questions, generate a quiz, build flashcards, draw concept maps, and catch exam traps from the same source stack.
                 </p>
               </div>
               <div className="relative flex flex-wrap justify-center gap-3">
@@ -394,7 +398,7 @@ export default function LandingPage() {
             <div className="h-9 w-9 rounded-2xl bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))]" />
             <div>
               <p className="text-sm font-semibold">ScholarMind</p>
-              <p className="muted text-xs">Notes in. Summary, questions, flashcards out.</p>
+              <p className="muted text-xs">Scholar-first sources in. Clearer revision, diagrams, and mock exams out.</p>
             </div>
           </div>
           <div className="muted text-xs">© {new Date().getFullYear()} ScholarMind</div>
