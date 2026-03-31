@@ -346,6 +346,7 @@ export function StudyWorkspace({
       return;
     }
 
+    setActiveSessionId(sessionId);
     setUploading(true);
     setUploadProgress(10);
     setStatusNote("");
@@ -363,13 +364,29 @@ export function StudyWorkspace({
         throw new Error(json.error || "Upload failed.");
       }
 
+      const nextFiles = Array.isArray(json.files) ? json.files : [];
+      if (!nextFiles.length) {
+        const refreshResponse = await fetch(`/api/sessions?sessionId=${sessionId}`);
+        const refreshJson = await refreshResponse.json();
+        if (!refreshResponse.ok) {
+          throw new Error(refreshJson.error || "Upload finished, but the files could not be refreshed.");
+        }
+        json.files = refreshJson.files ?? [];
+      }
+
       setUploadProgress(92);
       setFilesBySession((current) => ({
         ...current,
-        [sessionId]: [...(json.files ?? []), ...(current[sessionId] ?? [])]
+        [sessionId]: json.files ?? []
       }));
       setUploadProgress(100);
-      setStatusNote(`${json.files?.length ?? 0} file(s) added. The study tools are now ready to use.`);
+      if (json.files?.length) {
+        setStatusNote(`${json.files.length} file(s) added. The study tools are now ready to use.`);
+      } else {
+        setStatusNote(
+          "Upload finished, but no saved files came back from Supabase. Re-run supabase/schema.sql and confirm the storage policies were created."
+        );
+      }
       setTab("tools");
     } catch (error) {
       setStatusNote(formatSupabaseSetupError((error as Error).message || "Upload failed."));

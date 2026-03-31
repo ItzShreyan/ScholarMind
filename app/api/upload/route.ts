@@ -51,7 +51,15 @@ export async function POST(req: Request) {
       uploaded.push(data);
     }
 
-    return NextResponse.json({ files: uploaded });
+    const { data: savedFiles, error: fetchError } = await supabase
+      .from("study_files")
+      .select("*")
+      .eq("user_id", user.id)
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false });
+    if (fetchError) throw fetchError;
+
+    return NextResponse.json({ files: savedFiles ?? uploaded });
   } catch (error) {
     return NextResponse.json(
       { error: formatSupabaseSetupError((error as Error).message || "Upload failed.") },
