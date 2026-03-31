@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateWithFallback } from "@/lib/ai/fallback";
+import { createClient } from "@/lib/supabase/server";
+import {
+  formatAiLimitMessage,
+  releaseAiUsage,
+  reserveAiUsage
+} from "@/lib/ai/limits";
 
 const schema = z.object({
   action: z.enum([
@@ -25,8 +31,36 @@ const schema = z.object({
 export async function POST(req: Request) {
   try {
     const body = schema.parse(await req.json());
+    const supabase = await createClient();
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+
+    const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    const actorKey = user?.id || forwardedFor || "anonymous";
+    const reservation = reserveAiUsage(actorKey);
+
+    if (!reservation.allowed) {
+      return NextResponse.json(
+        {
+          error: formatAiLimitMessage()
+        },
+        { status: 429 }
+      );
+    }
+
     const result = await generateWithFallback(body);
-    return NextResponse.json(result);
+    if (result.provider === "cache") {
+      releaseAiUsage(actorKey, reservation.token);
+    }
+
+    return NextResponse.json({
+      ...result,
+      usage: {
+        hourlyRemaining: reservation.hourlyRemaining,
+        dailyRemaining: reservation.dailyRemaining
+      }
+    });
   } catch (error) {
     return NextResponse.json(
       { error: (error as Error).message || "Generation failed" },

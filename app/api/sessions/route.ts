@@ -35,7 +35,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ sessions: data ?? [] });
   } catch (error) {
     return NextResponse.json(
-      { error: formatSupabaseSetupError((error as Error).message || "Unable to load sessions.") },
+      { error: formatSupabaseSetupError((error as Error).message || "Unable to load studios.") },
       { status: 400 }
     );
   }
@@ -50,7 +50,7 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await req.json();
-    const title = body.title || "Untitled Session";
+    const title = body.title || "Untitled Studio";
 
     const { data, error } = await supabase
       .from("study_sessions")
@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     return NextResponse.json(data);
   } catch (error) {
     return NextResponse.json(
-      { error: formatSupabaseSetupError((error as Error).message || "Unable to create a session.") },
+      { error: formatSupabaseSetupError((error as Error).message || "Unable to create a studio.") },
       { status: 400 }
     );
   }

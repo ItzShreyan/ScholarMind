@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
+import { StudioShelf } from "@/components/dashboard/StudioShelf";
 
 type Session = { id: string; title: string; created_at?: string };
 
@@ -19,8 +20,6 @@ export function DashboardOverview({
   sessions: Session[];
   fileCount: number;
 }) {
-  const recent = sessions.slice(0, 6);
-
   return (
     <Container className="py-6">
       <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
@@ -34,11 +33,11 @@ export function DashboardOverview({
                 </p>
                 <h1 className="mt-3 text-4xl font-semibold md:text-5xl">Your study dashboard.</h1>
               </div>
-              <div className="glass rounded-full px-4 py-2 text-xs font-medium">Summary + quiz + flashcards</div>
+              <div className="glass playful-pop rounded-full px-4 py-2 text-xs font-medium">Summary + quiz + flashcards</div>
             </div>
             <p className="muted relative max-w-2xl text-sm md:text-base">
-              Open the workspace, upload your notes, then move through summaries, chat, flashcards,
-              quizzes, and study planning without leaving the same flow.
+              Build separate study studios for different classes, upload your notes, then move through
+              summaries, chat, flashcards, quizzes, and study planning without leaving the same flow.
             </p>
             <div className="relative flex flex-wrap gap-3">
               <Link
@@ -63,7 +62,7 @@ export function DashboardOverview({
               { icon: Brain, label: "Quizzes", tint: "text-[var(--accent-mint)]" },
               { icon: FileUp, label: "Uploads", tint: "text-[var(--accent-gold)]" }
             ].map((item) => (
-              <div key={item.label} className="rounded-[24px] bg-white/20 px-4 py-4 text-sm">
+              <div key={item.label} className="playful-sway rounded-[24px] bg-white/20 px-4 py-4 text-sm">
                 <item.icon className={`mb-3 h-5 w-5 ${item.tint}`} />
                 <p className="font-semibold">{item.label}</p>
                 <p className="muted mt-2 text-xs">Ready from the main workspace.</p>
@@ -80,7 +79,7 @@ export function DashboardOverview({
               </p>
               <div className="grid gap-3 text-sm">
                 <div className="rounded-[22px] bg-white/20 px-4 py-3">
-                  <p className="muted text-xs">Study sessions</p>
+                  <p className="muted text-xs">Study studios</p>
                   <p className="mt-2 text-3xl font-semibold">{sessions.length}</p>
                 </div>
                 <div className="rounded-[22px] bg-white/20 px-4 py-3">
@@ -102,43 +101,14 @@ export function DashboardOverview({
               </p>
               <div className="rounded-[24px] bg-white/20 px-4 py-4 text-sm">
                 <WandSparkles className="mb-3 h-5 w-5 text-[var(--accent-coral)]" />
-                Open the studio, upload a fresh topic, and let the workspace build the first pass for you.
+                Open a studio, upload a fresh topic, and let the workspace build the first pass for you.
               </div>
             </CardHeader>
           </Card>
         </div>
       </section>
 
-      <section className="mt-6">
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold">Recent sessions</h2>
-            <p className="muted text-sm">Jump back into a study thread without rebuilding context.</p>
-          </div>
-          <Link href="/studio" className="text-sm font-medium text-[var(--accent-sky)]">
-            Go to Studio
-          </Link>
-        </div>
-
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {recent.length ? (
-            recent.map((session) => (
-              <Link
-                key={session.id}
-                href={`/dashboard/workspace/${session.id}`}
-                className="panel panel-border smooth-hover rounded-[26px] p-5"
-              >
-                <p className="text-lg font-semibold">{session.title}</p>
-                <p className="muted mt-2 text-sm">Open this study stack in the workspace.</p>
-              </Link>
-            ))
-          ) : (
-            <div className="panel panel-border rounded-[26px] p-5 text-sm">
-              No sessions yet. Open Studio and the workspace will prepare your first study stack.
-            </div>
-          )}
-        </div>
-      </section>
+      <StudioShelf initialStudios={sessions} />
     </Container>
   );
 }

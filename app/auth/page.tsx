@@ -47,13 +47,19 @@ export default function AuthPage() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
+  const [nextPath, setNextPath] = useState("/dashboard");
 
   useEffect(() => {
     router.prefetch("/dashboard");
   }, [router]);
 
   useEffect(() => {
-    const authError = new URLSearchParams(window.location.search).get("error");
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get("error");
+    const next = params.get("next");
+    if (next?.startsWith("/")) {
+      setNextPath(next);
+    }
     if (!authError) return;
 
     setStatus("error");
@@ -66,7 +72,11 @@ export default function AuthPage() {
     setStatus("idle");
   };
 
-  const getAuthRedirectTo = () => new URL("/auth/callback", window.location.origin).toString();
+  const getAuthRedirectTo = () => {
+    const url = new URL("/auth/callback", window.location.origin);
+    url.searchParams.set("next", nextPath);
+    return url.toString();
+  };
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -104,7 +114,7 @@ export default function AuthPage() {
 
     setStatus("success");
     setMessage("Opening your dashboard...");
-    router.replace("/dashboard");
+    window.location.assign(nextPath);
   };
 
   const signInGoogle = async () => {
@@ -174,9 +184,9 @@ export default function AuthPage() {
           <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-[rgba(255,209,102,0.18)] blur-3xl" />
 
           <div className="relative z-10 flex items-start justify-between gap-4">
-            <Link href="/" className="inline-flex items-center gap-2 text-sm font-medium">
+            <Link href={nextPath === "/dashboard" ? "/" : nextPath} className="inline-flex items-center gap-2 text-sm font-medium">
               <ArrowLeft className="h-4 w-4" />
-              Back home
+              {nextPath === "/dashboard" ? "Back home" : "Back"}
             </Link>
             <ThemeToggle />
           </div>

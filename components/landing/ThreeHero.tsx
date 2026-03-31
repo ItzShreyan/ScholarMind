@@ -259,7 +259,7 @@ export function ThreeHero() {
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.18, duration: 0.55 }}
-        className="glass absolute left-4 top-4 rounded-3xl px-4 py-3 text-left"
+        className="glass playful-sway absolute left-4 top-4 rounded-3xl px-4 py-3 text-left"
       >
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--accent-coral)]">
           Lecture Notes
@@ -271,13 +271,13 @@ export function ThreeHero() {
         initial={{ opacity: 0, x: 24 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.28, duration: 0.55 }}
-        className="glass absolute bottom-4 left-4 rounded-3xl px-4 py-3"
+        className="glass playful-bob absolute bottom-4 left-4 rounded-3xl px-4 py-3"
       >
         <p className="text-xs text-[var(--accent-sky)]">Text, images, PDFs</p>
         <p className="mt-1 text-sm font-medium">Ask questions on your own material and step into active recall.</p>
       </motion.div>
 
-      <div className="glass pulse-glow absolute right-4 top-4 rounded-full px-4 py-2 text-xs font-medium">
+      <div className="glass pulse-glow playful-pop absolute right-4 top-4 rounded-full px-4 py-2 text-xs font-medium">
         Summary • Quiz • Flashcards
       </div>
     </div>

@@ -1,8 +1,14 @@
 import { AIRequest } from "@/types";
 
+function clipForModel(text: string, limit: number) {
+  return text.length > limit ? `${text.slice(0, limit).trim()}\n\n[Context clipped for speed.]` : text;
+}
+
 export function buildPrompt(input: AIRequest): string {
+  const clippedPrompt = clipForModel(input.prompt, 1200);
+  const clippedContext = input.context ? clipForModel(input.context, 14000) : "";
   const baseContext = input.context
-    ? `\nContext from user's uploaded study material:\n${input.context}\n`
+    ? `\nContext from user's uploaded study material:\n${clippedContext}\n`
     : "";
   const styleHints: Record<AIRequest["action"], string> = {
     summary: "Return concise bullet points and major takeaways.",
@@ -20,6 +26,6 @@ export function buildPrompt(input: AIRequest): string {
   return `You are ScholarMind, an elite study copilot.
 Task: ${input.action}
 Instruction: ${styleHints[input.action]}
-User prompt: ${input.prompt}${baseContext}
+User prompt: ${clippedPrompt}${baseContext}
 Output must be practical, specific, and well-structured.`;
 }

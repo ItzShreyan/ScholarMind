@@ -15,7 +15,7 @@ export default async function StudioPage() {
   if (!sessions.length) {
     const { data } = await supabase
       .from("study_sessions")
-      .insert([{ user_id: user.id, title: "My First Session" }])
+      .insert([{ user_id: user.id, title: "My First Studio" }])
       .select("*")
       .single();
     sessions = data ? [data] : [];
@@ -33,7 +33,9 @@ export default async function StudioPage() {
         initialFiles={files.map((f) => ({
           id: f.id,
           file_name: f.file_name,
-          extracted_text: f.extracted_text
+          extracted_text: f.extracted_text,
+          file_type: f.file_type,
+          storage_path: f.storage_path
         }))}
       />
     </>

@@ -129,7 +129,7 @@ export function ScrollShowcase() {
               y: boardY,
               transformPerspective: 1800
             }}
-            className="panel-border will-change-transform relative rounded-[34px] border border-white/15 bg-[linear-gradient(150deg,rgba(255,255,255,0.82),rgba(255,255,255,0.14))] p-4 shadow-[0_35px_80px_rgba(15,23,42,0.24)] sm:p-5 lg:row-span-2 lg:min-h-[25rem]"
+            className="panel-border will-change-transform relative rounded-[34px] border border-white/15 bg-[linear-gradient(150deg,rgba(255,255,255,0.82),rgba(255,255,255,0.14))] p-4 text-[color:var(--accent-ink)] shadow-[0_35px_80px_rgba(15,23,42,0.24)] sm:p-5 lg:row-span-2 lg:min-h-[25rem]"
           >
             <div className="absolute inset-0 rounded-[34px] bg-[radial-gradient(circle_at_top_left,rgba(255,125,89,0.2),transparent_36%),radial-gradient(circle_at_bottom_right,rgba(57,208,255,0.18),transparent_32%)]" />
             <div className="relative z-10 flex h-full flex-col">
@@ -196,10 +196,10 @@ export function ScrollShowcase() {
           </motion.div>
 
           <div className="grid gap-4">
-            <motion.article
-              style={{ y: rightCardY, rotate: rightCardRotate }}
-              className="glass will-change-transform rounded-[28px] p-4 shadow-[0_24px_60px_rgba(57,208,255,0.18)]"
-            >
+          <motion.article
+            style={{ y: rightCardY, rotate: rightCardRotate }}
+            className="glass will-change-transform rounded-[28px] p-4 shadow-[0_24px_60px_rgba(57,208,255,0.18)]"
+          >
               <div className="mb-4 h-1.5 w-14 rounded-full bg-[linear-gradient(135deg,var(--accent-sky),var(--accent-mint))]" />
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-sky)]">
                 {sceneCards[1].eyebrow}

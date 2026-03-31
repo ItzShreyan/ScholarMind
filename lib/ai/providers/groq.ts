@@ -15,7 +15,8 @@ export const groqProvider: AIProvider = {
       body: JSON.stringify({
         model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
         messages: [{ role: "user", content: buildPrompt(input) }],
-        temperature: 0.3
+        temperature: 0.3,
+        max_tokens: input.action === "chat" ? 360 : 1100
       })
     });
     if (!res.ok) throw new Error(`Groq failed: ${res.status}`);

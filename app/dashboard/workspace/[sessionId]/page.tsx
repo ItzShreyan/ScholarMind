@@ -31,7 +31,9 @@ export default async function WorkspaceSessionPage({
         initialFiles={files.map((f) => ({
           id: f.id,
           file_name: f.file_name,
-          extracted_text: f.extracted_text
+          extracted_text: f.extracted_text,
+          file_type: f.file_type,
+          storage_path: f.storage_path
         }))}
       />
     </>

@@ -11,8 +11,25 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
+  const bootScript = `
+    (function () {
+      try {
+        var root = document.documentElement;
+        var theme = localStorage.getItem("theme");
+        root.classList.toggle("light", theme === "light");
+        var playful = localStorage.getItem("scholarmind_playful_motion");
+        root.setAttribute("data-playful", playful === "off" ? "off" : "on");
+      } catch (error) {
+        document.documentElement.setAttribute("data-playful", "on");
+      }
+    })();
+  `;
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning data-playful="on">
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: bootScript }} />
+      </head>
       <body>
         <AuthProvider>{children}</AuthProvider>
       </body>

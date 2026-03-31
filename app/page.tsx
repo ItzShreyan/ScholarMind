@@ -6,6 +6,7 @@ import {
   Brain,
   CheckCircle2,
   FileText,
+  Lock,
   MessageSquare,
   Sparkles,
   Timer,
@@ -19,6 +20,7 @@ import { Badge } from "@/components/ui/Badge";
 import { buttonVariants } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
+import { defaultFreePreviewDailyLimit, defaultFreePreviewHourlyLimit } from "@/lib/ai/preview";
 
 const studyFeatures = [
   {
@@ -244,6 +246,64 @@ export default function LandingPage() {
             </motion.div>
           ))}
         </motion.section>
+      </Container>
+
+      <Container className="pb-8">
+        <section className="grid gap-4 lg:grid-cols-2">
+          <Card className="overflow-hidden">
+            <CardHeader className="space-y-3">
+              <Badge>
+                <Sparkles className="h-3.5 w-3.5" />
+                Free preview
+              </Badge>
+              <h2 className="text-3xl font-semibold">Everything is free right now, with sensible AI limits.</h2>
+              <p className="muted text-sm md:text-base">
+                While ScholarMind is still in preview, summaries, quizzes, flashcards, and grounded Q&amp;A stay open to everyone.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="rounded-[24px] bg-white/20 px-4 py-4">
+                <p className="font-semibold">AI preview cap</p>
+                <p className="muted mt-2">
+                  Up to {defaultFreePreviewHourlyLimit} AI runs per hour and {defaultFreePreviewDailyLimit} per day to keep the shared API budget healthy while features are free.
+                </p>
+              </div>
+              <div className="rounded-[24px] bg-white/20 px-4 py-4">
+                <p className="font-semibold">Included right now</p>
+                <p className="muted mt-2">
+                  Upload sources, open study studios, preview files, ask source-grounded questions, and generate revision tools from the same material.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="relative overflow-hidden">
+            <div className="absolute right-6 top-6 rounded-full border border-white/15 bg-[rgba(255,125,89,0.16)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]">
+              Restricted
+            </div>
+            <CardHeader className="space-y-3">
+              <Badge className="bg-[rgba(255,125,89,0.18)]">
+                <Lock className="h-3.5 w-3.5" />
+                Pro coming soon
+              </Badge>
+              <h2 className="text-3xl font-semibold">The Pro tier is locked for now.</h2>
+              <p className="muted text-sm md:text-base">
+                Higher limits, more generous OCR runs, and extra study analytics will land here once the free preview settles.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              {[
+                "Expanded AI usage limits",
+                "More generous scanned-PDF processing",
+                "Advanced study tracking and extra analytics"
+              ].map((item) => (
+                <div key={item} className="rounded-[24px] border border-dashed border-white/15 bg-white/10 px-4 py-4">
+                  {item}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </section>
       </Container>
 
       <Container className="py-8">

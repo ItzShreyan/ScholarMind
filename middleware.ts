@@ -23,14 +23,25 @@ export async function middleware(req: NextRequest) {
     data: { user }
   } = await supabase.auth.getUser();
 
-  if (
-    !user &&
-    (req.nextUrl.pathname.startsWith("/dashboard") ||
-      req.nextUrl.pathname.startsWith("/studio") ||
-      req.nextUrl.pathname.startsWith("/settings"))
-  ) {
+  const pathname = req.nextUrl.pathname;
+  const isProtectedRoute =
+    pathname.startsWith("/dashboard") || pathname.startsWith("/studio") || pathname.startsWith("/settings");
+  const isAuthRoute = pathname === "/auth";
+  const isCallbackRoute = pathname.startsWith("/auth/callback");
+  const isSignoutRoute = pathname.startsWith("/auth/signout");
+  const isHomeRoute = pathname === "/";
+
+  if (!user && isProtectedRoute) {
     const redirectUrl = req.nextUrl.clone();
     redirectUrl.pathname = "/auth";
+    redirectUrl.searchParams.set("next", pathname);
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  if (user && (isHomeRoute || isAuthRoute) && !isCallbackRoute && !isSignoutRoute) {
+    const redirectUrl = req.nextUrl.clone();
+    redirectUrl.pathname = "/dashboard";
+    redirectUrl.search = "";
     return NextResponse.redirect(redirectUrl);
   }
 
@@ -38,5 +49,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/studio/:path*", "/settings/:path*"]
+  matcher: ["/", "/auth", "/auth/:path*", "/dashboard/:path*", "/studio/:path*", "/settings/:path*"]
 };
