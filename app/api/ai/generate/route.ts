@@ -66,7 +66,7 @@ export async function POST(req: Request) {
     });
 
     if (!reservation.allowed) {
-      if (examReservation?.allowed) {
+      if (examReservation && examReservation.allowed) {
         await releaseExamUsage({
           supabase,
           actorKey,
@@ -91,7 +91,7 @@ export async function POST(req: Request) {
         usage: {
           hourlyRemaining: reservation.hourlyRemaining,
           dailyRemaining: reservation.dailyRemaining,
-          examDailyRemaining: examReservation?.dailyRemaining
+          examWeeklyRemaining: examReservation?.remaining
         }
       });
     } catch (error) {
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
         token: reservation.token,
         persisted: reservation.persisted
       });
-      if (examReservation?.allowed) {
+      if (examReservation && examReservation.allowed) {
         await releaseExamUsage({
           supabase,
           actorKey,

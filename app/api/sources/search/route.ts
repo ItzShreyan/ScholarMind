@@ -3,6 +3,9 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { searchWebSources } from "@/lib/sources/web";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const schema = z.object({
   query: z.string().min(2).max(120),
   engine: z.enum(["scholar", "google", "duckduckgo"]).default("scholar")

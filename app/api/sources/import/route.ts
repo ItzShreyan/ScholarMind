@@ -4,6 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 import { extractWebSourceText } from "@/lib/sources/web";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const schema = z.object({
   sessionId: z.string().min(1),
   title: z.string().min(2).max(180),

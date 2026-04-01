@@ -29,25 +29,25 @@
 
 html.light {
   color-scheme: light;
-  --bg: #fff7ee;
-  --bg-soft: #ffe9cf;
-  --fg: #101727;
-  --muted: #43556f;
-  --surface: rgba(255, 255, 255, 0.82);
-  --surface-strong: rgba(255, 255, 255, 0.94);
-  --surface-border: rgba(16, 23, 39, 0.14);
-  --shadow: 0 32px 90px rgba(255, 133, 82, 0.14);
-  --accent-coral: #ff7d59;
-  --accent-gold: #ffd166;
-  --accent-sky: #39d0ff;
-  --accent-mint: #62e8bf;
+  --bg: #f3eee7;
+  --bg-soft: #e4d8ca;
+  --fg: #172233;
+  --muted: #55657b;
+  --surface: rgba(252, 248, 242, 0.8);
+  --surface-strong: rgba(249, 244, 237, 0.92);
+  --surface-border: rgba(93, 76, 56, 0.12);
+  --shadow: 0 28px 70px rgba(118, 92, 70, 0.12);
+  --accent-coral: #ec8a68;
+  --accent-gold: #e8c875;
+  --accent-sky: #4db9da;
+  --accent-mint: #73d2b4;
   --accent-ink: #0f172a;
-  --glass-top: rgba(255, 255, 255, 0.78);
-  --glass-bottom: rgba(255, 255, 255, 0.38);
-  --panel-top: rgba(255, 255, 255, 0.86);
-  --panel-bottom: rgba(255, 255, 255, 0.48);
-  --grid-line: rgba(16, 23, 39, 0.06);
-  --grid-line-strong: rgba(16, 23, 39, 0.08);
+  --glass-top: rgba(255, 250, 245, 0.62);
+  --glass-bottom: rgba(248, 240, 231, 0.34);
+  --panel-top: rgba(253, 248, 242, 0.78);
+  --panel-bottom: rgba(240, 231, 220, 0.4);
+  --grid-line: rgba(86, 78, 67, 0.05);
+  --grid-line-strong: rgba(86, 78, 67, 0.07);
 }
 
 html {
@@ -76,6 +76,15 @@ body::before {
     linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 28%);
 }
 
+html.light body::before {
+  background:
+    radial-gradient(circle at 12% 14%, rgba(236, 138, 104, 0.18), transparent 30%),
+    radial-gradient(circle at 86% 10%, rgba(77, 185, 218, 0.16), transparent 26%),
+    radial-gradient(circle at 74% 80%, rgba(115, 210, 180, 0.14), transparent 28%),
+    radial-gradient(circle at 22% 88%, rgba(232, 200, 117, 0.12), transparent 26%),
+    linear-gradient(180deg, rgba(255, 250, 245, 0.74), rgba(238, 232, 224, 0.9));
+}
+
 body::after {
   content: "";
   position: fixed;
@@ -87,6 +96,10 @@ body::after {
     linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 42px 42px;
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.45), transparent 100%);
+}
+
+html.light body::after {
+  opacity: 0.16;
 }
 
 h1,

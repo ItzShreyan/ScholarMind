@@ -475,8 +475,8 @@ function questionCountFromPrompt(prompt: string, fallback: number) {
 
 function examQuestionCount(prompt: string) {
   const explicit = prompt.match(/\b(\d{1,2})\s+(?:question|questions)\b/i);
-  if (!explicit) return 16;
-  return Math.max(12, Math.min(Number(explicit[1]), 24));
+  if (!explicit) return 22;
+  return Math.max(18, Math.min(Number(explicit[1]), 30));
 }
 
 function buildOptions(correct: string, distractors: string[], index: number) {
@@ -684,7 +684,7 @@ function buildExamPrompt(term: string, index: number, isMaths: boolean) {
 
 function examResponse(input: AIRequest) {
   const keywords = keywordsFrom(input, 14);
-  const evidence = pickEvidence(input, 18);
+  const evidence = pickEvidence(input, 24);
   const definitions = extractDefinitionPairs(input, 10);
   const isMaths = looksLikeMaths(input.prompt, input.context);
   const totalQuestions = examQuestionCount(input.prompt);
@@ -697,7 +697,7 @@ function examResponse(input: AIRequest) {
       .join(" ") || "Source-Based Mock Exam"
   );
 
-  const shortQuestions = Array.from({ length: Math.min(8, totalQuestions) }, (_, index) => {
+  const shortQuestions = Array.from({ length: Math.min(10, totalQuestions) }, (_, index) => {
     const pair = definitions[index];
     const fallbackTerm = keywords[index] || `Core idea ${index + 1}`;
     const stem = pair ? `${index + 1}. ${buildExamPrompt(pair.term, index, isMaths)}` : `${index + 1}. ${buildExamPrompt(fallbackTerm, index, isMaths)}`;
@@ -705,7 +705,7 @@ function examResponse(input: AIRequest) {
     return `${stem} (${marks} marks)`;
   });
 
-  const mediumQuestionCount = Math.min(6, Math.max(4, totalQuestions - shortQuestions.length - 2));
+  const mediumQuestionCount = Math.min(8, Math.max(6, totalQuestions - shortQuestions.length - 3));
   const mediumQuestions = Array.from({ length: mediumQuestionCount }, (_, index) => {
     const keyword = keywords[index + 2] || `Topic ${index + 1}`;
     const evidenceLine = evidence[index + 2]?.sentence || `the most important point about ${keyword}`;
@@ -715,7 +715,7 @@ function examResponse(input: AIRequest) {
     )}". (${isMaths ? 6 : 5} marks)`;
   });
 
-  const longQuestionCount = Math.max(2, totalQuestions - shortQuestions.length - mediumQuestions.length);
+  const longQuestionCount = Math.max(3, totalQuestions - shortQuestions.length - mediumQuestions.length);
   const longQuestions = Array.from({ length: longQuestionCount }, (_, index) => {
     const keyword = keywords[index + 6] || `the wider topic`;
     return `${
@@ -754,9 +754,16 @@ function examResponse(input: AIRequest) {
     "",
     ...longQuestions,
     "",
+    "## Section D: Final challenge",
+    "",
+    `${totalQuestions + 1}. Build a final synoptic response that links the strongest ideas across the uploaded sources${isMaths ? ", including clear working and justification," : ""} and explains why they matter. (${isMaths ? 12 : 16} marks)`,
+    "",
     "## Mark Scheme Snapshot",
     "",
-    markdownTable(["Question", "Focus", "What earns marks"], markSchemeRows)
+    markdownTable(
+      ["Question", "Focus", "What earns marks"],
+      [...markSchemeRows, [`Q${totalQuestions + 1}`, "Synoptic response", isMaths ? "Accurate method, reasoning, and a justified conclusion." : "Linked evidence, judgement, and a well-supported conclusion."]]
+    )
   ].join("\n");
 }
 

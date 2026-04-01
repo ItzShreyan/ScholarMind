@@ -1,3 +1,3 @@
 export const defaultFreePreviewHourlyLimit = 8;
-export const defaultFreePreviewDailyLimit = 30;
-export const defaultExamGeneratorDailyLimit = 2;
+export const defaultFreePreviewDailyLimit = 20;
+export const defaultExamGeneratorWeeklyLimit = 3;

@@ -13,10 +13,10 @@ export const groqProvider: AIProvider = {
         Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
         messages: [{ role: "user", content: buildPrompt(input) }],
-        temperature: 0.3,
-        max_tokens: input.action === "chat" ? 360 : 1100
+        temperature: 0.15,
+        max_tokens: input.action === "exam" ? 4200 : input.action === "chat" ? 900 : 1600
       })
     });
     if (!res.ok) throw new Error(`Groq failed: ${res.status}`);

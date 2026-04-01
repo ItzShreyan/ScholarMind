@@ -9,7 +9,7 @@ export const geminiProvider: AIProvider = {
     if (!apiKey) throw new Error("Missing GEMINI_API_KEY");
     const client = new GoogleGenerativeAI(apiKey);
     const model = client.getGenerativeModel({
-      model: process.env.GEMINI_MODEL || "gemini-1.5-flash"
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash"
     });
     const result = await model.generateContent(buildPrompt(input));
     const text = result.response.text();

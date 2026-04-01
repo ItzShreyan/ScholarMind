@@ -1,6 +1,3 @@
-import { Readability } from "@mozilla/readability";
-import { JSDOM } from "jsdom";
-import { extractBufferContent } from "@/lib/documents/parser";
 import { getFileExtension, isImageDocument, isPdfDocument } from "@/lib/documents/formats";
 
 export type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
@@ -34,6 +31,11 @@ const trustedLearningHosts = [
   "nationalgeographic.com",
   "cambridge.org"
 ];
+
+async function getReadabilityTools() {
+  const [{ Readability }, { JSDOM }] = await Promise.all([import("@mozilla/readability"), import("jsdom")]);
+  return { Readability, JSDOM };
+}
 
 function normalizeWhitespace(text: string) {
   return text.replace(/\u0000/g, "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
@@ -106,7 +108,7 @@ function trustLabelFor(url: string, source?: string) {
 }
 
 function makeId(value: string) {
-  return Buffer.from(value).toString("base64url").slice(0, 32);
+  return Buffer.from(value).toString("base64url").slice(0, 96);
 }
 
 function queryTerms(query: string) {
@@ -546,6 +548,7 @@ async function fetchReadablePreview(url: string) {
     }
 
     if (contentType.includes("text/html")) {
+      const { Readability, JSDOM } = await getReadabilityTools();
       const html = await response.text();
       const dom = new JSDOM(html, { url });
       const article = new Readability(dom.window.document).parse();
@@ -582,7 +585,7 @@ async function fetchReadablePreview(url: string) {
 
 async function rerankWithPreview(results: WebSourceResult[], query: string, limit = 36) {
   const base = uniqueResults(results, query);
-  const candidates = base.slice(0, Math.min(limit, 16));
+  const candidates = base.slice(0, Math.min(limit, 10));
 
   const enriched = await Promise.all(
     candidates.map(async (result) => {
@@ -597,14 +600,23 @@ async function rerankWithPreview(results: WebSourceResult[], query: string, limi
 }
 
 async function searchScholarSources(query: string): Promise<WebSourceResult[]> {
-  const [openAlexResults, crossrefResults, semanticScholarResults, arxivResults, trustedLearningResults, wikipediaResults] = await Promise.all([
+  const settled = await Promise.allSettled([
+    fetchTrustedLearningResults(query),
+    fetchSemanticScholarResults(query),
     fetchOpenAlexResults(query),
     fetchCrossrefResults(query),
-    fetchSemanticScholarResults(query),
     fetchArxivResults(query),
-    fetchTrustedLearningResults(query),
     fetchWikipediaResults(query)
   ]);
+
+  const [
+    trustedLearningResults,
+    semanticScholarResults,
+    openAlexResults,
+    crossrefResults,
+    arxivResults,
+    wikipediaResults
+  ] = settled.map((result) => (result.status === "fulfilled" ? result.value : []));
 
   return rerankWithPreview(
     [
@@ -693,6 +705,7 @@ async function extractReadableArticleText(url: string) {
   }
 
   const html = await response.text();
+  const { Readability, JSDOM } = await getReadabilityTools();
   const dom = new JSDOM(html, { url });
   const article = new Readability(dom.window.document).parse();
   const readable = cleanReadableText(article?.textContent || "");
@@ -713,6 +726,7 @@ export async function extractWebSourceText({
   try {
     if (isPdfDocument(`remote.${extension || "pdf"}`) || isImageDocument(`remote.${extension || "png"}`)) {
       const { buffer, contentType } = await fetchRemoteBinary(url);
+      const { extractBufferContent } = await import("@/lib/documents/parser");
       const extraction = await extractBufferContent({
         buffer,
         fileName: `${title}.${extension || (contentType.includes("pdf") ? "pdf" : "png")}`,

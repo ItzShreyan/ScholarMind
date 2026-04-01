@@ -137,5 +137,7 @@ export const uploadAcceptAttribute = [
   "image/webp",
   "image/gif",
   "image/bmp",
-  "image/tiff"
+  "image/tiff",
+  "image/heic",
+  "image/heif"
 ].join(",");

@@ -11,46 +11,77 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
+import { defaultUserPreferences, type PreferenceTool, type UserPreferences } from "@/lib/preferences/defaults";
 
 const defaultToolOptions = [
   { value: "summary", label: "Summary" },
   { value: "quiz", label: "Quiz" },
   { value: "flashcards", label: "Flashcards" },
-  { value: "study_plan", label: "Study plan" }
+  { value: "study_plan", label: "Study plan" },
+  { value: "exam", label: "Exam" },
+  { value: "insights", label: "Insights" },
+  { value: "hard_mode", label: "Trap radar" },
+  { value: "concepts", label: "Concept map" }
 ] as const;
 
-export function SettingsPanel({ email }: { email?: string }) {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
-  const [playfulMotion, setPlayfulMotion] = useState(true);
-  const [rememberLastStudio, setRememberLastStudio] = useState(true);
-  const [defaultTool, setDefaultTool] = useState<(typeof defaultToolOptions)[number]["value"]>("summary");
+export function SettingsPanel({
+  email,
+  initialPreferences = defaultUserPreferences
+}: {
+  email?: string;
+  initialPreferences?: UserPreferences;
+}) {
+  const [theme, setTheme] = useState<"dark" | "light">(initialPreferences.theme);
+  const [playfulMotion, setPlayfulMotion] = useState(initialPreferences.playfulMotion);
+  const [rememberLastStudio, setRememberLastStudio] = useState(initialPreferences.rememberLastStudio);
+  const [defaultTool, setDefaultTool] = useState<PreferenceTool>(initialPreferences.defaultTool);
   const [mounted, setMounted] = useState(false);
+  const [saveState, setSaveState] = useState("Synced to your account.");
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem("theme");
-    const savedPlayful = localStorage.getItem("scholarmind_playful_motion");
-    const savedRemember = localStorage.getItem("scholarmind_remember_last_studio");
-    const savedTool = localStorage.getItem("scholarmind_default_tool");
-
-    setTheme(savedTheme === "light" ? "light" : "dark");
-    setPlayfulMotion(savedPlayful !== "off");
-    setRememberLastStudio(savedRemember !== "off");
-    if (savedTool && defaultToolOptions.some((item) => item.value === savedTool)) {
-      setDefaultTool(savedTool as (typeof defaultToolOptions)[number]["value"]);
-    }
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    setTheme(initialPreferences.theme);
+    setPlayfulMotion(initialPreferences.playfulMotion);
+    setRememberLastStudio(initialPreferences.rememberLastStudio);
+    setDefaultTool(initialPreferences.defaultTool);
+  }, [initialPreferences]);
+
+  async function patchPreferences(patch: Partial<UserPreferences>) {
+    setSaveState("Saving to your account...");
+
+    try {
+      const response = await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+
+      if (!response.ok) {
+        const json = await response.json().catch(() => ({}));
+        throw new Error(json.error || "Unable to save your settings.");
+      }
+
+      setSaveState("Synced to your account.");
+    } catch (error) {
+      setSaveState((error as Error).message || "Unable to save your settings.");
+    }
+  }
 
   const updateTheme = (nextTheme: "dark" | "light") => {
     setTheme(nextTheme);
     localStorage.setItem("theme", nextTheme);
     document.documentElement.classList.toggle("light", nextTheme === "light");
+    void patchPreferences({ theme: nextTheme });
   };
 
   const updatePlayfulMotion = (enabled: boolean) => {
     setPlayfulMotion(enabled);
     localStorage.setItem("scholarmind_playful_motion", enabled ? "on" : "off");
     document.documentElement.setAttribute("data-playful", enabled ? "on" : "off");
+    void patchPreferences({ playfulMotion: enabled });
   };
 
   const updateRememberLastStudio = (enabled: boolean) => {
@@ -59,12 +90,19 @@ export function SettingsPanel({ email }: { email?: string }) {
     if (!enabled) {
       localStorage.removeItem("scholarmind_last_studio");
     }
+    void patchPreferences(enabled ? { rememberLastStudio: true } : { rememberLastStudio: false, lastStudioId: null });
   };
 
-  const updateDefaultTool = (value: (typeof defaultToolOptions)[number]["value"]) => {
+  const updateDefaultTool = (value: PreferenceTool) => {
     setDefaultTool(value);
     localStorage.setItem("scholarmind_default_tool", value);
+    void patchPreferences({ defaultTool: value });
   };
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("light", theme === "light");
+    document.documentElement.setAttribute("data-playful", playfulMotion ? "on" : "off");
+  }, [playfulMotion, theme]);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
@@ -74,7 +112,7 @@ export function SettingsPanel({ email }: { email?: string }) {
             Account
           </p>
           <h1 className="text-4xl font-semibold">Your profile and study setup.</h1>
-          <p className="muted text-sm">Preferences save locally in this browser so your workspace feels consistent every time you come back.</p>
+          <p className="muted text-sm">Preferences now autosave to your account so your study setup follows you across devices.</p>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <div className="rounded-[24px] bg-white/20 px-4 py-4">
@@ -192,7 +230,7 @@ export function SettingsPanel({ email }: { email?: string }) {
           </CardHeader>
           <CardContent className="muted text-sm">
             Reminders are still created from inside each studio so they stay attached to the right uploaded notes and review context.
-            {mounted ? <p className="mt-3 text-xs">Changes above save instantly in this browser.</p> : null}
+            {mounted ? <p className="mt-3 text-xs">{saveState}</p> : null}
           </CardContent>
         </Card>
       </div>

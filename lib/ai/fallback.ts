@@ -9,7 +9,7 @@ import { openRouterProvider } from "@/lib/ai/providers/openrouter";
 import { togetherProvider } from "@/lib/ai/providers/together";
 
 function providerOrder(): AIProvider[] {
-  const preferred = process.env.AI_PRIMARY_PROVIDER || "gemini";
+  const preferred = process.env.AI_PRIMARY_PROVIDER || (process.env.GROQ_API_KEY ? "groq" : "gemini");
   const all: Record<string, AIProvider> = {
     gemini: geminiProvider,
     groq: groqProvider,
@@ -24,7 +24,7 @@ function providerOrder(): AIProvider[] {
 }
 
 export async function generateWithFallback(input: AIRequest) {
-  const cacheKey = JSON.stringify({ version: 2, input });
+  const cacheKey = JSON.stringify({ version: 5, input });
   const cached = getCached(cacheKey);
   if (cached) return { text: cached, provider: "cache" };
 

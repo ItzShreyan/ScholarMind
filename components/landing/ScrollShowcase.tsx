@@ -67,8 +67,82 @@ export function ScrollShowcase() {
     { label: "Flashcards", value: "Recall set", width: flashcardsWidth }
   ];
 
+  if (isCompact) {
+    return (
+      <section ref={ref} className="mx-auto max-w-7xl px-4 py-8 sm:px-6 sm:py-10">
+        <div className="mb-5 max-w-2xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--accent-coral)]">
+            Study Flow
+          </p>
+          <h2 className="mt-3 text-2xl font-semibold sm:text-3xl">
+            Move from raw material to active recall in one pass.
+          </h2>
+          <p className="muted mt-3 text-sm">
+            Upload first, then summarise, ask questions, generate flashcards, build a quiz, and set up the next review session.
+          </p>
+        </div>
+
+        <div className="panel panel-border relative overflow-hidden rounded-[28px] px-4 py-5 sm:px-5 sm:py-6">
+          <div className="mesh-overlay absolute inset-0 opacity-25" />
+          <div className="relative z-10">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="max-w-md">
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--accent-sky)]">
+                  One Session, Many Outputs
+                </p>
+                <p className="mt-2 text-sm">
+                  Keep the source material, summary, and practice tools connected inside one study stack.
+                </p>
+              </div>
+              <div className="glass w-fit rounded-full px-4 py-2 text-[11px] font-medium">
+                Text • Images • PDFs • Transcripts
+              </div>
+            </div>
+
+            <div className="mt-5 rounded-[24px] border border-white/12 bg-[linear-gradient(150deg,rgba(255,255,255,0.78),rgba(255,255,255,0.16))] p-4 text-[color:var(--accent-ink)] shadow-[0_24px_60px_rgba(15,23,42,0.18)]">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
+                Revision Workspace
+              </p>
+              <p className="mt-2 text-xl font-semibold">
+                The same notes can power summary, Q&A, and practice.
+              </p>
+              <div className="mt-4 space-y-3">
+                {outputCards.map((item) => (
+                  <div key={item.label} className="rounded-2xl bg-[rgba(255,255,255,0.58)] px-4 py-3">
+                    <div className="mb-2 flex items-center justify-between text-sm font-medium">
+                      <span>{item.label}</span>
+                      <span>{item.value}</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-[rgba(16,23,39,0.08)]">
+                      <motion.div
+                        style={{ width: item.width }}
+                        className="h-full rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3">
+              {sceneCards.map((card) => (
+                <article key={card.eyebrow} className="glass rounded-[22px] p-4">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
+                    {card.eyebrow}
+                  </p>
+                  <h3 className="mt-2 text-base font-semibold">{card.title}</h3>
+                  <p className="muted mt-2 text-sm">{card.copy}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section ref={ref} className="mx-auto max-w-7xl px-5 py-12 sm:px-6 lg:px-8">
+    <section ref={ref} className="mx-auto max-w-7xl px-5 py-10 sm:px-6 sm:py-12 lg:px-8">
       <div className="mb-6 max-w-3xl">
         <p className="text-sm font-semibold uppercase tracking-[0.28em] text-[var(--accent-coral)]">
           Study Flow

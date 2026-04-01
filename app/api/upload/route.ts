@@ -5,6 +5,7 @@ import { extractDocumentContent } from "@/lib/documents/parser";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function isUploadedFile(entry: FormDataEntryValue): entry is File {
   return (

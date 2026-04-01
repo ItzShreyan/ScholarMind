@@ -8,18 +8,63 @@ export function ThemeToggle() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem("theme");
-    const shouldUseLight = saved === "light";
-    document.documentElement.classList.toggle("light", shouldUseLight);
-    setLight(shouldUseLight);
-    setMounted(true);
+    let ignore = false;
+
+    const hydrateTheme = async () => {
+      const applyTheme = (nextLight: boolean) => {
+        document.documentElement.classList.toggle("light", nextLight);
+        localStorage.setItem("theme", nextLight ? "light" : "dark");
+        if (!ignore) {
+          setLight(nextLight);
+          setMounted(true);
+        }
+      };
+
+      try {
+        const saved = localStorage.getItem("theme");
+        if (saved) {
+          applyTheme(saved === "light");
+        }
+
+        const response = await fetch("/api/preferences");
+        const json = await response.json().catch(() => ({}));
+
+        if (response.ok && (json.theme === "dark" || json.theme === "light")) {
+          applyTheme(json.theme === "light");
+          return;
+        }
+
+        if (!saved) {
+          applyTheme(false);
+        }
+      } catch {
+        const saved = localStorage.getItem("theme");
+        applyTheme(saved === "light");
+      }
+    };
+
+    void hydrateTheme();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
-  const toggle = () => {
+  const toggle = async () => {
     const nextLight = !light;
     setLight(nextLight);
     document.documentElement.classList.toggle("light", nextLight);
     localStorage.setItem("theme", nextLight ? "light" : "dark");
+
+    try {
+      await fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ theme: nextLight ? "light" : "dark" })
+      });
+    } catch {
+      return;
+    }
   };
 
   return (

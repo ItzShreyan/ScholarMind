@@ -14,8 +14,8 @@ export function ThreeHero() {
     mount.innerHTML = "";
 
     const getSceneHeight = () => {
-      if (window.innerWidth < 640) return 420;
-      if (window.innerWidth < 1024) return 460;
+      if (window.innerWidth < 640) return 340;
+      if (window.innerWidth < 1024) return 420;
       return 520;
     };
 
@@ -252,7 +252,7 @@ export function ThreeHero() {
 
       <div
         ref={mountRef}
-        className="relative z-10 min-h-[400px] w-full rounded-[30px] sm:min-h-[440px] lg:min-h-[500px]"
+        className="relative z-10 min-h-[320px] w-full rounded-[26px] sm:min-h-[400px] sm:rounded-[30px] lg:min-h-[500px]"
       />
 
       <motion.div

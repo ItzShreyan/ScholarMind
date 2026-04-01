@@ -16,6 +16,7 @@ async function ensureCanvasGlobals() {
 }
 
 export async function recognizeImageBuffer(buffer: Buffer) {
+  const { createCanvas, loadImage } = await ensureCanvasGlobals();
   const tesseract = await import("tesseract.js");
   const recognize =
     tesseract.default && typeof tesseract.default.recognize === "function"
@@ -26,7 +27,19 @@ export async function recognizeImageBuffer(buffer: Buffer) {
     throw new Error("OCR is not available right now.");
   }
 
-  const result = await recognize(buffer, "eng", {
+  let imageBuffer = buffer;
+
+  try {
+    const image = await loadImage(buffer);
+    const canvas = createCanvas(Math.max(1, image.width), Math.max(1, image.height));
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0, image.width, image.height);
+    imageBuffer = canvas.toBuffer("image/png");
+  } catch {
+    imageBuffer = buffer;
+  }
+
+  const result = await recognize(imageBuffer, "eng", {
     logger: () => undefined
   });
 

@@ -28,6 +28,12 @@ function isReadableContent(text: string) {
   return normalized.length >= 24 || words.length >= 4;
 }
 
+function isLightweightReadableContent(text: string) {
+  const normalized = normalizeWhitespace(text);
+  const words = normalized.match(/[A-Za-z0-9][A-Za-z0-9'-]{1,}/g) ?? [];
+  return normalized.length >= 12 || words.length >= 3;
+}
+
 function decodeBasicHtmlEntities(text: string) {
   return text
     .replace(/&nbsp;/gi, " ")
@@ -177,7 +183,9 @@ async function extractFromBuffer({
 
     const normalized = clipText(normalizeWhitespace(text));
 
-    if (!isReadableContent(normalized)) {
+    const isLightweightSource = isImageDocument(fileName, fileType) || isPdfDocument(fileName, fileType);
+
+    if (!(isReadableContent(normalized) || (isLightweightSource && isLightweightReadableContent(normalized)))) {
       return unreadable(
         "This file was unreadable or did not contain enough extractable information. Reupload another copy."
       );

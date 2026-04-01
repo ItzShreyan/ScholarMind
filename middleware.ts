@@ -25,7 +25,7 @@ export async function middleware(req: NextRequest) {
 
   const pathname = req.nextUrl.pathname;
   const isProtectedRoute =
-    pathname.startsWith("/dashboard") || pathname.startsWith("/studio") || pathname.startsWith("/settings");
+    pathname.startsWith("/dashboard") || pathname.startsWith("/studio") || pathname.startsWith("/schedule") || pathname.startsWith("/settings");
   const isAuthRoute = pathname === "/auth";
   const isCallbackRoute = pathname.startsWith("/auth/callback");
   const isSignoutRoute = pathname.startsWith("/auth/signout");
@@ -49,5 +49,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/auth", "/auth/:path*", "/dashboard/:path*", "/studio/:path*", "/settings/:path*"]
+  matcher: ["/", "/auth", "/auth/:path*", "/dashboard/:path*", "/studio/:path*", "/schedule/:path*", "/settings/:path*"]
 };

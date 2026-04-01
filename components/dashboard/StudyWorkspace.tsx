@@ -1,8 +1,10 @@
 "use client";
 
 import { DragEvent as ReactDragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Brain,
+  CalendarDays,
   ChevronLeft,
   ChevronDown,
   ChevronRight,
@@ -28,7 +30,8 @@ import {
 import { motion } from "framer-motion";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { Button } from "@/components/ui/Button";
-import { defaultExamGeneratorDailyLimit } from "@/lib/ai/preview";
+import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
+import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 import {
@@ -69,9 +72,23 @@ type FlashcardItem = {
   back: string;
 };
 
+type QuizResult = {
+  question: string;
+  selected: string;
+  correct: string;
+  isCorrect: boolean;
+  explanation: string;
+};
+
 type OutputCard = {
   title: string;
   body: string;
+};
+
+type ExamQuestion = {
+  number: string;
+  prompt: string;
+  marks: string;
 };
 
 type ToolHistoryItem = {
@@ -101,6 +118,21 @@ type WebSourceItem = {
   snippet: string;
   source: string;
   trustLabel: string;
+};
+
+type StudyMetrics = {
+  quizAnswered: number;
+  quizCorrect: number;
+  flashcardsFlipped: number;
+  toolRuns: Record<AIAction, number>;
+  recentQuizResults: QuizResult[];
+};
+
+type RevisionScheduleItem = {
+  day: string;
+  focus: string;
+  task: string;
+  check: string;
 };
 
 type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
@@ -152,7 +184,7 @@ const toolTones: Record<AIAction, string> = {
 function createToolDraft(action: AIAction): ToolDraft {
   return {
     action,
-    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 8 : 5,
+    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 14 : 5,
     difficulty: action === "hard_mode" || action === "exam" ? "exam" : "foundation",
     focus: ""
   };
@@ -198,6 +230,21 @@ function summarizeGeneratedOutput(text: string) {
       .trim(),
     180
   );
+}
+
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    const statusMessage = response.status ? ` (${response.status})` : "";
+    throw new Error(
+      response.ok
+        ? `The server returned an unreadable response${statusMessage}. Restart the dev server and try again.`
+        : `The server returned an unexpected response${statusMessage}.`
+    );
+  }
 }
 
 function cleanCardText(text: string) {
@@ -395,7 +442,7 @@ function parseTablePreview(text: string) {
 }
 
 function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
-  const count = Math.max(3, Math.min(draft.count, 12));
+  const count = Math.max(3, Math.min(draft.count, draft.action === "exam" ? 18 : 12));
   const sourceList = files.map((file) => file.file_name).join(", ");
   const focus = draft.focus.trim() || "the most important ideas across all uploaded files";
   const difficulty = draft.difficulty === "exam" ? "exam-level" : "foundation-level";
@@ -407,15 +454,15 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
     case "flashcards":
       return `${preface} Generate ${count} flashcards. Each front should be a real term, question, formula, or recall cue from the sources, not a generic word. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
     case "exam":
-      return `${preface} Generate a long full ${focus} mock exam in markdown. Include a title, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the length of a normal school exam, not a short worksheet. Keep it realistic for GCSE, A-Level, or the level named in the focus. If the material is mathematical, include method-based questions and require working.`;
+      return `${preface} Generate a long full ${focus} mock exam in markdown with around ${Math.max(30, count + 16)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the length of a real school exam paper, not a short worksheet. Keep it realistic for GCSE, A-Level, or the level named in the focus. If the material is mathematical, include method-based questions, multi-step problems, diagrams or tables when helpful, and require working.`;
     case "summary":
       return `${preface} Return ${count} short bullet points, one per line, each highlighting a key revision takeaway. If the difficulty is foundation-level, keep the wording clearer and simpler. Where the sources contain formulas, dates, or comparisons, prefer compact table-friendly wording over vague prose.`;
     case "insights":
-      return `${preface} Return ${count} short bullet points showing weak spots, misconceptions, or next-best study actions.`;
+      return `${preface} Return a short performance report with weak spots, misconceptions, and next-best study actions. Use a markdown table when it helps.`;
     case "hard_mode":
       return `${preface} Return a markdown table with ${count} likely exam traps. Use the columns Trap | Why students fall for it | Correct move | Self-check.`;
     case "study_plan":
-      return `${preface} Return a ${count}-step study plan as one line per day using the format "Day 1: ...".`;
+      return `${preface} Return a ${count}-step study plan as a markdown table with the columns Day | Focus | Task | Check.`;
     case "concepts":
       return `${preface} Return either a concise markdown table or a mermaid diagram when it helps explain the topic links. If neither helps, return ${count} lines in the format "Concept: why it matters".`;
     default:
@@ -443,6 +490,140 @@ function trustBadgeTone(trustLabel: string) {
   return "bg-white/10 text-[var(--fg)]";
 }
 
+function createEmptyMetrics(): StudyMetrics {
+  return {
+    quizAnswered: 0,
+    quizCorrect: 0,
+    flashcardsFlipped: 0,
+    toolRuns: {
+      summary: 0,
+      flashcards: 0,
+      quiz: 0,
+      exam: 0,
+      insights: 0,
+      hard_mode: 0,
+      study_plan: 0,
+      concepts: 0
+    },
+    recentQuizResults: []
+  };
+}
+
+function buildPerformanceSummary(metrics: StudyMetrics) {
+  const toolSummary = Object.entries(metrics.toolRuns)
+    .filter(([, count]) => count > 0)
+    .map(([action, count]) => `${action.replace(/_/g, " ")}: ${count}`)
+    .join(", ");
+
+  return [
+    `Quiz answers checked: ${metrics.quizAnswered}`,
+    `Quiz answers correct: ${metrics.quizCorrect}`,
+    `Flashcards flipped: ${metrics.flashcardsFlipped}`,
+    toolSummary ? `Tool usage: ${toolSummary}` : "",
+    metrics.recentQuizResults.length
+      ? `Recent quiz misses: ${metrics.recentQuizResults
+          .filter((item) => !item.isCorrect)
+          .slice(0, 3)
+          .map((item) => item.question)
+          .join(" | ")}`
+      : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseMarkdownTableRows(text: string) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && line.endsWith("|"));
+
+  if (lines.length < 3) return [];
+
+  const rows = lines
+    .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+
+  if (rows.length < 3) return [];
+  return rows;
+}
+
+function parseRevisionSchedule(text: string): RevisionScheduleItem[] {
+  const rows = parseMarkdownTableRows(text);
+
+  if (rows.length) {
+    const [header, divider, ...body] = rows;
+    const normalizedHeader = header.map((cell) => cell.toLowerCase());
+    if (divider.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+      const dayIndex = normalizedHeader.findIndex((cell) => cell.includes("day") || cell.includes("week"));
+      const focusIndex = normalizedHeader.findIndex((cell) => cell.includes("focus"));
+      const taskIndex = normalizedHeader.findIndex((cell) => cell.includes("task") || cell.includes("study"));
+      const checkIndex = normalizedHeader.findIndex((cell) => cell.includes("check"));
+
+      if (dayIndex >= 0 && focusIndex >= 0) {
+        return body.map((row) => ({
+          day: row[dayIndex] || `Day ${body.indexOf(row) + 1}`,
+          focus: row[focusIndex] || "Focus",
+          task: row[taskIndex] || row[focusIndex] || "",
+          check: row[checkIndex] || "Do a quick recall check."
+        }));
+      }
+    }
+  }
+
+  return parseOutputCards(text, "study_plan").map((card, index) => ({
+    day: /^day|^week/i.test(card.title) ? card.title : `Day ${index + 1}`,
+    focus: card.title,
+    task: card.body,
+    check: "Summarise it aloud and self-test."
+  }));
+}
+
+function parseExamQuestions(text: string): ExamQuestion[] {
+  const cleaned = cleanGeneratedText(text);
+  if (!cleaned) return [];
+
+  const questionOnlySection = cleaned
+    .split(/\n#{1,6}\s*mark scheme\b/i)[0]
+    .split(/\nmark scheme\b/i)[0]
+    .trim();
+
+  const matches = Array.from(
+    questionOnlySection.matchAll(
+      /(?:^|\n)(?:question\s*)?(\d+[a-z]?)[.)]\s+([\s\S]*?)(?=(?:\n(?:question\s*)?\d+[a-z]?[.)]\s)|(?:\n#{1,6}\s)|$)/gim
+    )
+  );
+
+  return matches
+    .map((match) => {
+      const prompt = match[2].trim().replace(/\n{3,}/g, "\n\n");
+      const marksMatch = prompt.match(/(\d+\s*(?:marks?|pts?))/i);
+      return {
+        number: match[1],
+        prompt: prompt.replace(/\((\d+\s*(?:marks?|pts?))\)/i, "").trim(),
+        marks: marksMatch?.[1] || ""
+      };
+    })
+    .filter((item) => item.prompt);
+}
+
+function sanitizeFileBaseName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "study-export";
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function StudyWorkspace({
   sessions,
   initialSessionId,
@@ -452,6 +633,13 @@ export function StudyWorkspace({
   initialSessionId: string | null;
   initialFiles: FileItem[];
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const chatViewportRef = useRef<HTMLDivElement>(null);
+  const quickImportInputRef = useRef<HTMLInputElement>(null);
+  const planLaunchAttemptRef = useRef<string | null>(null);
+  const defaultToolAppliedRef = useRef(false);
   const [sessionList, setSessionList] = useState<Session[]>(sessions);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId);
   const [filesBySession, setFilesBySession] = useState<Record<string, FileItem[]>>(() =>
@@ -472,10 +660,17 @@ export function StudyWorkspace({
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
   const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
+  const [quizResults, setQuizResults] = useState<Record<number, QuizResult>>({});
   const [revealedFlashcards, setRevealedFlashcards] = useState<Record<number, boolean>>({});
+  const [examAnswers, setExamAnswers] = useState<Record<number, string>>({});
   const [toolCardIndex, setToolCardIndex] = useState(0);
   const [toolHistoryBySession, setToolHistoryBySession] = useState<Record<string, ToolHistoryItem[]>>({});
+  const [metricsBySession, setMetricsBySession] = useState<Record<string, StudyMetrics>>({});
   const [restoredStudio, setRestoredStudio] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  const [rememberLastStudioPref, setRememberLastStudioPref] = useState(defaultUserPreferences.rememberLastStudio);
+  const [accountLastStudioId, setAccountLastStudioId] = useState<string | null>(defaultUserPreferences.lastStudioId);
+  const [preferredDefaultTool, setPreferredDefaultTool] = useState<AIAction>(defaultUserPreferences.defaultTool);
   const [showStudioBrowser, setShowStudioBrowser] = useState(false);
   const [studioBrowserRefreshing, setStudioBrowserRefreshing] = useState(false);
   const [copyingStudioId, setCopyingStudioId] = useState<string | null>(null);
@@ -505,7 +700,6 @@ export function StudyWorkspace({
     error: ""
   });
   const [, setDragDepth] = useState(0);
-  const quickImportInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setSessionList(sessions);
@@ -515,6 +709,63 @@ export function StudyWorkspace({
     if (!initialSessionId) return;
     setFilesBySession((current) => ({ ...current, [initialSessionId]: initialFiles }));
   }, [initialFiles, initialSessionId]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    const loadPreferences = async () => {
+      try {
+        const response = await fetch("/api/preferences");
+        const json = await readJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(json.error || "Unable to load your account preferences.");
+        }
+        if (ignore) return;
+
+        const nextDefaultTool = actionButtons.some((item) => item.key === json.defaultTool)
+          ? (json.defaultTool as AIAction)
+          : defaultUserPreferences.defaultTool;
+
+        setRememberLastStudioPref(json.rememberLastStudio ?? defaultUserPreferences.rememberLastStudio);
+        setAccountLastStudioId(typeof json.lastStudioId === "string" ? json.lastStudioId : null);
+        setPreferredDefaultTool(nextDefaultTool);
+
+        try {
+          localStorage.setItem("theme", json.theme === "light" ? "light" : "dark");
+          localStorage.setItem("scholarmind_playful_motion", json.playfulMotion === false ? "off" : "on");
+          localStorage.setItem("scholarmind_remember_last_studio", json.rememberLastStudio === false ? "off" : "on");
+          localStorage.setItem("scholarmind_default_tool", nextDefaultTool);
+          if (typeof json.lastStudioId === "string" && json.lastStudioId) {
+            localStorage.setItem("scholarmind_last_studio", json.lastStudioId);
+          }
+        } catch {
+          // Ignore local storage issues and keep the account-backed values in memory.
+        }
+      } catch {
+        try {
+          setRememberLastStudioPref(localStorage.getItem("scholarmind_remember_last_studio") !== "off");
+          const storedTool = localStorage.getItem("scholarmind_default_tool") as AIAction | null;
+          if (storedTool && actionButtons.some((item) => item.key === storedTool)) {
+            setPreferredDefaultTool(storedTool);
+          }
+          const rememberedStudio = localStorage.getItem("scholarmind_last_studio");
+          setAccountLastStudioId(rememberedStudio || null);
+        } catch {
+          // Browser storage can fail in private contexts. The in-memory defaults are enough.
+        }
+      } finally {
+        if (!ignore) {
+          setPreferencesReady(true);
+        }
+      }
+    };
+
+    void loadPreferences();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   useEffect(() => {
     const preventWindowFileDrop = (event: DragEvent) => {
@@ -543,15 +794,20 @@ export function StudyWorkspace({
   }, [activeSessionId, initialSessionId, sessionList]);
 
   useEffect(() => {
-    if (restoredStudio || !sessionList.length) return;
+    if (restoredStudio || !sessionList.length || !preferencesReady) return;
+
+    if (pathname !== "/dashboard/workspace") {
+      setRestoredStudio(true);
+      return;
+    }
 
     try {
-      if (localStorage.getItem("scholarmind_remember_last_studio") === "off") {
+      if (!rememberLastStudioPref) {
         setRestoredStudio(true);
         return;
       }
 
-      const rememberedStudio = localStorage.getItem("scholarmind_last_studio");
+      const rememberedStudio = accountLastStudioId || localStorage.getItem("scholarmind_last_studio");
       if (rememberedStudio && sessionList.some((session) => session.id === rememberedStudio)) {
         setActiveSessionId(rememberedStudio);
       }
@@ -560,7 +816,7 @@ export function StudyWorkspace({
     } finally {
       setRestoredStudio(true);
     }
-  }, [restoredStudio, sessionList]);
+  }, [accountLastStudioId, pathname, preferencesReady, rememberLastStudioPref, restoredStudio, sessionList]);
 
   const currentFiles = useMemo(
     () => (activeSessionId ? filesBySession[activeSessionId] ?? [] : []),
@@ -569,6 +825,7 @@ export function StudyWorkspace({
   const hasCurrentFiles = activeSessionId ? activeSessionId in filesBySession : false;
   const currentSession = sessionList.find((session) => session.id === activeSessionId) ?? null;
   const currentToolHistory = activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : [];
+  const currentMetrics = activeSessionId ? metricsBySession[activeSessionId] ?? createEmptyMetrics() : createEmptyMetrics();
   const currentFilesLabel = useMemo(() => {
     if (!currentFiles.length) return "No uploaded sources yet";
     if (currentFiles.length === 1) return currentFiles[0].file_name;
@@ -624,11 +881,211 @@ export function StudyWorkspace({
     () => filteredSourceResults.slice(0, visibleSourceResults),
     [filteredSourceResults, visibleSourceResults]
   );
+  const quizResultRows = useMemo(
+    () =>
+      (parsedQuiz ?? []).map((item, index) => {
+        const graded = quizResults[index];
+        const selected = graded?.selected || selectedQuizOption[index] || "";
+        const correct = graded?.correct || item.answer || "";
+        const isCorrect = graded?.isCorrect ?? (selected && correct ? selected === correct : false);
+        return {
+          number: index + 1,
+          question: item.question,
+          selected,
+          correct,
+          isCorrect,
+          explanation: graded?.explanation || item.explanation || ""
+        };
+      }),
+    [parsedQuiz, quizResults, selectedQuizOption]
+  );
+  const parsedExamQuestions = useMemo(
+    () => (activeAction === "exam" ? parseExamQuestions(output) : []),
+    [activeAction, output]
+  );
+  const parsedSchedule = useMemo(
+    () => (activeAction === "study_plan" ? parseRevisionSchedule(output) : []),
+    [activeAction, output]
+  );
+
+  const updateMetrics = useCallback(
+    (updater: (current: StudyMetrics) => StudyMetrics) => {
+      if (!activeSessionId) return;
+
+      setMetricsBySession((current) => {
+        const base = current[activeSessionId] ?? createEmptyMetrics();
+        return {
+          ...current,
+          [activeSessionId]: updater(base)
+        };
+      });
+    },
+    [activeSessionId]
+  );
+
+  const downloadBlob = useCallback((blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 400);
+  }, []);
+
+  const exportPayload = useCallback(() => {
+    const base = {
+      studio: currentSession?.title || "Study studio",
+      action: activeAction,
+      generatedAt: new Date().toISOString(),
+      sourceCount: currentFiles.length,
+      sources: currentFiles.map((file) => ({
+        id: file.id,
+        name: file.file_name,
+        type: file.file_type
+      }))
+    };
+
+    if (activeAction === "quiz" && parsedQuiz?.length) {
+      return {
+        ...base,
+        items: parsedQuiz,
+        results: quizResultRows
+      };
+    }
+
+    if (activeAction === "flashcards" && parsedFlashcards?.length) {
+      return {
+        ...base,
+        cards: parsedFlashcards
+      };
+    }
+
+    if (activeAction === "exam" && parsedExamQuestions.length) {
+      return {
+        ...base,
+        questions: parsedExamQuestions.map((question, index) => ({
+          ...question,
+          answer: examAnswers[index] || ""
+        })),
+        markdown: output
+      };
+    }
+
+    if (activeAction === "study_plan" && parsedSchedule.length) {
+      return {
+        ...base,
+        schedule: parsedSchedule,
+        markdown: output
+      };
+    }
+
+    return {
+      ...base,
+      cards: parsedCards,
+      markdown: output
+    };
+  }, [activeAction, currentFiles, currentSession?.title, examAnswers, output, parsedCards, parsedExamQuestions, parsedFlashcards, parsedQuiz, parsedSchedule, quizResultRows]);
+
+  const exportCurrentResultAsJson = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate a study result first, then export it.");
+      return;
+    }
+
+    const fileName = `${sanitizeFileBaseName(`${currentSession?.title || "studio"}-${activeAction}`)}.json`;
+    downloadBlob(new Blob([JSON.stringify(exportPayload(), null, 2)], { type: "application/json" }), fileName);
+    setStatusNote("JSON export downloaded.");
+  }, [activeAction, currentSession?.title, downloadBlob, exportPayload, output]);
+
+  const exportCurrentResultAsPdf = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate a study result first, then export it.");
+      return;
+    }
+
+    const printableWindow = window.open("", "_blank", "noopener,noreferrer,width=1100,height=900");
+    if (!printableWindow) {
+      setStatusNote("Allow popups for this site to export as PDF.");
+      return;
+    }
+
+    const quizTable =
+      activeAction === "quiz" && quizResultRows.length
+        ? `
+          <h2>Quiz Results</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Question</th><th>Your answer</th><th>Correct answer</th><th>Result</th></tr>
+            </thead>
+            <tbody>
+              ${quizResultRows
+                .map(
+                  (row) =>
+                    `<tr><td>${row.number}</td><td>${escapeHtml(row.question)}</td><td>${escapeHtml(
+                      row.selected || "—"
+                    )}</td><td>${escapeHtml(row.correct || "—")}</td><td>${row.isCorrect ? "Correct" : row.selected ? "Review" : "Pending"}</td></tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        `
+        : "";
+
+    const examAnswerSheet =
+      activeAction === "exam" && parsedExamQuestions.length
+        ? `
+          <h2>Online Answer Sheet</h2>
+          ${parsedExamQuestions
+            .map(
+              (question, index) => `
+                <section style="margin-bottom: 18px;">
+                  <h3 style="margin-bottom: 6px;">Question ${escapeHtml(question.number)}${question.marks ? ` (${escapeHtml(question.marks)})` : ""}</h3>
+                  <p>${escapeHtml(question.prompt)}</p>
+                  <div style="margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 14px; padding: 12px; min-height: 96px;">
+                    ${escapeHtml(examAnswers[index] || "No online answer added yet.")}
+                  </div>
+                </section>
+              `
+            )
+            .join("")}
+        `
+        : "";
+
+    printableWindow.document.write(`<!doctype html>
+      <html>
+        <head>
+          <title>${escapeHtml(currentSession?.title || "ScholarMind Export")}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 32px; color: #0f172a; line-height: 1.6; }
+            h1, h2 { margin: 0 0 12px; }
+            .meta { color: #475569; margin-bottom: 24px; }
+            pre { white-space: pre-wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; vertical-align: top; }
+            th { background: #e2e8f0; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(actionButtons.find((item) => item.key === activeAction)?.label || "Study export")}</h1>
+          <p class="meta">${escapeHtml(currentSession?.title || "Study studio")} • ${currentFiles.length} source(s)</p>
+          ${quizTable}
+          ${examAnswerSheet}
+          <pre>${escapeHtml(output)}</pre>
+          <script>window.onload = function(){ window.print(); };</script>
+        </body>
+      </html>`);
+    printableWindow.document.close();
+    setStatusNote("PDF export opened in a print window.");
+  }, [activeAction, currentFiles.length, currentSession?.title, examAnswers, output, parsedExamQuestions, quizResultRows]);
 
   useEffect(() => {
     setRevealedQuiz({});
     setSelectedQuizOption({});
+    setQuizResults({});
     setRevealedFlashcards({});
+    setExamAnswers({});
     setToolCardIndex(0);
   }, [activeAction, output]);
 
@@ -662,30 +1119,49 @@ export function StudyWorkspace({
   }, [activeSessionId, currentFiles.length, sourcePromptedForStudio]);
 
   useEffect(() => {
+    if (!preferencesReady || defaultToolAppliedRef.current) return;
+    if (actionButtons.some((item) => item.key === preferredDefaultTool)) {
+      setActiveAction(preferredDefaultTool);
+      setToolDraft(createToolDraft(preferredDefaultTool));
+    }
+    defaultToolAppliedRef.current = true;
+  }, [preferencesReady, preferredDefaultTool]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+
     try {
-      const storedTool = localStorage.getItem("scholarmind_default_tool") as AIAction | null;
-      if (
-        storedTool &&
-        actionButtons.some((item) => item.key === storedTool)
-      ) {
-        setActiveAction(storedTool);
-        setToolDraft(createToolDraft(storedTool));
+      localStorage.setItem("scholarmind_remember_last_studio", rememberLastStudioPref ? "on" : "off");
+      localStorage.setItem("scholarmind_default_tool", preferredDefaultTool);
+      if (!rememberLastStudioPref) {
+        localStorage.removeItem("scholarmind_last_studio");
       }
     } catch {
       return;
     }
-  }, []);
+  }, [preferencesReady, preferredDefaultTool, rememberLastStudioPref]);
 
   useEffect(() => {
-    if (!activeSessionId) return;
+    if (!activeSessionId || !preferencesReady || !rememberLastStudioPref) return;
 
     try {
-      if (localStorage.getItem("scholarmind_remember_last_studio") === "off") return;
       localStorage.setItem("scholarmind_last_studio", activeSessionId);
     } catch {
-      return;
+      // Ignore browser storage failures.
     }
-  }, [activeSessionId]);
+
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lastStudioId: activeSessionId })
+      });
+    }, 160);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeSessionId, preferencesReady, rememberLastStudioPref]);
 
   useEffect(() => {
     if (!activeSessionId || hasCurrentFiles) return;
@@ -697,7 +1173,7 @@ export function StudyWorkspace({
 
       try {
         const response = await fetch(`/api/sessions?sessionId=${activeSessionId}`);
-        const json = await response.json();
+        const json = await readJsonResponse(response);
         if (!response.ok) {
           throw new Error(json.error || "Unable to load files for this studio.");
         }
@@ -723,11 +1199,21 @@ export function StudyWorkspace({
     };
   }, [activeSessionId, hasCurrentFiles]);
 
+  useEffect(() => {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: messages.length > 1 ? "smooth" : "auto"
+    });
+  }, [chatLoading, messages]);
+
   const buildContextForPrompt = useCallback(
     (hint: string, action: AIAction) =>
       buildStudyContext(currentFiles, hint, {
-        maxCharacters: 18000,
-        maxChunks: action === "exam" ? 24 : 16
+        maxCharacters: action === "exam" ? 14000 : action === "quiz" || action === "flashcards" ? 10000 : 8000,
+        maxChunks: action === "exam" ? 18 : action === "quiz" || action === "flashcards" ? 12 : 8
       }),
     [currentFiles]
   );
@@ -810,6 +1296,10 @@ export function StudyWorkspace({
         event.preventDefault();
         setRevealedFlashcards((current) => {
           if (!current[toolCardIndex]) {
+            updateMetrics((metrics) => ({
+              ...metrics,
+              flashcardsFlipped: metrics.flashcardsFlipped + 1
+            }));
             return { ...current, [toolCardIndex]: true };
           }
 
@@ -821,14 +1311,14 @@ export function StudyWorkspace({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeAction, shiftToolCard, toolCardIndex, toolModalOpen, toolModalView]);
+  }, [activeAction, shiftToolCard, toolCardIndex, toolModalOpen, toolModalView, updateMetrics]);
 
   const refreshStudios = async () => {
     setStudioBrowserRefreshing(true);
 
     try {
       const response = await fetch("/api/sessions");
-      const json = await response.json();
+      const json = await readJsonResponse(response);
       if (!response.ok) {
         throw new Error(json.error || "Unable to refresh the studio list.");
       }
@@ -859,7 +1349,7 @@ export function StudyWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: title || `Studio ${sessionList.length + 1}` })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to prepare a studio.");
@@ -927,7 +1417,7 @@ export function StudyWorkspace({
         form.append("sessionId", sessionId);
 
         const response = await fetch("/api/upload", { method: "POST", body: form });
-        const json = await response.json();
+        const json = await readJsonResponse(response);
 
         if (!response.ok) {
           rejectedFiles.push(
@@ -949,7 +1439,7 @@ export function StudyWorkspace({
 
       if (!nextFiles.length) {
         const refreshResponse = await fetch(`/api/sessions?sessionId=${sessionId}`);
-        const refreshJson = await refreshResponse.json();
+        const refreshJson = await readJsonResponse(refreshResponse);
         if (!refreshResponse.ok) {
           throw new Error(refreshJson.error || "Upload finished, but the files could not be refreshed.");
         }
@@ -1015,7 +1505,7 @@ export function StudyWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, engine: sourceSearchEngine })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to search the web right now.");
@@ -1043,7 +1533,7 @@ export function StudyWorkspace({
       const response = await fetch(`/api/files/${file.id}`, {
         method: "DELETE"
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to remove this source.");
@@ -1088,7 +1578,7 @@ export function StudyWorkspace({
           trustLabel: source.trustLabel
         })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to import this web source.");
@@ -1130,7 +1620,7 @@ export function StudyWorkspace({
           targetSessionId
         })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to copy sources.");
@@ -1178,7 +1668,7 @@ export function StudyWorkspace({
 
     try {
       const response = await fetch(`/api/files/preview?fileId=${file.id}`);
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to open this file.");
@@ -1266,58 +1756,91 @@ export function StudyWorkspace({
           sessionId: activeSessionId ?? undefined
         })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
       if (!response.ok) {
         throw new Error(json.error || "No response");
       }
 
       setOutput(json.text || "No response");
       saveToolResult(action, json.text || "No response", action === toolDraft.action ? toolDraft.focus : "");
-      const providerNote =
-        json.provider === "local"
-          ? " Local fallback mode is active, so results are more heuristic until a valid hosted AI key is configured."
-          : json.provider === "cache"
-            ? " Cached result reused for speed."
-            : "";
+      updateMetrics((current) => ({
+        ...current,
+        toolRuns: {
+          ...current.toolRuns,
+          [action]: (current.toolRuns[action] ?? 0) + 1
+        }
+      }));
       const remainingUsage =
         typeof json.usage?.dailyRemaining === "number"
           ? ` ${json.usage.dailyRemaining} AI run(s) left today in the free preview.`
           : "";
       const examUsage =
-        action === "exam" && typeof json.usage?.examDailyRemaining === "number"
-          ? ` ${json.usage.examDailyRemaining} full exam generation(s) left today.`
+        action === "exam" && typeof json.usage?.examWeeklyRemaining === "number"
+          ? ` ${json.usage.examWeeklyRemaining} full exam generation(s) left this week.`
           : "";
       setStatusNote(
-        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}${examUsage}${providerNote}`
+        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}${examUsage}`
       );
-      return true;
+      return json.text || "No response";
     } catch (error) {
       setStatusNote((error as Error).message || "No response");
-      return false;
+      return null;
     } finally {
       setLoading(false);
     }
   };
 
-  const sendChat = async () => {
-    const question = chat.trim();
-    if (!question || loading || chatLoading) return;
+  const submitChatQuestion = useCallback(async (questionInput: string) => {
+    const question = questionInput.trim();
+    if (!question || loading || chatLoading) return false;
 
     if (!currentFiles.length) {
       const message = "Upload sources or files to continue. AI answers stay locked to uploaded material in this workspace.";
       setStatusNote(message);
       openSourceModal(message);
       setTab("chat");
-      return;
+      return false;
     }
 
-    setChat("");
+    const historySnapshot = messages.slice(-6);
+    const hasStudyHistory =
+      currentMetrics.quizAnswered > 0 ||
+      currentMetrics.flashcardsFlipped > 0 ||
+      Object.values(currentMetrics.toolRuns).some((count) => count > 0);
+    const studyProfile = hasStudyHistory ? buildPerformanceSummary(currentMetrics) : "";
+    const enrichedPrompt = historySnapshot.length
+      ? [
+          currentSession?.title ? `Current studio: ${currentSession.title}` : "",
+          studyProfile ? `How this student has been working so far:\n${studyProfile}` : "",
+          "Conversation so far:",
+          ...historySnapshot.map(
+            (message) => `${message.role === "user" ? "User" : "Assistant"}: ${clipText(message.content.replace(/\n+/g, " "), 420)}`
+          ),
+          "",
+          `Latest user question: ${question}`,
+          "",
+          "Answer the latest user question directly and only add extra study help after the answer."
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : [
+          currentSession?.title ? `Current studio: ${currentSession.title}` : "",
+          studyProfile ? `How this student has been working so far:\n${studyProfile}` : "",
+          `Latest user question: ${question}`,
+          "Answer the question directly, use only the uploaded sources, and finish with one small next step."
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+
     setMessages((current) => [...current, { role: "user", content: question }]);
     setChatLoading(true);
     setTab("chat");
     setStatusNote("");
 
-    const context = buildContextForPrompt(question, "chat" as AIAction);
+    const context = buildContextForPrompt(
+      [question, ...historySnapshot.slice(-3).map((message) => message.content)].join("\n"),
+      "chat" as AIAction
+    );
 
     try {
       const response = await fetch("/api/ai/generate", {
@@ -1325,30 +1848,122 @@ export function StudyWorkspace({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "chat",
-          prompt: question,
+          prompt: enrichedPrompt,
           context,
           sessionId: activeSessionId ?? undefined
         })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
       if (!response.ok) {
         throw new Error(json.error || "Unable to generate a reply.");
       }
       const text = json.text || json.error || "No response";
       setMessages((current) => [...current, { role: "ai", content: text }]);
-      setStatusNote(
-        json.provider === "local"
-          ? "Chat is running in local fallback mode, so answers are simpler until a valid hosted AI key is configured."
-          : ""
-      );
+      setStatusNote("");
     } catch (error) {
       const message = (error as Error).message || "Unable to generate a reply.";
       setMessages((current) => [...current, { role: "ai", content: message }]);
       setStatusNote(message);
+      return false;
     } finally {
       setChatLoading(false);
     }
+    return true;
+  }, [activeSessionId, buildContextForPrompt, chatLoading, currentFiles.length, currentMetrics, currentSession?.title, loading, messages]);
+
+  const sendChat = async () => {
+    const question = chat.trim();
+    if (!question) return;
+    const sent = await submitChatQuestion(question);
+    if (sent) {
+      setChat("");
+    }
   };
+
+  useEffect(() => {
+    const planId = searchParams.get("planId");
+    const dayIndexParam = searchParams.get("day");
+    const launchKey = planId ? `${planId}:${dayIndexParam || "0"}:${activeSessionId || "none"}` : null;
+
+    if (!planId || !launchKey || planLaunchAttemptRef.current === launchKey || !activeSessionId || !hasCurrentFiles) {
+      return;
+    }
+
+    if (!currentFiles.length) {
+      setStatusNote("This revision day needs at least one uploaded source in the linked studio before it can open as a guided session.");
+      return;
+    }
+
+    planLaunchAttemptRef.current = launchKey;
+    let ignore = false;
+
+    const openPlannedSession = async () => {
+      try {
+        const response = await fetch(`/api/revision-plans/${planId}`);
+        const json = await readJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(json.error || "Unable to open this revision day.");
+        }
+
+        if (ignore) return;
+
+        const plan = json.plan as {
+          id: string;
+          session_id: string;
+          exam_name: string;
+          current_day: number;
+          days: Array<{ label?: string; focus?: string; task?: string; check?: string }>;
+        };
+
+        if (!plan || plan.session_id !== activeSessionId || !Array.isArray(plan.days) || !plan.days.length) {
+          throw new Error("This revision day is no longer linked to the current studio.");
+        }
+
+        const targetIndex = Number.isFinite(Number(dayIndexParam))
+          ? Math.max(0, Math.min(Number(dayIndexParam), plan.days.length - 1))
+          : Math.max(0, Math.min(plan.current_day || 0, plan.days.length - 1));
+        const day = plan.days[targetIndex];
+
+        if (!day) {
+          throw new Error("The selected revision day could not be found.");
+        }
+
+        setMessages([]);
+        setChat("");
+        setTab("chat");
+
+        const opened = await submitChatQuestion(
+          [
+            `Start a personalised revision session for ${plan.exam_name}.`,
+            `Today's schedule block: ${day.label || `Day ${targetIndex + 1}`}.`,
+            `Focus: ${day.focus || "Use the most important ideas from the uploaded sources."}.`,
+            `Task: ${day.task || "Teach the material clearly and help me revise it."}.`,
+            `Self-check target: ${day.check || "Finish with one quick recall check."}.`,
+            "Use my uploaded sources only, answer directly, adapt to how I have been studying in this studio, and end with one small next step."
+          ].join(" ")
+        );
+
+        if (opened && !ignore) {
+          setStatusNote(`Opened ${day.label || `Day ${targetIndex + 1}`} from your revision schedule.`);
+        }
+      } catch (error) {
+        if (!ignore) {
+          planLaunchAttemptRef.current = null;
+          setStatusNote((error as Error).message || "Unable to open this revision day.");
+        }
+      } finally {
+        if (!ignore) {
+          router.replace(pathname);
+        }
+      }
+    };
+
+    void openPlannedSession();
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeSessionId, currentFiles.length, hasCurrentFiles, pathname, router, searchParams, submitChatQuestion]);
 
   const createReminder = async () => {
     if (!currentFiles.length) {
@@ -1375,7 +1990,7 @@ export function StudyWorkspace({
           daysAhead: 2
         })
       });
-      const json = await response.json();
+      const json = await readJsonResponse(response);
 
       if (!response.ok) {
         throw new Error(json.error || "Unable to schedule reminder.");
@@ -1412,8 +2027,12 @@ export function StudyWorkspace({
       return;
     }
 
-    const success = await runAI(toolDraft.action, buildToolPrompt(toolDraft, currentFiles));
-    if (success) {
+    const performanceNote =
+      toolDraft.action === "insights"
+        ? `\n\nPerformance data from this studio:\n${buildPerformanceSummary(currentMetrics)}`
+        : "";
+    const result = await runAI(toolDraft.action, `${buildToolPrompt(toolDraft, currentFiles)}${performanceNote}`);
+    if (result) {
       setToolModalView("result");
     }
   };
@@ -1422,6 +2041,22 @@ export function StudyWorkspace({
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     sendChat();
+  };
+
+  const openRevisionSchedule = () => {
+    if (toolsLocked) {
+      const message = "Upload at least one file or add a web source before building a revision schedule.";
+      setStatusNote(message);
+      openSourceModal(message);
+      return;
+    }
+
+    const params = new URLSearchParams();
+    if (activeSessionId) {
+      params.set("sessionId", activeSessionId);
+    }
+    setStatusNote("");
+    router.push(`/schedule${params.toString() ? `?${params.toString()}` : ""}`);
   };
 
   const renderToolResults = () => {
@@ -1471,6 +2106,8 @@ export function StudyWorkspace({
       const isOpen = Boolean(revealedQuiz[currentIndex]);
       const selectedOption = selectedQuizOption[currentIndex] || "";
       const correctOption = item.answer || "";
+      const answeredCount = quizResultRows.filter((row) => row.selected).length;
+      const correctCount = quizResultRows.filter((row) => row.isCorrect).length;
 
       return (
         <div className="space-y-3">
@@ -1500,7 +2137,7 @@ export function StudyWorkspace({
               <div className="mt-5 space-y-3">
                 {item.options.map((option) => (
                   <button
-                    key={option}
+                    key={`${currentIndex}-${option}`}
                     type="button"
                     onClick={() => {
                       setSelectedQuizOption((current) => ({ ...current, [currentIndex]: option }));
@@ -1529,6 +2166,22 @@ export function StudyWorkspace({
                     return;
                   }
                   setStatusNote("");
+                  if (!quizResults[currentIndex]) {
+                    const nextResult: QuizResult = {
+                      question: item.question,
+                      selected: selectedOption,
+                      correct: correctOption,
+                      isCorrect: selectedOption === correctOption,
+                      explanation: item.explanation || ""
+                    };
+                    setQuizResults((current) => ({ ...current, [currentIndex]: nextResult }));
+                    updateMetrics((current) => ({
+                      ...current,
+                      quizAnswered: current.quizAnswered + 1,
+                      quizCorrect: current.quizCorrect + (nextResult.isCorrect ? 1 : 0),
+                      recentQuizResults: [nextResult, ...current.recentQuizResults].slice(0, 12)
+                    }));
+                  }
                   setRevealedQuiz((current) => ({ ...current, [currentIndex]: !isOpen }));
                 }}
                 variant="secondary"
@@ -1552,6 +2205,57 @@ export function StudyWorkspace({
               </div>
             ) : null}
           </motion.article>
+          <div className="rounded-[24px] bg-white/10 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">Quiz results table</p>
+                <p className="muted mt-1 text-xs">Track what you answered, what was right, and what still needs a second pass.</p>
+              </div>
+              <div className="rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
+                {correctCount} / {answeredCount || 0} correct
+              </div>
+            </div>
+            <div className="mt-4 overflow-auto rounded-[20px] border border-white/10">
+              <table className="min-w-full text-left text-xs md:text-sm">
+                <thead className="bg-white/10">
+                  <tr>
+                    <th className="px-3 py-2">#</th>
+                    <th className="px-3 py-2">Question</th>
+                    <th className="px-3 py-2">Your answer</th>
+                    <th className="px-3 py-2">Correct</th>
+                    <th className="px-3 py-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quizResultRows.map((row) => (
+                    <tr key={`quiz-row-${row.number}`} className="border-t border-white/10">
+                      <td className="px-3 py-2 align-top">{row.number}</td>
+                      <td className="px-3 py-2 align-top">{clipText(row.question, 120)}</td>
+                      <td className="px-3 py-2 align-top">{row.selected || "Pending"}</td>
+                      <td className="px-3 py-2 align-top">{row.correct || "—"}</td>
+                      <td className="px-3 py-2 align-top">
+                        {row.selected ? (
+                          <span
+                            className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                              row.isCorrect
+                                ? "bg-[rgba(121,247,199,0.16)] text-[var(--accent-mint)]"
+                                : "bg-[rgba(255,125,89,0.16)] text-[var(--accent-coral)]"
+                            }`}
+                          >
+                            {row.isCorrect ? "Correct" : "Review"}
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
+                            Pending
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       );
     }
@@ -1569,9 +2273,8 @@ export function StudyWorkspace({
             eyebrow: "Flashcard Deck",
             caption: "Tap the card to flip it, then swipe or move to the next one."
           })}
-          <motion.button
+          <motion.article
             key={`${item.front}-${currentIndex}-${isOpen ? "back" : "front"}`}
-            type="button"
             initial={{ opacity: 0, y: 12, rotateY: isOpen ? 0 : 6 }}
             animate={{ opacity: 1, y: 0, rotateY: 0 }}
             drag="x"
@@ -1581,7 +2284,29 @@ export function StudyWorkspace({
               if (info.offset.x >= 90) shiftToolCard(-1);
             }}
             whileHover={{ y: -2 }}
-            onClick={() => setRevealedFlashcards((current) => ({ ...current, [currentIndex]: !isOpen }))}
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              if (!isOpen) {
+                updateMetrics((current) => ({
+                  ...current,
+                  flashcardsFlipped: current.flashcardsFlipped + 1
+                }));
+              }
+              setRevealedFlashcards((current) => ({ ...current, [currentIndex]: !isOpen }));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                if (!isOpen) {
+                  updateMetrics((current) => ({
+                    ...current,
+                    flashcardsFlipped: current.flashcardsFlipped + 1
+                  }));
+                }
+                setRevealedFlashcards((current) => ({ ...current, [currentIndex]: !isOpen }));
+              }
+            }}
             className={`w-full rounded-[34px] border px-6 py-8 text-left shadow-[0_24px_60px_rgba(6,10,24,0.22)] ${toolTones.flashcards}`}
           >
             <p className="text-xs font-semibold uppercase tracking-[0.26em] text-[var(--accent-gold)]">
@@ -1594,12 +2319,145 @@ export function StudyWorkspace({
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               <p className="muted text-xs">{isOpen ? "Tap to flip back or press space for next" : "Tap to reveal the answer"}</p>
-              <Button onClick={() => shiftToolCard(1)} variant="secondary" size="sm">
+              <Button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  shiftToolCard(1);
+                }}
+                variant="secondary"
+                size="sm"
+              >
                 Next card
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             </div>
-          </motion.button>
+          </motion.article>
+        </div>
+      );
+    }
+
+    if (activeAction === "exam" && parsedExamQuestions.length) {
+      const answeredCount = Object.values(examAnswers).filter((answer) => answer.trim()).length;
+
+      return (
+        <div className="space-y-3">
+          <div className="rounded-[24px] border border-[rgba(255,209,102,0.18)] bg-[rgba(255,209,102,0.08)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">Interactive exam mode</p>
+                <p className="mt-2 text-sm font-semibold">Answer the paper online, then export a printable PDF when you want it on paper.</p>
+              </div>
+              <div className="rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
+                {answeredCount}/{parsedExamQuestions.length} answered
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {parsedExamQuestions.map((question, index) => (
+              <motion.article
+                key={`exam-${question.number}-${index}`}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`rounded-[30px] border px-5 py-5 text-sm shadow-[0_24px_60px_rgba(6,10,24,0.18)] ${toolTones.exam}`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
+                    Question {question.number}
+                  </p>
+                  {question.marks ? (
+                    <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]">
+                      {question.marks}
+                    </span>
+                  ) : null}
+                </div>
+                <p className="mt-4 whitespace-pre-wrap text-base leading-8">{question.prompt}</p>
+                <div className="mt-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-sky)]">Your answer</p>
+                  <textarea
+                    value={examAnswers[index] || ""}
+                    onChange={(event) =>
+                      setExamAnswers((current) => ({
+                        ...current,
+                        [index]: event.target.value
+                      }))
+                    }
+                    placeholder="Write your answer here. Keep going question by question and export the paper when you want to print it."
+                    className="mt-3 min-h-[10rem] w-full rounded-[22px] border border-white/14 bg-black/10 px-4 py-4 text-sm outline-none transition focus:border-[var(--accent-sky)]"
+                  />
+                </div>
+              </motion.article>
+            ))}
+          </div>
+
+          <details className="rounded-[24px] bg-white/10 px-4 py-4 text-sm">
+            <summary className="cursor-pointer font-semibold">Show the full printable paper and mark scheme</summary>
+            <div className="mt-4 rounded-[20px] border border-white/10 px-4 py-4">
+              <RichStudyText content={output} />
+            </div>
+          </details>
+        </div>
+      );
+    }
+
+    if (activeAction === "insights") {
+      return (
+        <div className="space-y-3">
+          <div className="rounded-[24px] border border-[rgba(255,125,89,0.18)] bg-[rgba(255,125,89,0.08)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">Study report</p>
+                <p className="mt-2 text-sm font-semibold">Performance snapshot from this studio</p>
+              </div>
+              <div className="rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
+                {currentMetrics.quizCorrect}/{currentMetrics.quizAnswered || 0} quiz correct
+              </div>
+            </div>
+            <div className="mt-4 overflow-auto rounded-[20px] border border-white/10">
+              <table className="min-w-full text-left text-xs md:text-sm">
+                <thead className="bg-white/10">
+                  <tr>
+                    <th className="px-3 py-2">Signal</th>
+                    <th className="px-3 py-2">What it says</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-white/10">
+                    <td className="px-3 py-2 align-top">Quiz accuracy</td>
+                    <td className="px-3 py-2 align-top">
+                      {currentMetrics.quizAnswered
+                        ? `${Math.round((currentMetrics.quizCorrect / currentMetrics.quizAnswered) * 100)}% across ${currentMetrics.quizAnswered} checked answer(s).`
+                        : "No quiz answers checked yet."}
+                    </td>
+                  </tr>
+                  <tr className="border-t border-white/10">
+                    <td className="px-3 py-2 align-top">Flashcard activity</td>
+                    <td className="px-3 py-2 align-top">{currentMetrics.flashcardsFlipped} card flip(s) recorded so far.</td>
+                  </tr>
+                  <tr className="border-t border-white/10">
+                    <td className="px-3 py-2 align-top">Most-used tools</td>
+                    <td className="px-3 py-2 align-top">
+                      {Object.entries(currentMetrics.toolRuns)
+                        .filter(([, count]) => count > 0)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 3)
+                        .map(([action, count]) => `${action.replace(/_/g, " ")} (${count})`)
+                        .join(", ") || "No tool runs yet."}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {output ? (
+            <motion.article
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`rounded-[26px] border px-5 py-5 ${toolTones[activeAction]}`}
+            >
+              <RichStudyText content={output} />
+            </motion.article>
+          ) : null}
         </div>
       );
     }
@@ -1656,11 +2514,11 @@ export function StudyWorkspace({
 
     return (
       <div className="rounded-[24px] bg-white/12 px-4 py-4 text-sm">
-        <p className="font-semibold">Pick a tool to open the mini generator.</p>
+        <p className="font-semibold">Pick a tool to generate a study result.</p>
         <p className="muted mt-2">
           {toolsLocked
             ? "Upload a file first, then generate quizzes, flashcards, exams, summaries, and the rest from your own sources."
-            : "Choose a tool, customise it in the popup, and the result stack will appear here."}
+            : "Choose a tool, tailor it to the current studio, and the result stack will appear here."}
         </p>
       </div>
     );
@@ -1709,7 +2567,7 @@ export function StudyWorkspace({
         ))}
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[18.5rem_minmax(0,0.92fr)_27rem] xl:grid-cols-[19rem_minmax(0,0.88fr)_27.5rem]">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)_34rem] xl:grid-cols-[24rem_minmax(0,1fr)_39rem] 2xl:grid-cols-[25rem_minmax(0,1fr)_41rem]">
         <aside className={`${tab !== "files" ? "hidden lg:block" : "block"}`}>
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="mb-4 flex items-center justify-between">
@@ -1956,7 +2814,10 @@ export function StudyWorkspace({
               </div>
             </div>
 
-            <div className="hide-scrollbar mt-4 max-h-[30rem] min-h-[23rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4">
+            <div
+              ref={chatViewportRef}
+              className="hide-scrollbar mt-4 max-h-[27rem] min-h-[21.5rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4"
+            >
               {!currentFiles.length ? (
                 <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
                   <p className="font-semibold">Upload sources or files to continue</p>
@@ -1977,7 +2838,7 @@ export function StudyWorkspace({
                     key={`${message.role}-${index}`}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`max-w-[82%] rounded-[28px] px-5 py-4 ${
+                    className={`max-w-[74%] rounded-[28px] px-5 py-4 ${
                       message.role === "user"
                         ? "ml-auto bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
                         : "bg-white/16"
@@ -1995,7 +2856,7 @@ export function StudyWorkspace({
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="max-w-[20rem] rounded-[28px] bg-white/16 px-5 py-4 text-sm"
+                  className="max-w-[18rem] rounded-[28px] bg-white/16 px-5 py-4 text-sm"
                 >
                   <div className="flex items-center gap-2">
                     <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
@@ -2036,7 +2897,7 @@ export function StudyWorkspace({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">Study Tools</p>
-                <p className="muted text-xs">Pick a tool, tune it, then generate from the uploaded sources.</p>
+                <p className="muted text-xs">Pick a tool and generate from the uploaded sources.</p>
               </div>
               <div className="glass rounded-full px-3 py-1 text-xs font-medium capitalize">
                 {actionButtons.find((item) => item.key === activeAction)?.label || activeAction.replace("_", " ")}
@@ -2074,10 +2935,28 @@ export function StudyWorkspace({
                       : "bg-white/12 hover:bg-white/18"
                   }`}
                 >
-                  <p className="text-sm font-semibold">{action.label}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-semibold">{action.label}</p>
+                    {action.key === "exam" ? (
+                      <span className="rounded-full bg-[rgba(255,209,102,0.14)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--accent-gold)]">
+                        {defaultExamGeneratorWeeklyLimit}/week
+                      </span>
+                    ) : action.key === "concepts" ? (
+                      <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
+                        uses quota
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="muted mt-1 text-xs">{action.copy}</p>
                 </button>
               ))}
+            </div>
+
+            <div className="mt-4 rounded-[22px] bg-white/10 px-4 py-3 text-xs">
+              <p className="font-semibold">Free preview limits</p>
+              <p className="muted mt-2">
+                Up to {defaultFreePreviewDailyLimit} AI runs per day. Full exam papers are heavier and capped at {defaultExamGeneratorWeeklyLimit} per week.
+              </p>
             </div>
 
             <div className="mt-4 rounded-[24px] border border-[rgba(255,209,102,0.16)] bg-[linear-gradient(135deg,rgba(255,209,102,0.08),rgba(57,208,255,0.08))] p-4">
@@ -2111,11 +2990,10 @@ export function StudyWorkspace({
                 <Timer className="h-4 w-4" />
                 Set reminder
               </Button>
-              {activeAction === "exam" ? (
-                <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-2 text-xs text-[var(--accent-gold)]">
-                  {defaultExamGeneratorDailyLimit} exam(s) daily
-                </div>
-              ) : null}
+              <Button onClick={openRevisionSchedule} variant="ghost" className="flex-1 justify-center rounded-[18px] bg-white/10">
+                <CalendarDays className="h-4 w-4" />
+                Revision schedule
+              </Button>
             </div>
 
               {loading ? (
@@ -2170,7 +3048,7 @@ export function StudyWorkspace({
                   ))
                 ) : (
                   <div className="rounded-[22px] bg-white/10 px-4 py-4 text-sm">
-                    Generated summaries, quizzes, flashcards, concept maps, and exams will appear here.
+                    Saved study outputs will appear here once you generate a summary, quiz, flashcard deck, concept map, study plan, or exam.
                   </div>
                 )}
               </div>
@@ -2384,8 +3262,8 @@ export function StudyWorkspace({
                         ) : null}
                       </div>
 
-                      {visibleSourceSearchResults.length ? visibleSourceSearchResults.map((result) => (
-                      <div key={result.id} className="rounded-[22px] border border-white/10 bg-white/8 p-4">
+                      {visibleSourceSearchResults.length ? visibleSourceSearchResults.map((result, index) => (
+                      <div key={`${result.id}-${result.url}-${index}`} className="rounded-[22px] border border-white/10 bg-white/8 p-4">
                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -2495,9 +3373,17 @@ export function StudyWorkspace({
                       <p className="text-sm font-semibold">Generated inside this studio</p>
                       <p className="muted mt-1 text-xs">The result below is tied to your current uploaded sources.</p>
                     </div>
-                    <Button onClick={() => setToolModalView("setup")} variant="secondary" size="sm">
-                      Tune again
-                    </Button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm">
+                        Export JSON
+                      </Button>
+                      <Button onClick={exportCurrentResultAsPdf} variant="ghost" size="sm">
+                        Export PDF
+                      </Button>
+                      <Button onClick={() => setToolModalView("setup")} variant="secondary" size="sm">
+                        Tune again
+                      </Button>
+                    </div>
                   </div>
                   <div className="space-y-3">{renderToolResults()}</div>
                 </div>
@@ -2514,7 +3400,10 @@ export function StudyWorkspace({
                         {[
                           { label: "Fewer", value: Math.max(3, createToolDraft(toolDraft.action).count - 2) },
                           { label: "Standard", value: createToolDraft(toolDraft.action).count },
-                          { label: "More", value: Math.min(12, createToolDraft(toolDraft.action).count + 3) }
+                          {
+                            label: "More",
+                            value: Math.min(toolDraft.action === "exam" ? 18 : 12, createToolDraft(toolDraft.action).count + 3)
+                          }
                         ].map((option) => (
                           <button
                             key={`${toolDraft.action}-${option.label}`}
@@ -2590,11 +3479,11 @@ export function StudyWorkspace({
                       <div className="mt-6 rounded-[22px] bg-[linear-gradient(135deg,rgba(255,125,89,0.12),rgba(57,208,255,0.12))] p-4 text-sm">
                         <p className="font-semibold">What happens next</p>
                         <p className="mt-2">
-                          Generate inside this popup, then use the interactive result stack to quiz yourself, flip flashcards, or skim the summary without leaving the studio.
+                          Generate here, then use the interactive result stack to quiz yourself, flip flashcards, or skim the summary without leaving the studio.
                         </p>
                         {toolDraft.action === "exam" ? (
                           <p className="mt-3 text-xs text-[rgba(255,248,229,0.88)]">
-                            Full exam generation is capped at {defaultExamGeneratorDailyLimit} times per day in the free preview.
+                            Full exam generation is capped at {defaultExamGeneratorWeeklyLimit} times per week in the free preview.
                           </p>
                         ) : null}
                       </div>
