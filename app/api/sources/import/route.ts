@@ -48,7 +48,7 @@ export async function POST(req: Request) {
           file_name: sourceName,
           file_type: "text/web",
           storage_path: `inline://web/${user.id}/${body.sessionId}/${Date.now()}`,
-          extracted_text: `${extractedText}\n\nTrust: ${body.trustLabel || "Web"}`
+          extracted_text: extractedText
         }
       ])
       .select("*")

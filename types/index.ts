@@ -5,7 +5,6 @@ export type AIAction =
   | "chat"
   | "exam"
   | "concepts"
-  | "eli10"
   | "hard_mode"
   | "study_plan"
   | "insights";

@@ -11,11 +11,13 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
+    "@mozilla/readability": "^0.6.0",
     "@napi-rs/canvas": "^0.1.97",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.8",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.17",
+    "jsdom": "^29.0.1",
     "lucide-react": "^0.460.0",
     "mammoth": "^1.12.0",
     "mermaid": "^11.13.0",
@@ -32,6 +34,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/jsdom": "^28.0.1",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",

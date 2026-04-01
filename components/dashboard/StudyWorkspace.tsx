@@ -1,6 +1,6 @@
 "use client";
 
-import { DragEvent as ReactDragEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DragEvent as ReactDragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Brain,
   ChevronLeft,
@@ -15,6 +15,7 @@ import {
   FolderOpen,
   Globe2,
   LoaderCircle,
+  Lock,
   Plus,
   Search,
   SendHorizonal,
@@ -28,6 +29,7 @@ import { motion } from "framer-motion";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorDailyLimit } from "@/lib/ai/preview";
+import { buildStudyContext } from "@/lib/ai/source-context";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 import {
   defaultMaxUploadFileSizeMb,
@@ -44,7 +46,6 @@ type AIAction =
   | "quiz"
   | "exam"
   | "insights"
-  | "eli10"
   | "hard_mode"
   | "study_plan"
   | "concepts";
@@ -71,6 +72,16 @@ type FlashcardItem = {
 type OutputCard = {
   title: string;
   body: string;
+};
+
+type ToolHistoryItem = {
+  id: string;
+  action: AIAction;
+  title: string;
+  label: string;
+  preview: string;
+  output: string;
+  createdAt: number;
 };
 
 type PreviewState = {
@@ -122,7 +133,6 @@ const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "quiz", label: "Quiz", copy: "Generate multiple-choice questions from the uploaded sources." },
   { key: "exam", label: "Exam Generator", copy: "Build a full GCSE, A-Level, or custom mock paper from the source stack." },
   { key: "insights", label: "Insights", copy: "Spot weak areas and decide what to review next." },
-  { key: "eli10", label: "ELI10", copy: "Re-explain the source material in simple language." },
   { key: "hard_mode", label: "Exam Trap Radar", copy: "Surface likely mistakes, hidden traps, and the corrections that matter." },
   { key: "study_plan", label: "Study Plan", copy: "Split the uploaded notes into a practical review sequence." },
   { key: "concepts", label: "Concept Map", copy: "Pull out the ideas, links, tables, or diagrams that anchor the session." }
@@ -134,7 +144,6 @@ const toolTones: Record<AIAction, string> = {
   quiz: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.1)]",
   exam: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.08)]",
   insights: "border-[rgba(255,125,89,0.24)] bg-[rgba(255,125,89,0.1)]",
-  eli10: "border-[rgba(255,255,255,0.18)] bg-white/10",
   hard_mode: "border-[rgba(255,125,89,0.26)] bg-[rgba(255,125,89,0.12)]",
   study_plan: "border-[rgba(57,208,255,0.22)] bg-[rgba(57,208,255,0.08)]",
   concepts: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.08)]"
@@ -181,10 +190,25 @@ function clipText(text: string, limit: number) {
   return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
 }
 
+function summarizeGeneratedOutput(text: string) {
+  return clipText(
+    cleanGeneratedText(text)
+      .replace(/\n+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+    180
+  );
+}
+
 function cleanCardText(text: string) {
   return cleanGeneratedText(text)
     .replace(/^question:\s*/i, "")
     .replace(/^source:\s*[^\n]+/gim, "")
+    .replace(/^source title:\s*[^\n]+/gim, "")
+    .replace(/^source url:\s*[^\n]+/gim, "")
+    .replace(/^summary:\s*[^\n]+/gim, "")
+    .replace(/^trust:\s*[^\n]+/gim, "")
+    .replace(/https?:\/\/\S+/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -379,17 +403,15 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
 
   switch (draft.action) {
     case "quiz":
-      return `${preface} Generate ${count} multiple-choice questions. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
+      return `${preface} Generate ${count} multiple-choice questions. Base each question on a real fact, concept, method, or formula from the uploaded material. Avoid generic options like "source", "definition", or "example". Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
     case "flashcards":
-      return `${preface} Generate ${count} flashcards. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
+      return `${preface} Generate ${count} flashcards. Each front should be a real term, question, formula, or recall cue from the sources, not a generic word. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
     case "exam":
-      return `${preface} Generate a full ${focus} mock exam in markdown. Include a title, short instructions, clearly numbered questions, mark allocations, a balance of short and extended responses, and a compact mark scheme table at the end. Keep it realistic for GCSE, A-Level, or the level named in the focus.`;
+      return `${preface} Generate a long full ${focus} mock exam in markdown. Include a title, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the length of a normal school exam, not a short worksheet. Keep it realistic for GCSE, A-Level, or the level named in the focus. If the material is mathematical, include method-based questions and require working.`;
     case "summary":
-      return `${preface} Return ${count} short bullet points, one per line, each highlighting a key revision takeaway.`;
+      return `${preface} Return ${count} short bullet points, one per line, each highlighting a key revision takeaway. If the difficulty is foundation-level, keep the wording clearer and simpler. Where the sources contain formulas, dates, or comparisons, prefer compact table-friendly wording over vague prose.`;
     case "insights":
       return `${preface} Return ${count} short bullet points showing weak spots, misconceptions, or next-best study actions.`;
-    case "eli10":
-      return `${preface} Return ${count} short bullet points that explain the material in simple language without losing accuracy.`;
     case "hard_mode":
       return `${preface} Return a markdown table with ${count} likely exam traps. Use the columns Trap | Why students fall for it | Correct move | Self-check.`;
     case "study_plan":
@@ -421,30 +443,6 @@ function trustBadgeTone(trustLabel: string) {
   return "bg-white/10 text-[var(--fg)]";
 }
 
-function buildAiContext(files: FileItem[]) {
-  const maxTotalCharacters = 16000;
-  const maxCharactersPerFile = 2600;
-  let remaining = maxTotalCharacters;
-
-  return files
-    .slice(0, 8)
-    .map((file) => {
-      if (remaining <= 0) return "";
-
-      const header = `Source: ${file.file_name}\n`;
-      const body = (file.extracted_text || "").trim();
-      const sliceLimit = Math.max(0, Math.min(maxCharactersPerFile, remaining - header.length));
-      if (!sliceLimit) return "";
-
-      const excerpt = body.slice(0, sliceLimit).trim();
-      remaining -= header.length + excerpt.length + 2;
-
-      return excerpt ? `${header}${excerpt}` : "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-}
-
 export function StudyWorkspace({
   sessions,
   initialSessionId,
@@ -473,8 +471,10 @@ export function StudyWorkspace({
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
+  const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
   const [revealedFlashcards, setRevealedFlashcards] = useState<Record<number, boolean>>({});
   const [toolCardIndex, setToolCardIndex] = useState(0);
+  const [toolHistoryBySession, setToolHistoryBySession] = useState<Record<string, ToolHistoryItem[]>>({});
   const [restoredStudio, setRestoredStudio] = useState(false);
   const [showStudioBrowser, setShowStudioBrowser] = useState(false);
   const [studioBrowserRefreshing, setStudioBrowserRefreshing] = useState(false);
@@ -488,6 +488,8 @@ export function StudyWorkspace({
   const [sourceModalLoading, setSourceModalLoading] = useState(false);
   const [sourceModalError, setSourceModalError] = useState("");
   const [sourceSearchWarning, setSourceSearchWarning] = useState("");
+  const [sourceResultFilter, setSourceResultFilter] = useState<"all" | "verified" | "scholar" | "open_web">("all");
+  const [visibleSourceResults, setVisibleSourceResults] = useState(12);
   const [sourceModalReason, setSourceModalReason] = useState("Add a file or a verified web source to unlock chat and tools.");
   const [sourceSearchResults, setSourceSearchResults] = useState<WebSourceItem[]>([]);
   const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
@@ -566,6 +568,7 @@ export function StudyWorkspace({
   );
   const hasCurrentFiles = activeSessionId ? activeSessionId in filesBySession : false;
   const currentSession = sessionList.find((session) => session.id === activeSessionId) ?? null;
+  const currentToolHistory = activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : [];
   const currentFilesLabel = useMemo(() => {
     if (!currentFiles.length) return "No uploaded sources yet";
     if (currentFiles.length === 1) return currentFiles[0].file_name;
@@ -573,8 +576,6 @@ export function StudyWorkspace({
     return currentFiles.length > 2 ? `${preview} +${currentFiles.length - 2} more` : preview;
   }, [currentFiles]);
   const toolsLocked = currentFiles.length === 0;
-
-  const context = useMemo(() => buildAiContext(currentFiles), [currentFiles]);
 
   const closeSourceModal = () => {
     setSourceModalOpen(false);
@@ -589,6 +590,8 @@ export function StudyWorkspace({
     setSourceModalReason(reason);
     setSourceModalMode(mode);
     setSourceModalError("");
+    setVisibleSourceResults(12);
+    setSourceResultFilter("all");
     setSourceModalOpen(true);
   };
 
@@ -607,9 +610,24 @@ export function StudyWorkspace({
     [activeAction, output]
   );
   const parsedCards = useMemo(() => parseOutputCards(output, activeAction), [activeAction, output]);
+  const filteredSourceResults = useMemo(() => {
+    if (sourceResultFilter === "all") return sourceSearchResults;
+    if (sourceResultFilter === "verified") {
+      return sourceSearchResults.filter((result) => result.trustLabel === "Verified");
+    }
+    if (sourceResultFilter === "scholar") {
+      return sourceSearchResults.filter((result) => result.trustLabel === "Scholar" || result.trustLabel === "Trusted");
+    }
+    return sourceSearchResults.filter((result) => result.trustLabel === "Web");
+  }, [sourceResultFilter, sourceSearchResults]);
+  const visibleSourceSearchResults = useMemo(
+    () => filteredSourceResults.slice(0, visibleSourceResults),
+    [filteredSourceResults, visibleSourceResults]
+  );
 
   useEffect(() => {
     setRevealedQuiz({});
+    setSelectedQuizOption({});
     setRevealedFlashcards({});
     setToolCardIndex(0);
   }, [activeAction, output]);
@@ -704,6 +722,106 @@ export function StudyWorkspace({
       ignore = true;
     };
   }, [activeSessionId, hasCurrentFiles]);
+
+  const buildContextForPrompt = useCallback(
+    (hint: string, action: AIAction) =>
+      buildStudyContext(currentFiles, hint, {
+        maxCharacters: 18000,
+        maxChunks: action === "exam" ? 24 : 16
+      }),
+    [currentFiles]
+  );
+
+  const saveToolResult = useCallback(
+    (action: AIAction, text: string, focus: string) => {
+      if (!activeSessionId) return;
+
+      const actionLabel = actionButtons.find((item) => item.key === action)?.label || "Tool";
+      const focusLabel = focus.trim();
+      const result: ToolHistoryItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action,
+        title: focusLabel ? `${actionLabel}: ${clipText(focusLabel, 44)}` : actionLabel,
+        label: actionLabel,
+        preview: summarizeGeneratedOutput(text),
+        output: text,
+        createdAt: Date.now()
+      };
+
+      setToolHistoryBySession((current) => ({
+        ...current,
+        [activeSessionId]: [result, ...(current[activeSessionId] ?? [])].slice(0, 12)
+      }));
+    },
+    [activeSessionId]
+  );
+
+  const openSavedToolResult = useCallback((result: ToolHistoryItem) => {
+    setActiveAction(result.action);
+    setToolDraft(createToolDraft(result.action));
+    setOutput(result.output);
+    setToolCardIndex(0);
+    setToolModalView("result");
+    setToolModalOpen(true);
+    setTab("tools");
+  }, []);
+
+  const toolResultCount =
+    activeAction === "quiz"
+      ? parsedQuiz?.length ?? 0
+      : activeAction === "flashcards"
+        ? parsedFlashcards?.length ?? 0
+        : parsedCards.length;
+
+  const shiftToolCard = useCallback(
+    (step: number) => {
+      if (!toolResultCount) {
+        setToolCardIndex(0);
+        return;
+      }
+
+      setToolCardIndex((current) => (current + step + toolResultCount) % toolResultCount);
+    },
+    [toolResultCount]
+  );
+
+  useEffect(() => {
+    if (!toolModalOpen || toolModalView !== "result") return;
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) {
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        shiftToolCard(1);
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        shiftToolCard(-1);
+        return;
+      }
+
+      if (activeAction === "flashcards" && event.code === "Space") {
+        event.preventDefault();
+        setRevealedFlashcards((current) => {
+          if (!current[toolCardIndex]) {
+            return { ...current, [toolCardIndex]: true };
+          }
+
+          shiftToolCard(1);
+          return current;
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeAction, shiftToolCard, toolCardIndex, toolModalOpen, toolModalView]);
 
   const refreshStudios = async () => {
     setStudioBrowserRefreshing(true);
@@ -888,6 +1006,8 @@ export function StudyWorkspace({
     setSourceModalError("");
     setSourceSearchWarning("");
     setSourceSearchResults([]);
+    setVisibleSourceResults(12);
+    setSourceResultFilter("all");
 
     try {
       const response = await fetch("/api/sources/search", {
@@ -1133,6 +1253,8 @@ export function StudyWorkspace({
     setTab("tools");
     setStatusNote("");
 
+    const context = buildContextForPrompt(prompt, action);
+
     try {
       const response = await fetch("/api/ai/generate", {
         method: "POST",
@@ -1150,6 +1272,13 @@ export function StudyWorkspace({
       }
 
       setOutput(json.text || "No response");
+      saveToolResult(action, json.text || "No response", action === toolDraft.action ? toolDraft.focus : "");
+      const providerNote =
+        json.provider === "local"
+          ? " Local fallback mode is active, so results are more heuristic until a valid hosted AI key is configured."
+          : json.provider === "cache"
+            ? " Cached result reused for speed."
+            : "";
       const remainingUsage =
         typeof json.usage?.dailyRemaining === "number"
           ? ` ${json.usage.dailyRemaining} AI run(s) left today in the free preview.`
@@ -1159,7 +1288,7 @@ export function StudyWorkspace({
           ? ` ${json.usage.examDailyRemaining} full exam generation(s) left today.`
           : "";
       setStatusNote(
-        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}${examUsage}`
+        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}${examUsage}${providerNote}`
       );
       return true;
     } catch (error) {
@@ -1188,6 +1317,8 @@ export function StudyWorkspace({
     setTab("chat");
     setStatusNote("");
 
+    const context = buildContextForPrompt(question, "chat" as AIAction);
+
     try {
       const response = await fetch("/api/ai/generate", {
         method: "POST",
@@ -1200,11 +1331,20 @@ export function StudyWorkspace({
         })
       });
       const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json.error || "Unable to generate a reply.");
+      }
       const text = json.text || json.error || "No response";
       setMessages((current) => [...current, { role: "ai", content: text }]);
+      setStatusNote(
+        json.provider === "local"
+          ? "Chat is running in local fallback mode, so answers are simpler until a valid hosted AI key is configured."
+          : ""
+      );
     } catch (error) {
       const message = (error as Error).message || "Unable to generate a reply.";
       setMessages((current) => [...current, { role: "ai", content: message }]);
+      setStatusNote(message);
     } finally {
       setChatLoading(false);
     }
@@ -1285,13 +1425,6 @@ export function StudyWorkspace({
   };
 
   const renderToolResults = () => {
-    const moveToolCard = (step: number, total: number) => {
-      setToolCardIndex((current) => {
-        if (!total) return 0;
-        return (current + step + total) % total;
-      });
-    };
-
     const renderDeckHeader = ({
       total,
       index,
@@ -1314,7 +1447,7 @@ export function StudyWorkspace({
           </div>
           <button
             type="button"
-            onClick={() => moveToolCard(-1, total)}
+            onClick={() => shiftToolCard(-1)}
             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 transition hover:bg-white/16"
             aria-label="Previous card"
           >
@@ -1322,7 +1455,7 @@ export function StudyWorkspace({
           </button>
           <button
             type="button"
-            onClick={() => moveToolCard(1, total)}
+            onClick={() => shiftToolCard(1)}
             className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/10 transition hover:bg-white/16"
             aria-label="Next card"
           >
@@ -1336,6 +1469,8 @@ export function StudyWorkspace({
       const currentIndex = Math.min(toolCardIndex, parsedQuiz.length - 1);
       const item = parsedQuiz[currentIndex];
       const isOpen = Boolean(revealedQuiz[currentIndex]);
+      const selectedOption = selectedQuizOption[currentIndex] || "";
+      const correctOption = item.answer || "";
 
       return (
         <div className="space-y-3">
@@ -1352,8 +1487,8 @@ export function StudyWorkspace({
             drag="x"
             dragConstraints={{ left: 0, right: 0 }}
             onDragEnd={(_, info) => {
-              if (info.offset.x <= -90) moveToolCard(1, parsedQuiz.length);
-              if (info.offset.x >= 90) moveToolCard(-1, parsedQuiz.length);
+              if (info.offset.x <= -90) shiftToolCard(1);
+              if (info.offset.x >= 90) shiftToolCard(-1);
             }}
             className={`rounded-[30px] border px-5 py-5 text-sm shadow-[0_24px_60px_rgba(6,10,24,0.18)] ${toolTones.quiz}`}
           >
@@ -1364,28 +1499,55 @@ export function StudyWorkspace({
             {item.options?.length ? (
               <div className="mt-5 space-y-3">
                 {item.options.map((option) => (
-                  <div key={option} className="rounded-[18px] bg-white/10 px-4 py-3 text-sm leading-7">
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => {
+                      setSelectedQuizOption((current) => ({ ...current, [currentIndex]: option }));
+                      setRevealedQuiz((current) => ({ ...current, [currentIndex]: false }));
+                    }}
+                    className={`w-full rounded-[18px] px-4 py-3 text-left text-sm leading-7 transition ${
+                      isOpen && option === correctOption
+                        ? "bg-[rgba(121,247,199,0.16)] ring-1 ring-[rgba(121,247,199,0.45)]"
+                        : isOpen && option === selectedOption
+                          ? "bg-[rgba(255,125,89,0.16)] ring-1 ring-[rgba(255,125,89,0.45)]"
+                          : selectedOption === option
+                            ? "bg-[rgba(57,208,255,0.18)] ring-1 ring-[rgba(57,208,255,0.45)]"
+                            : "bg-white/10 hover:bg-white/14"
+                    }`}
+                  >
                     {option}
-                  </div>
+                  </button>
                 ))}
               </div>
             ) : null}
             <div className="mt-5 flex flex-wrap gap-2">
               <Button
-                onClick={() => setRevealedQuiz((current) => ({ ...current, [currentIndex]: !isOpen }))}
+                onClick={() => {
+                  if (!selectedOption && item.options?.length) {
+                    setStatusNote("Pick an answer option first.");
+                    return;
+                  }
+                  setStatusNote("");
+                  setRevealedQuiz((current) => ({ ...current, [currentIndex]: !isOpen }));
+                }}
                 variant="secondary"
                 size="sm"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                {isOpen ? "Hide answer" : "Reveal answer"}
+                {isOpen ? "Hide answer" : "Check answer"}
               </Button>
-              <Button onClick={() => moveToolCard(1, parsedQuiz.length)} variant="ghost" size="sm">
+              <Button onClick={() => shiftToolCard(1)} variant="ghost" size="sm">
                 Next question
               </Button>
             </div>
             {isOpen ? (
               <div className="mt-4 rounded-[22px] bg-white/12 p-4 text-sm">
-                {item.answer ? <p className="font-semibold">Answer: {item.answer}</p> : null}
+                {item.answer ? (
+                  <p className="font-semibold">
+                    {selectedOption === correctOption ? "Correct" : "Correct answer"}: {item.answer}
+                  </p>
+                ) : null}
                 {item.explanation ? <p className="muted mt-2 leading-7">{item.explanation}</p> : null}
               </div>
             ) : null}
@@ -1415,8 +1577,8 @@ export function StudyWorkspace({
             drag="x"
             dragConstraints={{ left: 0, right: 0 }}
             onDragEnd={(_, info) => {
-              if (info.offset.x <= -90) moveToolCard(1, parsedFlashcards.length);
-              if (info.offset.x >= 90) moveToolCard(-1, parsedFlashcards.length);
+              if (info.offset.x <= -90) shiftToolCard(1);
+              if (info.offset.x >= 90) shiftToolCard(-1);
             }}
             whileHover={{ y: -2 }}
             onClick={() => setRevealedFlashcards((current) => ({ ...current, [currentIndex]: !isOpen }))}
@@ -1431,11 +1593,11 @@ export function StudyWorkspace({
               </p>
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-              <p className="muted text-xs">{isOpen ? "Tap to flip back" : "Tap to reveal the answer"}</p>
-              <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
-                Swipe for next
+              <p className="muted text-xs">{isOpen ? "Tap to flip back or press space for next" : "Tap to reveal the answer"}</p>
+              <Button onClick={() => shiftToolCard(1)} variant="secondary" size="sm">
+                Next card
                 <ChevronRight className="h-3.5 w-3.5" />
-              </div>
+              </Button>
             </div>
           </motion.button>
         </div>
@@ -1473,8 +1635,8 @@ export function StudyWorkspace({
             drag="x"
             dragConstraints={{ left: 0, right: 0 }}
             onDragEnd={(_, info) => {
-              if (info.offset.x <= -90) moveToolCard(1, parsedCards.length);
-              if (info.offset.x >= 90) moveToolCard(-1, parsedCards.length);
+              if (info.offset.x <= -90) shiftToolCard(1);
+              if (info.offset.x >= 90) shiftToolCard(-1);
             }}
             className={`rounded-[30px] border px-6 py-6 text-sm shadow-[0_24px_60px_rgba(6,10,24,0.18)] ${toolTones[activeAction]}`}
           >
@@ -1483,7 +1645,7 @@ export function StudyWorkspace({
             </p>
             <p className="mt-5 text-lg leading-8">{card.body}</p>
             <div className="mt-6 flex justify-end">
-              <Button onClick={() => moveToolCard(1, parsedCards.length)} variant="ghost" size="sm">
+              <Button onClick={() => shiftToolCard(1)} variant="ghost" size="sm">
                 Next card
               </Button>
             </div>
@@ -1547,7 +1709,7 @@ export function StudyWorkspace({
         ))}
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[19rem_minmax(0,1fr)_26rem]">
+      <div className="mt-4 grid gap-4 lg:grid-cols-[18.5rem_minmax(0,0.92fr)_27rem] xl:grid-cols-[19rem_minmax(0,0.88fr)_27.5rem]">
         <aside className={`${tab !== "files" ? "hidden lg:block" : "block"}`}>
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="mb-4 flex items-center justify-between">
@@ -1794,7 +1956,7 @@ export function StudyWorkspace({
               </div>
             </div>
 
-            <div className="hide-scrollbar mt-4 max-h-[32rem] min-h-[25rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4">
+            <div className="hide-scrollbar mt-4 max-h-[30rem] min-h-[23rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4">
               {!currentFiles.length ? (
                 <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
                   <p className="font-semibold">Upload sources or files to continue</p>
@@ -1815,7 +1977,7 @@ export function StudyWorkspace({
                     key={`${message.role}-${index}`}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`max-w-[88%] rounded-[28px] px-5 py-4 ${
+                    className={`max-w-[82%] rounded-[28px] px-5 py-4 ${
                       message.role === "user"
                         ? "ml-auto bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
                         : "bg-white/16"
@@ -1918,45 +2080,43 @@ export function StudyWorkspace({
               ))}
             </div>
 
-              <div className="mt-4 rounded-[24px] bg-white/12 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-sky)]">
-                    Mini Generator
+            <div className="mt-4 rounded-[24px] border border-[rgba(255,209,102,0.16)] bg-[linear-gradient(135deg,rgba(255,209,102,0.08),rgba(57,208,255,0.08))] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
+                    Research Mode
                   </p>
-                  <p className="mt-2 text-sm font-semibold">
-                    {actionButtons.find((item) => item.key === toolDraft.action)?.label || "Tool"} settings open in a popup
+                  <p className="mt-2 text-sm font-semibold">Locked for Pro</p>
+                  <p className="muted mt-2 text-xs">
+                    Multi-source web research, cross-checking, and deeper scholar-style briefs are coming soon.
                   </p>
                 </div>
-                <div className="rounded-full bg-white/10 px-3 py-1 text-xs font-medium">
-                  {toolDraft.difficulty === "exam" ? "Exam level" : "Foundation level"}
+                <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-1 text-xs font-medium text-[var(--accent-gold)]">
+                  Pro
                 </div>
               </div>
+              <Button
+                onClick={() => setStatusNote("Research Mode is a Pro feature and is coming soon.")}
+                variant="ghost"
+                size="sm"
+                className="mt-4 w-full justify-center rounded-[18px] bg-white/10"
+              >
+                <Lock className="h-4 w-4" />
+                Coming soon
+              </Button>
+            </div>
 
-                <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                  <div className="rounded-full bg-white/10 px-3 py-2">Count: {toolDraft.count}</div>
-                  <div className="rounded-full bg-white/10 px-3 py-2">
-                    Difficulty: {toolDraft.difficulty === "exam" ? "Exam" : "Foundation"}
-                  </div>
-                  <div className="rounded-full bg-white/10 px-3 py-2">
-                    Focus: {toolDraft.focus.trim() || "General coverage"}
-                  </div>
-                  {toolDraft.action === "exam" ? (
-                    <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-2 text-[var(--accent-gold)]">
-                      Limit: {defaultExamGeneratorDailyLimit} full exam generations per day
-                    </div>
-                  ) : null}
+            <div className="mt-4 flex items-center gap-2">
+              <Button onClick={createReminder} variant="secondary" className="flex-1 justify-center" disabled={loading || toolsLocked}>
+                <Timer className="h-4 w-4" />
+                Set reminder
+              </Button>
+              {activeAction === "exam" ? (
+                <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-2 text-xs text-[var(--accent-gold)]">
+                  {defaultExamGeneratorDailyLimit} exam(s) daily
                 </div>
-
-              <div className="mt-4 flex items-center gap-2">
-                <Button onClick={() => openTool(activeAction)} className="flex-1 justify-center" disabled={loading}>
-                  <WandSparkles className="h-4 w-4" />
-                  Open Generator
-                </Button>
-                <Button onClick={createReminder} variant="secondary" className="shrink-0 px-4" disabled={loading || toolsLocked}>
-                  <Timer className="h-4 w-4" />
-                </Button>
-              </div>
+              ) : null}
+            </div>
 
               {loading ? (
                 <div className="mt-4 rounded-[22px] border border-white/12 bg-[rgba(12,18,34,0.26)] p-4">
@@ -1976,9 +2136,47 @@ export function StudyWorkspace({
                   </div>
                 </div>
               ) : null}
+
+            <div className="mt-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">Generated in this studio</p>
+                  <p className="muted text-xs">Clickable study outputs stay here so you can reopen them quickly.</p>
+                </div>
+                <div className="glass rounded-full px-3 py-1 text-xs font-medium">{currentToolHistory.length} saved</div>
+              </div>
+              <div className="hide-scrollbar max-h-[16rem] space-y-2 overflow-auto pr-1">
+                {currentToolHistory.length ? (
+                  currentToolHistory.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => openSavedToolResult(item)}
+                      className="w-full rounded-[22px] bg-white/12 p-3 text-left transition hover:bg-white/18"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{item.title}</p>
+                          <p className="muted mt-1 text-xs">
+                            {new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        </div>
+                        <div className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]">
+                          {item.label}
+                        </div>
+                      </div>
+                      <p className="muted mt-2 line-clamp-3 text-xs">{item.preview}</p>
+                    </button>
+                  ))
+                ) : (
+                  <div className="rounded-[22px] bg-white/10 px-4 py-4 text-sm">
+                    Generated summaries, quizzes, flashcards, concept maps, and exams will appear here.
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="hide-scrollbar mt-4 max-h-[34rem] space-y-3 overflow-auto pr-1">
+            <div className="hide-scrollbar mt-4 max-h-[28rem] space-y-3 overflow-auto pr-1">
               {renderToolResults()}
             </div>
 
@@ -2145,7 +2343,48 @@ export function StudyWorkspace({
 
                 <div className="mt-4 space-y-3">
                   {sourceModalMode === "web" && sourceSearchResults.length ? (
-                    sourceSearchResults.map((result) => (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        {[
+                          { key: "all", label: "All sources" },
+                          { key: "verified", label: "Verified only" },
+                          { key: "scholar", label: "Scholar + trusted" },
+                          { key: "open_web", label: "Open web" }
+                        ].map((filter) => (
+                          <button
+                            key={filter.key}
+                            type="button"
+                            onClick={() => {
+                              setSourceResultFilter(filter.key as typeof sourceResultFilter);
+                              setVisibleSourceResults(12);
+                            }}
+                            className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                              sourceResultFilter === filter.key
+                                ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
+                                : "bg-white/10"
+                            }`}
+                          >
+                            {filter.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <p className="muted">
+                          {filteredSourceResults.length} result{filteredSourceResults.length === 1 ? "" : "s"} after filters
+                        </p>
+                        {sourceResultFilter !== "all" ? (
+                          <button
+                            type="button"
+                            onClick={() => setSourceResultFilter("all")}
+                            className="rounded-full bg-white/10 px-3 py-2 font-medium transition hover:bg-white/14"
+                          >
+                            Clear filter
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {visibleSourceSearchResults.length ? visibleSourceSearchResults.map((result) => (
                       <div key={result.id} className="rounded-[22px] border border-white/10 bg-white/8 p-4">
                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                           <div className="min-w-0 flex-1">
@@ -2189,7 +2428,28 @@ export function StudyWorkspace({
                           </Button>
                         </div>
                       </div>
-                    ))
+                      )) : (
+                        <div className="rounded-[22px] border border-dashed border-white/12 bg-white/6 px-4 py-6 text-sm">
+                          <p className="font-semibold">No sources match this filter yet.</p>
+                          <p className="muted mt-2">
+                            Try another filter, switch the search engine, or broaden the search wording so Scholar mode can return stronger results.
+                          </p>
+                        </div>
+                      )}
+
+                      {filteredSourceResults.length > visibleSourceResults ? (
+                        <div className="flex justify-center pt-1">
+                          <Button
+                            onClick={() => setVisibleSourceResults((current) => current + 12)}
+                            variant="secondary"
+                            size="sm"
+                          >
+                            More sources
+                            <ChevronDown className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ) : null}
+                    </>
                   ) : sourceModalMode === "web" && !sourceModalLoading ? (
                     <div className="rounded-[22px] border border-dashed border-white/12 bg-white/6 px-4 py-6 text-sm">
                       <p className="font-semibold">Search for a scholar-style source, trusted explainer, article, or reference page.</p>

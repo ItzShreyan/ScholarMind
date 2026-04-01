@@ -28,13 +28,23 @@ create table if not exists public.study_reminders (
   created_at timestamptz default now()
 );
 
+create table if not exists public.study_ai_usage (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  actor_key text not null,
+  scope text not null check (scope in ('general', 'exam')),
+  created_at timestamptz default now()
+);
+
 alter table public.study_sessions enable row level security;
 alter table public.study_files enable row level security;
 alter table public.study_reminders enable row level security;
+alter table public.study_ai_usage enable row level security;
 
 drop policy if exists "sessions owner read/write" on public.study_sessions;
 drop policy if exists "files owner read/write" on public.study_files;
 drop policy if exists "reminders owner read/write" on public.study_reminders;
+drop policy if exists "ai usage owner read/write" on public.study_ai_usage;
 
 create policy "sessions owner read/write"
 on public.study_sessions for all
@@ -53,6 +63,15 @@ on public.study_reminders for all
 to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+create policy "ai usage owner read/write"
+on public.study_ai_usage for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create index if not exists study_ai_usage_user_scope_created_at_idx
+on public.study_ai_usage (user_id, scope, created_at desc);
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

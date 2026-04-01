@@ -19,7 +19,6 @@ const schema = z.object({
     "chat",
     "exam",
     "concepts",
-    "eli10",
     "hard_mode",
     "study_plan",
     "insights"
@@ -42,7 +41,14 @@ export async function POST(req: Request) {
 
     const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const actorKey = user?.id || forwardedFor || "anonymous";
-    const examReservation = body.action === "exam" ? reserveExamUsage(actorKey) : null;
+    const examReservation =
+      body.action === "exam"
+        ? await reserveExamUsage({
+            supabase,
+            actorKey,
+            userId: user?.id
+          })
+        : null;
 
     if (examReservation && !examReservation.allowed) {
       return NextResponse.json(
@@ -53,11 +59,21 @@ export async function POST(req: Request) {
       );
     }
 
-    const reservation = reserveAiUsage(actorKey);
+    const reservation = await reserveAiUsage({
+      supabase,
+      actorKey,
+      userId: user?.id
+    });
 
     if (!reservation.allowed) {
       if (examReservation?.allowed) {
-        releaseExamUsage(actorKey, examReservation.token);
+        await releaseExamUsage({
+          supabase,
+          actorKey,
+          userId: user?.id,
+          token: examReservation.token,
+          persisted: examReservation.persisted
+        });
       }
       return NextResponse.json(
         {
@@ -69,12 +85,6 @@ export async function POST(req: Request) {
 
     try {
       const result = await generateWithFallback(body);
-      if (result.provider === "cache") {
-        releaseAiUsage(actorKey, reservation.token);
-        if (examReservation?.allowed) {
-          releaseExamUsage(actorKey, examReservation.token);
-        }
-      }
 
       return NextResponse.json({
         ...result,
@@ -85,9 +95,21 @@ export async function POST(req: Request) {
         }
       });
     } catch (error) {
-      releaseAiUsage(actorKey, reservation.token);
+      await releaseAiUsage({
+        supabase,
+        actorKey,
+        userId: user?.id,
+        token: reservation.token,
+        persisted: reservation.persisted
+      });
       if (examReservation?.allowed) {
-        releaseExamUsage(actorKey, examReservation.token);
+        await releaseExamUsage({
+          supabase,
+          actorKey,
+          userId: user?.id,
+          token: examReservation.token,
+          persisted: examReservation.persisted
+        });
       }
 
       throw error;

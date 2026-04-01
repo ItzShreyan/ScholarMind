@@ -24,7 +24,7 @@ function providerOrder(): AIProvider[] {
 }
 
 export async function generateWithFallback(input: AIRequest) {
-  const cacheKey = JSON.stringify(input);
+  const cacheKey = JSON.stringify({ version: 2, input });
   const cached = getCached(cacheKey);
   if (cached) return { text: cached, provider: "cache" };
 

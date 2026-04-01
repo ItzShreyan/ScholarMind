@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   defaultExamGeneratorDailyLimit,
   defaultFreePreviewDailyLimit,
@@ -15,12 +16,16 @@ type ReservationResult =
       token: string;
       hourlyRemaining: number;
       dailyRemaining: number;
+      persisted: boolean;
     }
   | {
       allowed: false;
       hourlyRemaining: number;
       dailyRemaining: number;
+      persisted: boolean;
     };
+
+type LimitClient = SupabaseClient;
 
 const usageStore = new Map<string, UsageEntry[]>();
 const examUsageStore = new Map<string, UsageEntry[]>();
@@ -46,81 +51,220 @@ function countRecent(entries: UsageEntry[], since: number) {
   return entries.filter((entry) => entry.timestamp >= since).length;
 }
 
-export function reserveAiUsage(actorKey: string): ReservationResult {
+function reserveInMemory(actorKey: string, store: Map<string, UsageEntry[]>, hourlyLimit: number, dailyLimit: number): ReservationResult {
   const now = Date.now();
-  const usageKey = getUsageKey(actorKey);
-  const currentEntries = pruneEntries(usageStore.get(usageKey) ?? [], now);
-  const hourlyCount = countRecent(currentEntries, now - 1000 * 60 * 60);
+  const usageKey = store === examUsageStore ? getExamUsageKey(actorKey) : getUsageKey(actorKey);
+  const currentEntries = pruneEntries(store.get(usageKey) ?? [], now);
+  const hourlyCount = hourlyLimit > 0 ? countRecent(currentEntries, now - 1000 * 60 * 60) : 0;
   const dailyCount = currentEntries.length;
 
-  if (hourlyCount >= freePreviewHourlyLimit || dailyCount >= freePreviewDailyLimit) {
-    usageStore.set(usageKey, currentEntries);
+  if ((hourlyLimit > 0 && hourlyCount >= hourlyLimit) || dailyCount >= dailyLimit) {
+    store.set(usageKey, currentEntries);
     return {
       allowed: false,
-      hourlyRemaining: Math.max(0, freePreviewHourlyLimit - hourlyCount),
-      dailyRemaining: Math.max(0, freePreviewDailyLimit - dailyCount)
+      hourlyRemaining: hourlyLimit > 0 ? Math.max(0, hourlyLimit - hourlyCount) : 0,
+      dailyRemaining: Math.max(0, dailyLimit - dailyCount),
+      persisted: false
     };
   }
 
   const token = `${now}-${Math.random().toString(36).slice(2, 10)}`;
   currentEntries.push({ id: token, timestamp: now });
-  usageStore.set(usageKey, currentEntries);
+  store.set(usageKey, currentEntries);
 
   return {
     allowed: true,
     token,
-    hourlyRemaining: Math.max(0, freePreviewHourlyLimit - (hourlyCount + 1)),
-    dailyRemaining: Math.max(0, freePreviewDailyLimit - (dailyCount + 1))
+    hourlyRemaining: hourlyLimit > 0 ? Math.max(0, hourlyLimit - (hourlyCount + 1)) : 0,
+    dailyRemaining: Math.max(0, dailyLimit - (dailyCount + 1)),
+    persisted: false
   };
 }
 
-export function releaseAiUsage(actorKey: string, token: string) {
-  const usageKey = getUsageKey(actorKey);
-  const currentEntries = usageStore.get(usageKey);
+function releaseInMemory(actorKey: string, token: string, store: Map<string, UsageEntry[]>) {
+  const usageKey = store === examUsageStore ? getExamUsageKey(actorKey) : getUsageKey(actorKey);
+  const currentEntries = store.get(usageKey);
   if (!currentEntries?.length) return;
 
-  usageStore.set(
+  store.set(
     usageKey,
     currentEntries.filter((entry) => entry.id !== token)
   );
 }
 
-export function reserveExamUsage(actorKey: string): ReservationResult {
-  const now = Date.now();
-  const usageKey = getExamUsageKey(actorKey);
-  const currentEntries = pruneEntries(examUsageStore.get(usageKey) ?? [], now);
-  const dailyCount = currentEntries.length;
+async function reserveInSupabase({
+  supabase,
+  actorKey,
+  userId,
+  scope,
+  hourlyLimit,
+  dailyLimit
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  scope: "general" | "exam";
+  hourlyLimit: number;
+  dailyLimit: number;
+}): Promise<ReservationResult | null> {
+  if (!supabase || !userId) return null;
 
-  if (dailyCount >= examGeneratorDailyLimit) {
-    examUsageStore.set(usageKey, currentEntries);
+  const now = Date.now();
+  const dayAgoIso = new Date(now - 1000 * 60 * 60 * 24).toISOString();
+  const hourAgo = now - 1000 * 60 * 60;
+  const token = `${scope}-${now}-${Math.random().toString(36).slice(2, 10)}`;
+
+  try {
+    const { data, error } = await supabase
+      .from("study_ai_usage")
+      .select("id, created_at")
+      .eq("user_id", userId)
+      .eq("scope", scope)
+      .gte("created_at", dayAgoIso);
+
+    if (error) {
+      return null;
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    const hourlyCount =
+      hourlyLimit > 0
+        ? rows.filter((row) => new Date(row.created_at).getTime() >= hourAgo).length
+        : 0;
+    const dailyCount = rows.length;
+
+    if ((hourlyLimit > 0 && hourlyCount >= hourlyLimit) || dailyCount >= dailyLimit) {
+      return {
+        allowed: false,
+        hourlyRemaining: hourlyLimit > 0 ? Math.max(0, hourlyLimit - hourlyCount) : 0,
+        dailyRemaining: Math.max(0, dailyLimit - dailyCount),
+        persisted: true
+      };
+    }
+
+    const { error: insertError } = await supabase.from("study_ai_usage").insert({
+      id: token,
+      user_id: userId,
+      actor_key: actorKey,
+      scope
+    });
+
+    if (insertError) {
+      return null;
+    }
+
     return {
-      allowed: false,
-      hourlyRemaining: 0,
-      dailyRemaining: Math.max(0, examGeneratorDailyLimit - dailyCount)
+      allowed: true,
+      token,
+      hourlyRemaining: hourlyLimit > 0 ? Math.max(0, hourlyLimit - (hourlyCount + 1)) : 0,
+      dailyRemaining: Math.max(0, dailyLimit - (dailyCount + 1)),
+      persisted: true
     };
+  } catch {
+    return null;
+  }
+}
+
+async function releaseInSupabase({
+  supabase,
+  userId,
+  token
+}: {
+  supabase?: LimitClient | null;
+  userId?: string | null;
+  token: string;
+}) {
+  if (!supabase || !userId || !token) return;
+
+  try {
+    await supabase.from("study_ai_usage").delete().eq("id", token).eq("user_id", userId);
+  } catch {
+    // Fallback release happens at the caller only for memory-backed reservations.
+  }
+}
+
+export async function reserveAiUsage({
+  supabase,
+  actorKey,
+  userId
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+}) {
+  const persisted = await reserveInSupabase({
+    supabase,
+    actorKey,
+    userId,
+    scope: "general",
+    hourlyLimit: freePreviewHourlyLimit,
+    dailyLimit: freePreviewDailyLimit
+  });
+
+  return persisted ?? reserveInMemory(actorKey, usageStore, freePreviewHourlyLimit, freePreviewDailyLimit);
+}
+
+export async function releaseAiUsage({
+  supabase,
+  actorKey,
+  userId,
+  token,
+  persisted
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  token: string;
+  persisted: boolean;
+}) {
+  if (persisted) {
+    await releaseInSupabase({ supabase, userId, token });
+    return;
   }
 
-  const token = `${now}-${Math.random().toString(36).slice(2, 10)}`;
-  currentEntries.push({ id: token, timestamp: now });
-  examUsageStore.set(usageKey, currentEntries);
-
-  return {
-    allowed: true,
-    token,
-    hourlyRemaining: 0,
-    dailyRemaining: Math.max(0, examGeneratorDailyLimit - (dailyCount + 1))
-  };
+  releaseInMemory(actorKey, token, usageStore);
 }
 
-export function releaseExamUsage(actorKey: string, token: string) {
-  const usageKey = getExamUsageKey(actorKey);
-  const currentEntries = examUsageStore.get(usageKey);
-  if (!currentEntries?.length) return;
+export async function reserveExamUsage({
+  supabase,
+  actorKey,
+  userId
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+}) {
+  const persisted = await reserveInSupabase({
+    supabase,
+    actorKey,
+    userId,
+    scope: "exam",
+    hourlyLimit: 0,
+    dailyLimit: examGeneratorDailyLimit
+  });
 
-  examUsageStore.set(
-    usageKey,
-    currentEntries.filter((entry) => entry.id !== token)
-  );
+  return persisted ?? reserveInMemory(actorKey, examUsageStore, 0, examGeneratorDailyLimit);
+}
+
+export async function releaseExamUsage({
+  supabase,
+  actorKey,
+  userId,
+  token,
+  persisted
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  token: string;
+  persisted: boolean;
+}) {
+  if (persisted) {
+    await releaseInSupabase({ supabase, userId, token });
+    return;
+  }
+
+  releaseInMemory(actorKey, token, examUsageStore);
 }
 
 export function formatAiLimitMessage() {

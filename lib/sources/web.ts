@@ -1,3 +1,8 @@
+import { Readability } from "@mozilla/readability";
+import { JSDOM } from "jsdom";
+import { extractBufferContent } from "@/lib/documents/parser";
+import { getFileExtension, isImageDocument, isPdfDocument } from "@/lib/documents/formats";
+
 export type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
 
 type WebSourceResult = {
@@ -19,9 +24,15 @@ const trustedLearningHosts = [
   "khanacademy.org",
   "bbc.co.uk",
   "bbc.com",
+  "britannica.com",
   "ck12.org",
+  "mathcentre.ac.uk",
   "mathsisfun.com",
-  "physicsclassroom.com"
+  "nasa.gov",
+  "ncbi.nlm.nih.gov",
+  "physicsclassroom.com",
+  "nationalgeographic.com",
+  "cambridge.org"
 ];
 
 function normalizeWhitespace(text: string) {
@@ -71,13 +82,7 @@ function trustLabelFor(url: string, source?: string) {
     host.includes("wikipedia.org") ||
     host.includes("nih.gov") ||
     host.includes("ncbi.nlm.nih.gov") ||
-    host.includes("openstax.org") ||
-    host.includes("khanacademy.org") ||
-    host.includes("bbc.co.uk") ||
-    host.includes("bbc.com") ||
-    host.includes("ck12.org") ||
-    host.includes("mathsisfun.com") ||
-    host.includes("physicsclassroom.com")
+    hostMatchesTrustedList(host)
   ) {
     return "Verified";
   }
@@ -108,23 +113,25 @@ function queryTerms(query: string) {
   return query
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((term) => term.length >= 3);
+    .filter((term) => term.length >= 3)
+    .filter((term) => !["with", "that", "from", "your", "this", "notes", "study", "guide", "topic"].includes(term));
 }
 
 function scoreResult(result: WebSourceResult, query: string) {
-  const haystack = `${result.title} ${result.snippet} ${result.source}`.toLowerCase();
+  const haystack = `${result.title} ${result.snippet} ${result.source} ${hostnameFrom(result.url)}`.toLowerCase();
   const terms = queryTerms(query);
   let score = 0;
 
   terms.forEach((term) => {
     if (haystack.includes(term)) score += 2;
-    if (result.title.toLowerCase().includes(term)) score += 2;
+    if (result.title.toLowerCase().includes(term)) score += 3;
+    if (result.snippet.toLowerCase().includes(term)) score += 2;
   });
 
   if (/\.pdf($|\?)/i.test(result.url)) score += 2;
-  if (hostMatchesTrustedList(hostnameFrom(result.url))) score += 3;
-  if (result.trustLabel === "Verified") score += 4;
-  if (result.trustLabel === "Scholar") score += 3;
+  if (hostMatchesTrustedList(hostnameFrom(result.url))) score += 4;
+  if (result.trustLabel === "Verified") score += 5;
+  if (result.trustLabel === "Scholar") score += 4;
   if (result.source.toLowerCase().includes("wikipedia")) score += 1;
 
   return score;
@@ -136,7 +143,7 @@ function uniqueResults(results: WebSourceResult[], query: string) {
   return results
     .filter((result) => {
       const key = result.url;
-      if (seen.has(key)) return false;
+      if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
     })
@@ -152,6 +159,23 @@ function flattenDuckTopics(items: unknown[]): Array<{ Text?: string; FirstURL?: 
     }
 
     return [item as { Text?: string; FirstURL?: string }];
+  });
+}
+
+function cleanReadableText(text: string) {
+  return normalizeWhitespace(
+    text
+      .replace(/^title:\s.*$/gim, " ")
+      .replace(/^url source:\s.*$/gim, " ")
+      .replace(/^markdown content:\s*$/gim, " ")
+      .replace(/^description:\s.*$/gim, " ")
+  );
+}
+
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 15000) {
+  return fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(timeoutMs)
   });
 }
 
@@ -190,7 +214,7 @@ async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]>
 
   const topicResults = flattenDuckTopics(data.RelatedTopics ?? [])
     .filter((item) => item.FirstURL && item.Text)
-    .slice(0, 8)
+    .slice(0, 12)
     .map((item) => ({
       id: makeId(item.FirstURL || item.Text || ""),
       title: (item.Text || "").split(" - ")[0] || hostnameFrom(item.FirstURL || ""),
@@ -205,7 +229,7 @@ async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]>
 
 async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> {
   const response = await fetch(
-    `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=5&namespace=0&format=json`,
+    `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=8&namespace=0&format=json`,
     {
       headers: { Accept: "application/json" },
       next: { revalidate: 60 * 30 }
@@ -221,7 +245,7 @@ async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> 
   const urls = Array.isArray(data[3]) ? data[3] : [];
 
   const summaries = await Promise.all(
-    titles.slice(0, 5).map(async (title) => {
+    titles.slice(0, 8).map(async (title) => {
       try {
         const summaryResponse = await fetch(
           `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
@@ -243,7 +267,7 @@ async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> 
     })
   );
 
-  return urls.slice(0, 5).map((url, index) => ({
+  return urls.slice(0, 8).map((url, index) => ({
     id: makeId(url),
     title: titles[index] || hostnameFrom(url),
     url,
@@ -254,7 +278,7 @@ async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> 
 }
 
 async function fetchOpenAlexResults(query: string): Promise<WebSourceResult[]> {
-  const response = await fetch(`https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=6`, {
+  const response = await fetch(`https://api.openalex.org/works?search=${encodeURIComponent(query)}&per-page=10`, {
     headers: {
       Accept: "application/json",
       "User-Agent": "ScholarMind/1.0 (mailto:hello@scholarmind.app)"
@@ -301,7 +325,7 @@ async function fetchOpenAlexResults(query: string): Promise<WebSourceResult[]> {
 
 async function fetchCrossrefResults(query: string): Promise<WebSourceResult[]> {
   const response = await fetch(
-    `https://api.crossref.org/works?rows=6&query.title=${encodeURIComponent(query)}&select=title,DOI,URL,publisher,abstract,link`,
+    `https://api.crossref.org/works?rows=10&query.title=${encodeURIComponent(query)}&select=title,DOI,URL,publisher,abstract,link`,
     {
       headers: {
         Accept: "application/json",
@@ -344,6 +368,49 @@ async function fetchCrossrefResults(query: string): Promise<WebSourceResult[]> {
   });
 }
 
+async function fetchSemanticScholarResults(query: string): Promise<WebSourceResult[]> {
+  const response = await fetch(
+    `https://api.semanticscholar.org/graph/v1/paper/search?query=${encodeURIComponent(query)}&limit=10&fields=title,abstract,url,venue,openAccessPdf,year`,
+    {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "ScholarMind/1.0 (mailto:hello@scholarmind.app)"
+      },
+      next: { revalidate: 60 * 30 }
+    }
+  );
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const data = (await response.json()) as {
+    data?: Array<{
+      title?: string;
+      abstract?: string;
+      url?: string;
+      venue?: string;
+      year?: number;
+      openAccessPdf?: { url?: string };
+    }>;
+  };
+
+  return (data.data ?? []).map((item) => {
+    const url = item.openAccessPdf?.url || item.url || "";
+    const title = item.title || "Semantic Scholar result";
+    const snippet = item.abstract || `${title}${item.year ? ` (${item.year})` : ""}`;
+
+    return {
+      id: makeId(url || title),
+      title,
+      url,
+      snippet: clipText(normalizeWhitespace(snippet), 280),
+      source: item.venue || "Semantic Scholar",
+      trustLabel: trustLabelFor(url, "Semantic Scholar")
+    };
+  });
+}
+
 function readXmlTag(xml: string, tag: string) {
   const match = xml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"));
   return match ? normalizeWhitespace(stripHtml(match[1])) : "";
@@ -351,7 +418,7 @@ function readXmlTag(xml: string, tag: string) {
 
 async function fetchArxivResults(query: string): Promise<WebSourceResult[]> {
   const response = await fetch(
-    `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=5`,
+    `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=8`,
     {
       headers: {
         Accept: "application/atom+xml",
@@ -400,7 +467,7 @@ async function fetchBingRssResults(query: string): Promise<WebSourceResult[]> {
   const xml = await response.text();
   const items = xml.match(/<item>[\s\S]*?<\/item>/g) ?? [];
 
-  return items.slice(0, 8).map((item) => {
+  return items.slice(0, 16).map((item) => {
     const title = readXmlTag(item, "title");
     const url = readXmlTag(item, "link");
     const snippet = readXmlTag(item, "description");
@@ -417,13 +484,9 @@ async function fetchBingRssResults(query: string): Promise<WebSourceResult[]> {
 }
 
 async function fetchTrustedLearningResults(query: string): Promise<WebSourceResult[]> {
-  const trustedQuery = `${query} (${trustedLearningHosts
-    .slice(0, 5)
-    .map((host) => `site:${host}`)
-    .join(" OR ")})`;
-  const results = await fetchBingRssResults(trustedQuery);
-
-  return results.filter((result) => hostMatchesTrustedList(hostnameFrom(result.url))).slice(0, 8);
+  const siteFilters = trustedLearningHosts.map((host) => `site:${host}`).join(" OR ");
+  const results = await fetchBingRssResults(`${query} (${siteFilters})`);
+  return results.filter((result) => hostMatchesTrustedList(hostnameFrom(result.url))).slice(0, 12);
 }
 
 async function fetchGoogleResults(query: string): Promise<{ results: WebSourceResult[]; warning?: string }> {
@@ -432,7 +495,7 @@ async function fetchGoogleResults(query: string): Promise<{ results: WebSourceRe
 
   if (apiKey && cx) {
     const response = await fetch(
-      `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(apiKey)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&num=8`,
+      `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(apiKey)}&cx=${encodeURIComponent(cx)}&q=${encodeURIComponent(query)}&num=10`,
       {
         headers: { Accept: "application/json" },
         next: { revalidate: 60 * 30 }
@@ -465,25 +528,95 @@ async function fetchGoogleResults(query: string): Promise<{ results: WebSourceRe
   };
 }
 
-async function searchScholarSources(query: string): Promise<WebSourceResult[]> {
-  const [openAlexResults, crossrefResults, arxivResults, trustedLearningResults] = await Promise.all([
-    fetchOpenAlexResults(query),
-    fetchCrossrefResults(query),
-    fetchArxivResults(query),
-    fetchTrustedLearningResults(query)
-  ]);
+async function fetchReadablePreview(url: string) {
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
+        "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
+      },
+      redirect: "follow"
+    }, 10000);
 
-  const combined = uniqueResults(
-    [...trustedLearningResults, ...openAlexResults, ...crossrefResults, ...arxivResults],
-    query
-  );
+    if (!response.ok) return "";
 
-  if (combined.length >= 8) {
-    return combined.slice(0, 10);
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      return clipText(normalizeWhitespace(JSON.stringify(await response.json())), 900);
+    }
+
+    if (contentType.includes("text/html")) {
+      const html = await response.text();
+      const dom = new JSDOM(html, { url });
+      const article = new Readability(dom.window.document).parse();
+      const readable = cleanReadableText(article?.textContent || stripHtml(html));
+      return clipText(readable, 900);
+    }
+
+    if (contentType.includes("text/plain")) {
+      return clipText(normalizeWhitespace(await response.text()), 900);
+    }
+  } catch {
+    // Fallback below.
   }
 
-  const wikipediaResults = await fetchWikipediaResults(query);
-  return uniqueResults([...combined, ...wikipediaResults], query).slice(0, 10);
+  try {
+    const readerUrl = `https://r.jina.ai/http://${url.replace(/^https?:\/\//, "")}`;
+    const response = await fetchWithTimeout(
+      readerUrl,
+      {
+        headers: {
+          Accept: "text/plain",
+          "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
+        }
+      },
+      10000
+    );
+
+    if (!response.ok) return "";
+    return clipText(cleanReadableText(await response.text()), 900);
+  } catch {
+    return "";
+  }
+}
+
+async function rerankWithPreview(results: WebSourceResult[], query: string, limit = 36) {
+  const base = uniqueResults(results, query);
+  const candidates = base.slice(0, Math.min(limit, 16));
+
+  const enriched = await Promise.all(
+    candidates.map(async (result) => {
+      const preview = await fetchReadablePreview(result.url);
+      const merged = preview && preview.length > result.snippet.length + 60 ? preview : result.snippet;
+      return { ...result, snippet: clipText(merged, 320) };
+    })
+  );
+
+  const remaining = base.slice(candidates.length, limit);
+  return uniqueResults([...enriched, ...remaining], query).slice(0, limit);
+}
+
+async function searchScholarSources(query: string): Promise<WebSourceResult[]> {
+  const [openAlexResults, crossrefResults, semanticScholarResults, arxivResults, trustedLearningResults, wikipediaResults] = await Promise.all([
+    fetchOpenAlexResults(query),
+    fetchCrossrefResults(query),
+    fetchSemanticScholarResults(query),
+    fetchArxivResults(query),
+    fetchTrustedLearningResults(query),
+    fetchWikipediaResults(query)
+  ]);
+
+  return rerankWithPreview(
+    [
+      ...trustedLearningResults,
+      ...semanticScholarResults,
+      ...openAlexResults,
+      ...crossrefResults,
+      ...arxivResults,
+      ...wikipediaResults
+    ],
+    query
+  );
 }
 
 export async function searchWebSources(
@@ -501,7 +634,7 @@ export async function searchWebSources(
   if (engine === "google") {
     const googleResults = await fetchGoogleResults(query);
     return {
-      results: uniqueResults(googleResults.results, query).slice(0, 10),
+      results: await rerankWithPreview(googleResults.results, query),
       warning: googleResults.warning
     };
   }
@@ -512,67 +645,117 @@ export async function searchWebSources(
   ]);
 
   return {
-    results: uniqueResults([...duckResults, ...wikipediaResults], query).slice(0, 10),
+    results: await rerankWithPreview([...duckResults, ...wikipediaResults], query),
     warning: "DuckDuckGo web results are helpful for quick context, but not every page is verified."
   };
 }
 
+async function fetchRemoteBinary(url: string) {
+  const response = await fetchWithTimeout(url, {
+    headers: {
+      Accept: "application/pdf,image/*,application/octet-stream;q=0.9,*/*;q=0.8",
+      "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
+    },
+    redirect: "follow"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to open ${hostnameFrom(url)} right now.`);
+  }
+
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get("content-type") || ""
+  };
+}
+
+async function extractReadableArticleText(url: string) {
+  const response = await fetchWithTimeout(url, {
+    headers: {
+      Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
+      "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
+    },
+    redirect: "follow"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to open ${hostnameFrom(url)} right now.`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    return cleanReadableText(JSON.stringify(await response.json(), null, 2));
+  }
+
+  if (contentType.includes("text/plain")) {
+    return cleanReadableText(await response.text());
+  }
+
+  const html = await response.text();
+  const dom = new JSDOM(html, { url });
+  const article = new Readability(dom.window.document).parse();
+  const readable = cleanReadableText(article?.textContent || "");
+  const fallback = cleanReadableText(stripHtml(html));
+  return readable.length > 240 ? readable : fallback;
+}
+
 export async function extractWebSourceText({
   title,
-  url,
-  snippet
+  url
 }: {
   title: string;
   url: string;
   snippet?: string;
 }) {
+  const extension = getFileExtension(url);
+
   try {
-    const response = await fetch(url, {
-      headers: {
-        Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
-        "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
-      },
-      redirect: "follow",
-      signal: AbortSignal.timeout(12000)
-    });
+    if (isPdfDocument(`remote.${extension || "pdf"}`) || isImageDocument(`remote.${extension || "png"}`)) {
+      const { buffer, contentType } = await fetchRemoteBinary(url);
+      const extraction = await extractBufferContent({
+        buffer,
+        fileName: `${title}.${extension || (contentType.includes("pdf") ? "pdf" : "png")}`,
+        fileType: contentType
+      });
 
-    if (!response.ok) {
-      throw new Error(`Unable to open ${hostnameFrom(url)} right now.`);
+      if (extraction.readable) {
+        return extraction.text;
+      }
     }
 
-    const contentType = response.headers.get("content-type") || "";
-    let body = "";
-
-    if (contentType.includes("application/json")) {
-      body = JSON.stringify(await response.json(), null, 2);
-    } else {
-      body = await response.text();
-    }
-
-    const normalizedBody = normalizeWhitespace(
-      contentType.includes("text/html") || /<html|<body|<article/i.test(body) ? stripHtml(body) : body
-    );
-
-    const combined = normalizeWhitespace(
-      [`Source title: ${title}`, `Source URL: ${url}`, snippet ? `Summary: ${snippet}` : "", normalizedBody]
-        .filter(Boolean)
-        .join("\n\n")
-    );
-
-    if (combined.length >= 120) {
-      return clipText(combined, 24000);
+    const readableText = await extractReadableArticleText(url);
+    if (readableText.length >= 240) {
+      return clipText(readableText, 32000);
     }
   } catch {
-    // Fall back to the search snippet below.
+    // Fall through to backups below.
   }
 
-  const fallback = normalizeWhitespace(
-    [`Source title: ${title}`, `Source URL: ${url}`, snippet ? `Summary: ${snippet}` : ""].filter(Boolean).join("\n\n")
+  try {
+    const readerUrl = `https://r.jina.ai/http://${url.replace(/^https?:\/\//, "")}`;
+    const response = await fetchWithTimeout(
+      readerUrl,
+      {
+        headers: {
+          Accept: "text/plain",
+          "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
+        }
+      },
+      12000
+    );
+
+    if (response.ok) {
+      const text = cleanReadableText(await response.text());
+      if (text.length >= 240) {
+        return clipText(text, 32000);
+      }
+    }
+  } catch {
+    // Fall through to the snippet fallback below.
+  }
+
+  throw new Error(
+    `ScholarMind could not read enough of ${hostnameFrom(url)} to turn it into a reliable study source. Try another result or upload a clearer file instead.`
   );
-
-  if (fallback.length < 80) {
-    throw new Error("This web source could not be read clearly enough. Try another result or upload a file.");
-  }
-
-  return clipText(fallback, 4000);
 }

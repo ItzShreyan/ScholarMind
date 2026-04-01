@@ -147,19 +147,15 @@ function unreadable(reason: string): ExtractionResult {
   };
 }
 
-export async function extractDocumentContent(file: File): Promise<ExtractionResult> {
-  if (!file || typeof file.arrayBuffer !== "function") {
-    return unreadable("This upload could not be processed. Reupload another copy.");
-  }
-
-  if (file.size <= 0) {
-    return unreadable("This file is empty. Reupload another copy.");
-  }
-
-  const fileName = file.name || "upload";
-  const fileType = file.type || "";
-  const buffer = Buffer.from(await file.arrayBuffer());
-
+async function extractFromBuffer({
+  buffer,
+  fileName,
+  fileType
+}: {
+  buffer: Buffer;
+  fileName: string;
+  fileType?: string;
+}): Promise<ExtractionResult> {
   try {
     let text = "";
 
@@ -197,4 +193,39 @@ export async function extractDocumentContent(file: File): Promise<ExtractionResu
         "This file could not be read clearly enough. Reupload another copy."
     );
   }
+}
+
+export async function extractBufferContent({
+  buffer,
+  fileName,
+  fileType
+}: {
+  buffer: Buffer;
+  fileName: string;
+  fileType?: string;
+}): Promise<ExtractionResult> {
+  if (!buffer || !buffer.length) {
+    return unreadable("This file is empty. Reupload another copy.");
+  }
+
+  return extractFromBuffer({
+    buffer,
+    fileName: fileName || "upload",
+    fileType
+  });
+}
+
+export async function extractDocumentContent(file: File): Promise<ExtractionResult> {
+  if (!file || typeof file.arrayBuffer !== "function") {
+    return unreadable("This upload could not be processed. Reupload another copy.");
+  }
+
+  if (file.size <= 0) {
+    return unreadable("This file is empty. Reupload another copy.");
+  }
+
+  const fileName = file.name || "upload";
+  const fileType = file.type || "";
+  const buffer = Buffer.from(await file.arrayBuffer());
+  return extractFromBuffer({ buffer, fileName, fileType });
 }

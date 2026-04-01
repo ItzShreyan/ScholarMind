@@ -106,7 +106,7 @@ export function RichStudyText({
 
   return (
     <div
-      className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[15px] leading-8 md:text-[16px]"} [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
+      className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[16px] leading-8 md:text-[17px] md:leading-9"} [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
         {normalized}
