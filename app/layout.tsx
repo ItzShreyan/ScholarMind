@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/components/providers/AuthProvider";
+import { TelemetryTracker } from "@/components/providers/TelemetryTracker";
 
 export const metadata: Metadata = {
   title: "ScholarMind - AI Study Companion",
@@ -31,7 +32,10 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: bootScript }} />
       </head>
       <body>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider>
+          <TelemetryTracker />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );

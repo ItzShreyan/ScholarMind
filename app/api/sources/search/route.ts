@@ -24,6 +24,22 @@ export async function POST(req: Request) {
   try {
     const body = schema.parse(await req.json());
     const results = await searchWebSources(body.query, body.engine);
+    try {
+      await supabase.from("study_site_events").insert({
+        visitor_key: user.id,
+        user_id: user.id,
+        user_email: user.email ?? null,
+        event_type: "source_search",
+        page: "/dashboard",
+        feature: body.engine,
+        metadata: {
+          query: body.query,
+          resultCount: results.results.length
+        }
+      });
+    } catch {
+      // Search should still work even if telemetry storage is unavailable.
+    }
     return NextResponse.json(results);
   } catch (error) {
     return NextResponse.json(

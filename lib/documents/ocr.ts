@@ -1,4 +1,4 @@
-const maxPdfOcrPages = 4;
+const maxPdfOcrPages = 6;
 
 function normalizeWhitespace(text: string) {
   return text.replace(/\u0000/g, "").replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -31,9 +31,27 @@ export async function recognizeImageBuffer(buffer: Buffer) {
 
   try {
     const image = await loadImage(buffer);
-    const canvas = createCanvas(Math.max(1, image.width), Math.max(1, image.height));
+    const targetWidth = Math.min(2200, Math.max(image.width, 1400));
+    const scale = image.width > 0 ? Math.max(1, targetWidth / image.width) : 1;
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = createCanvas(width, height);
     const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0, image.width, image.height);
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    const imageData = context.getImageData(0, 0, width, height);
+    const { data } = imageData;
+    for (let index = 0; index < data.length; index += 4) {
+      const luminance = data[index] * 0.299 + data[index + 1] * 0.587 + data[index + 2] * 0.114;
+      const boosted = Math.max(0, Math.min(255, (luminance - 128) * 1.32 + 128));
+      const normalized = boosted > 188 ? 255 : boosted < 72 ? 0 : boosted;
+      data[index] = normalized;
+      data[index + 1] = normalized;
+      data[index + 2] = normalized;
+    }
+    context.putImageData(imageData, 0, 0);
     imageBuffer = canvas.toBuffer("image/png");
   } catch {
     imageBuffer = buffer;
@@ -64,9 +82,11 @@ export async function extractPdfDocumentByOcr(buffer: Buffer, pageLimit = maxPdf
       const page = await pdf.getPage(pageNumber);
 
       try {
-        const viewport = page.getViewport({ scale: 1.2 });
+        const viewport = page.getViewport({ scale: 1.6 });
         const canvas = createCanvas(Math.max(1, Math.ceil(viewport.width)), Math.max(1, Math.ceil(viewport.height)));
         const context = canvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
 
         await page.render({
           canvas: canvas as never,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateWithFallback } from "@/lib/ai/fallback";
+import { getSiteSettings } from "@/lib/site-settings";
 import { createClient } from "@/lib/supabase/server";
 import {
   formatExamLimitMessage,
@@ -38,6 +39,7 @@ export async function POST(req: Request) {
     const {
       data: { user }
     } = await supabase.auth.getUser();
+    const siteSettings = await getSiteSettings(supabase);
 
     const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const actorKey = user?.id || forwardedFor || "anonymous";
@@ -46,14 +48,15 @@ export async function POST(req: Request) {
         ? await reserveExamUsage({
             supabase,
             actorKey,
-            userId: user?.id
+            userId: user?.id,
+            weeklyLimit: siteSettings.examWeeklyLimit
           })
         : null;
 
     if (examReservation && !examReservation.allowed) {
       return NextResponse.json(
         {
-          error: formatExamLimitMessage()
+          error: formatExamLimitMessage(siteSettings.examWeeklyLimit)
         },
         { status: 429 }
       );
@@ -62,7 +65,9 @@ export async function POST(req: Request) {
     const reservation = await reserveAiUsage({
       supabase,
       actorKey,
-      userId: user?.id
+      userId: user?.id,
+      hourlyLimit: siteSettings.aiHourlyLimit,
+      dailyLimit: siteSettings.aiDailyLimit
     });
 
     if (!reservation.allowed) {
@@ -77,7 +82,7 @@ export async function POST(req: Request) {
       }
       return NextResponse.json(
         {
-          error: formatAiLimitMessage()
+          error: formatAiLimitMessage(siteSettings.aiHourlyLimit, siteSettings.aiDailyLimit)
         },
         { status: 429 }
       );
@@ -85,6 +90,21 @@ export async function POST(req: Request) {
 
     try {
       const result = await generateWithFallback(body);
+      try {
+        await supabase.from("study_site_events").insert({
+          visitor_key: actorKey,
+          user_id: user?.id ?? null,
+          user_email: user?.email ?? null,
+          event_type: "feature_use",
+          page: body.sessionId ? `/dashboard/workspace/${body.sessionId}` : "/dashboard",
+          feature: body.action,
+          metadata: {
+            sessionId: body.sessionId ?? null
+          }
+        });
+      } catch {
+        // Telemetry should never block study responses.
+      }
 
       return NextResponse.json({
         ...result,

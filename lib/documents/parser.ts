@@ -22,6 +22,29 @@ function clipText(text: string, limit = maxExtractedCharacters) {
   return text.length > limit ? `${text.slice(0, limit).trim()}\n\n[Content clipped for speed.]` : text;
 }
 
+function mergeExtractedText(primary: string, secondary: string) {
+  const base = normalizeWhitespace(primary);
+  const extra = normalizeWhitespace(secondary);
+
+  if (!base) return extra;
+  if (!extra) return base;
+  if (base === extra) return base;
+
+  const seen = new Set(
+    base
+      .split("\n")
+      .map((line) => normalizeWhitespace(line))
+      .filter(Boolean)
+  );
+
+  const uniqueExtra = extra
+    .split("\n")
+    .map((line) => normalizeWhitespace(line))
+    .filter((line) => line.length >= 18 && !seen.has(line));
+
+  return uniqueExtra.length ? `${base}\n\n${uniqueExtra.join("\n")}` : base;
+}
+
 function isReadableContent(text: string) {
   const normalized = normalizeWhitespace(text);
   const words = normalized.match(/[A-Za-z0-9][A-Za-z0-9'-]{1,}/g) ?? [];
@@ -138,11 +161,14 @@ async function extractPdfDocument(buffer: Buffer) {
   }
 
   if (isReadableContent(parsedText)) {
-    return parsedText;
+    if (parsedText.length >= 3200) {
+      return parsedText;
+    }
   }
 
   const { extractPdfDocumentByOcr } = await import("@/lib/documents/ocr");
-  return normalizeWhitespace(await extractPdfDocumentByOcr(buffer));
+  const ocrText = normalizeWhitespace(await extractPdfDocumentByOcr(buffer));
+  return normalizeWhitespace(mergeExtractedText(parsedText, ocrText));
 }
 
 function unreadable(reason: string): ExtractionResult {

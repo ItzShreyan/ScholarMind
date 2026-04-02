@@ -14,6 +14,7 @@ import {
 import { motion, useScroll, useTransform } from "framer-motion";
 import { ScrollShowcase } from "@/components/landing/ScrollShowcase";
 import { ThreeHero } from "@/components/landing/ThreeHero";
+import { BrandLink } from "@/components/common/BrandLink";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Badge } from "@/components/ui/Badge";
 import { buttonVariants } from "@/components/ui/Button";
@@ -98,13 +99,7 @@ export default function LandingPage() {
 
       <header className="glass sticky top-0 z-40 border-b border-white/10">
         <Container className="flex items-center justify-between py-4">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))]" />
-            <div>
-              <p className="text-sm font-semibold">ScholarMind</p>
-              <p className="muted text-xs">Summaries, quizzes, flashcards</p>
-            </div>
-          </Link>
+          <BrandLink href="/" subtitle="Summaries, quizzes, flashcards" />
 
           <div className="flex items-center gap-2">
             <ThemeToggle />

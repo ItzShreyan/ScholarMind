@@ -45,6 +45,15 @@ function clipText(text: string, limit: number) {
   return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
 }
 
+async function readJsonSafely<T>(response: Response): Promise<T | null> {
+  try {
+    const text = await response.text();
+    return text ? (JSON.parse(text) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
 function stripHtml(text: string) {
   return text
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -122,6 +131,7 @@ function queryTerms(query: string) {
 function scoreResult(result: WebSourceResult, query: string) {
   const haystack = `${result.title} ${result.snippet} ${result.source} ${hostnameFrom(result.url)}`.toLowerCase();
   const terms = queryTerms(query);
+  const normalizedQuery = normalizeWhitespace(query).toLowerCase();
   let score = 0;
 
   terms.forEach((term) => {
@@ -130,11 +140,16 @@ function scoreResult(result: WebSourceResult, query: string) {
     if (result.snippet.toLowerCase().includes(term)) score += 2;
   });
 
+  if (normalizedQuery && result.title.toLowerCase().includes(normalizedQuery)) score += 10;
+  if (normalizedQuery && result.snippet.toLowerCase().includes(normalizedQuery)) score += 6;
+
   if (/\.pdf($|\?)/i.test(result.url)) score += 2;
   if (hostMatchesTrustedList(hostnameFrom(result.url))) score += 4;
   if (result.trustLabel === "Verified") score += 5;
   if (result.trustLabel === "Scholar") score += 4;
   if (result.source.toLowerCase().includes("wikipedia")) score += 1;
+  if (!result.url.startsWith("http")) score -= 4;
+  if (result.snippet.trim().length < 60) score -= 2;
 
   return score;
 }
@@ -194,12 +209,16 @@ async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]>
     return [];
   }
 
-  const data = (await response.json()) as {
+  const data = await readJsonSafely<{
     AbstractText?: string;
     AbstractURL?: string;
     AbstractSource?: string;
     RelatedTopics?: unknown[];
-  };
+  }>(response);
+
+  if (!data) {
+    return [];
+  }
 
   const results: WebSourceResult[] = [];
 
@@ -242,7 +261,10 @@ async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> 
     return [];
   }
 
-  const data = (await response.json()) as [string, string[], string[], string[]];
+  const data = await readJsonSafely<[string, string[], string[], string[]]>(response);
+  if (!data) {
+    return [];
+  }
   const titles = Array.isArray(data[1]) ? data[1] : [];
   const urls = Array.isArray(data[3]) ? data[3] : [];
 
@@ -261,8 +283,8 @@ async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> 
           return "";
         }
 
-        const summary = (await summaryResponse.json()) as { extract?: string };
-        return normalizeWhitespace(summary.extract || "");
+        const summary = await readJsonSafely<{ extract?: string }>(summaryResponse);
+        return normalizeWhitespace(summary?.extract || "");
       } catch {
         return "";
       }
@@ -292,7 +314,7 @@ async function fetchOpenAlexResults(query: string): Promise<WebSourceResult[]> {
     return [];
   }
 
-  const data = (await response.json()) as {
+  const data = await readJsonSafely<{
     results?: Array<{
       id?: string;
       doi?: string;
@@ -301,7 +323,11 @@ async function fetchOpenAlexResults(query: string): Promise<WebSourceResult[]> {
       primary_location?: { landing_page_url?: string; pdf_url?: string; source?: { display_name?: string } };
       abstract_inverted_index?: Record<string, number[]>;
     }>;
-  };
+  }>(response);
+
+  if (!data) {
+    return [];
+  }
 
   return (data.results ?? []).map((item) => {
     const url = item.primary_location?.pdf_url || item.primary_location?.landing_page_url || item.doi || item.id || "";
@@ -341,7 +367,7 @@ async function fetchCrossrefResults(query: string): Promise<WebSourceResult[]> {
     return [];
   }
 
-  const data = (await response.json()) as {
+  const data = await readJsonSafely<{
     message?: {
       items?: Array<{
         title?: string[];
@@ -352,7 +378,11 @@ async function fetchCrossrefResults(query: string): Promise<WebSourceResult[]> {
         link?: Array<{ URL?: string; "content-type"?: string }>;
       }>;
     };
-  };
+  }>(response);
+
+  if (!data) {
+    return [];
+  }
 
   return (data.message?.items ?? []).map((item) => {
     const pdfLink = item.link?.find((link) => (link["content-type"] || "").includes("pdf"))?.URL;
@@ -386,7 +416,7 @@ async function fetchSemanticScholarResults(query: string): Promise<WebSourceResu
     return [];
   }
 
-  const data = (await response.json()) as {
+  const data = await readJsonSafely<{
     data?: Array<{
       title?: string;
       abstract?: string;
@@ -395,7 +425,11 @@ async function fetchSemanticScholarResults(query: string): Promise<WebSourceResu
       year?: number;
       openAccessPdf?: { url?: string };
     }>;
-  };
+  }>(response);
+
+  if (!data) {
+    return [];
+  }
 
   return (data.data ?? []).map((item) => {
     const url = item.openAccessPdf?.url || item.url || "";
@@ -505,9 +539,13 @@ async function fetchGoogleResults(query: string): Promise<{ results: WebSourceRe
     );
 
     if (response.ok) {
-      const data = (await response.json()) as {
+      const data = await readJsonSafely<{
         items?: Array<{ title?: string; link?: string; snippet?: string; displayLink?: string }>;
-      };
+      }>(response);
+
+      if (!data) {
+        throw new Error("Google search returned an unreadable response.");
+      }
 
       return {
         results: (data.items ?? []).map((item) => ({
@@ -635,31 +673,65 @@ export async function searchWebSources(
   query: string,
   engine: SourceSearchEngine = "scholar"
 ): Promise<SearchWebSourcesResult> {
-  if (engine === "scholar") {
+  const normalizedQuery = normalizeWhitespace(query).slice(0, 120);
+
+  if (!normalizedQuery) {
     return {
-      results: await searchScholarSources(query),
+      results: [],
+      warning: "Type a clearer topic, chapter, or question first."
+    };
+  }
+
+  try {
+    if (engine === "scholar") {
+      const results = await searchScholarSources(normalizedQuery);
+      if (results.length) {
+        return {
+          results,
+          warning:
+            "Scholar mode prioritizes academic papers, trusted learning sites, and open references first, but always double-check a source before relying on it."
+        };
+      }
+    }
+
+    if (engine === "google") {
+      const googleResults = await fetchGoogleResults(normalizedQuery);
+      const reranked = await rerankWithPreview(googleResults.results, normalizedQuery);
+      if (reranked.length) {
+        return {
+          results: reranked,
+          warning: googleResults.warning
+        };
+      }
+    }
+
+    const [duckResults, wikipediaResults] = await Promise.all([
+      fetchDuckDuckGoResults(normalizedQuery),
+      fetchWikipediaResults(normalizedQuery)
+    ]);
+
+    const fallbackResults = await rerankWithPreview([...duckResults, ...wikipediaResults], normalizedQuery);
+    return {
+      results: fallbackResults,
       warning:
-        "Scholar mode prioritizes academic papers, trusted learning sites, and open references first, but always double-check a source before relying on it."
+        engine === "duckduckgo"
+          ? "DuckDuckGo web results are helpful for quick context, but not every page is verified."
+          : "The preferred search source came back thin, so ScholarMind widened the search. Double-check open-web results before relying on them."
     };
-  }
+  } catch {
+    const [duckResults, wikipediaResults] = await Promise.allSettled([
+      fetchDuckDuckGoResults(normalizedQuery),
+      fetchWikipediaResults(normalizedQuery)
+    ]);
+    const safeDuck = duckResults.status === "fulfilled" ? duckResults.value : [];
+    const safeWiki = wikipediaResults.status === "fulfilled" ? wikipediaResults.value : [];
 
-  if (engine === "google") {
-    const googleResults = await fetchGoogleResults(query);
     return {
-      results: await rerankWithPreview(googleResults.results, query),
-      warning: googleResults.warning
+      results: await rerankWithPreview([...safeDuck, ...safeWiki], normalizedQuery),
+      warning:
+        "Some source providers failed during the search, so ScholarMind fell back to a broader web search. Double-check the imported source before revising from it."
     };
   }
-
-  const [duckResults, wikipediaResults] = await Promise.all([
-    fetchDuckDuckGoResults(query),
-    fetchWikipediaResults(query)
-  ]);
-
-  return {
-    results: await rerankWithPreview([...duckResults, ...wikipediaResults], query),
-    warning: "DuckDuckGo web results are helpful for quick context, but not every page is verified."
-  };
 }
 
 async function fetchRemoteBinary(url: string) {
@@ -715,7 +787,8 @@ async function extractReadableArticleText(url: string) {
 
 export async function extractWebSourceText({
   title,
-  url
+  url,
+  snippet
 }: {
   title: string;
   url: string;
@@ -734,12 +807,12 @@ export async function extractWebSourceText({
       });
 
       if (extraction.readable) {
-        return extraction.text;
+        return clipText(extraction.text, 32000);
       }
     }
 
     const readableText = await extractReadableArticleText(url);
-    if (readableText.length >= 240) {
+    if (readableText.length >= 120) {
       return clipText(readableText, 32000);
     }
   } catch {
@@ -761,12 +834,20 @@ export async function extractWebSourceText({
 
     if (response.ok) {
       const text = cleanReadableText(await response.text());
-      if (text.length >= 240) {
+      if (text.length >= 120) {
         return clipText(text, 32000);
       }
     }
   } catch {
     // Fall through to the snippet fallback below.
+  }
+
+  const snippetFallback = cleanReadableText(snippet || "");
+  if (snippetFallback.length >= 40) {
+    return clipText(
+      [`Source title: ${title}`, `Source URL: ${url}`, `Imported preview: ${snippetFallback}`].join("\n"),
+      32000
+    );
   }
 
   throw new Error(

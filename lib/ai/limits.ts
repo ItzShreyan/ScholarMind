@@ -292,22 +292,26 @@ async function releaseInSupabase({
 export async function reserveAiUsage({
   supabase,
   actorKey,
-  userId
+  userId,
+  hourlyLimit = freePreviewHourlyLimit,
+  dailyLimit = freePreviewDailyLimit
 }: {
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
+  hourlyLimit?: number;
+  dailyLimit?: number;
 }) {
   const persisted = await reserveInSupabase({
     supabase,
     actorKey,
     userId,
     scope: "general",
-    hourlyLimit: freePreviewHourlyLimit,
-    dailyLimit: freePreviewDailyLimit
+    hourlyLimit,
+    dailyLimit
   });
 
-  return persisted ?? reserveInMemory(actorKey, usageStore, freePreviewHourlyLimit, freePreviewDailyLimit);
+  return persisted ?? reserveInMemory(actorKey, usageStore, hourlyLimit, dailyLimit);
 }
 
 export async function releaseAiUsage({
@@ -334,22 +338,24 @@ export async function releaseAiUsage({
 export async function reserveExamUsage({
   supabase,
   actorKey,
-  userId
+  userId,
+  weeklyLimit = examGeneratorWeeklyLimit
 }: {
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
+  weeklyLimit?: number;
 }) {
   const persisted = await reserveInSupabaseWindow({
     supabase,
     actorKey,
     userId,
     scope: "exam",
-    limit: examGeneratorWeeklyLimit,
+    limit: weeklyLimit,
     windowMs: 1000 * 60 * 60 * 24 * 7
   });
 
-  return persisted ?? reserveInMemoryWindow(actorKey, examUsageStore, examGeneratorWeeklyLimit, 1000 * 60 * 60 * 24 * 7);
+  return persisted ?? reserveInMemoryWindow(actorKey, examUsageStore, weeklyLimit, 1000 * 60 * 60 * 24 * 7);
 }
 
 export async function releaseExamUsage({
@@ -373,10 +379,13 @@ export async function releaseExamUsage({
   releaseInMemory(actorKey, token, examUsageStore);
 }
 
-export function formatAiLimitMessage() {
-  return `Free preview limit reached. You can use up to ${freePreviewHourlyLimit} AI generations per hour and ${freePreviewDailyLimit} per day while Pro is still coming soon.`;
+export function formatAiLimitMessage(
+  hourlyLimit = freePreviewHourlyLimit,
+  dailyLimit = freePreviewDailyLimit
+) {
+  return `Free preview limit reached. You can use up to ${hourlyLimit} AI generations per hour and ${dailyLimit} per day while Pro is still coming soon.`;
 }
 
-export function formatExamLimitMessage() {
-  return `Exam generator limit reached. You can generate up to ${examGeneratorWeeklyLimit} full mock exam${examGeneratorWeeklyLimit === 1 ? "" : "s"} per week in the free preview.`;
+export function formatExamLimitMessage(weeklyLimit = examGeneratorWeeklyLimit) {
+  return `Exam generator limit reached. You can generate up to ${weeklyLimit} full mock exam${weeklyLimit === 1 ? "" : "s"} per week in the free preview.`;
 }

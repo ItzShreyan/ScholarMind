@@ -28,8 +28,6 @@ export async function POST(req: Request) {
     }
 
     const body = schema.parse(await req.json());
-    const extractedText = await extractWebSourceText(body);
-    const sourceName = body.source ? `${body.title} (${body.source})` : body.title;
 
     const { data: session, error: sessionError } = await supabase
       .from("study_sessions")
@@ -41,6 +39,9 @@ export async function POST(req: Request) {
     if (sessionError || !session) {
       throw new Error("Open or create a studio before importing web sources.");
     }
+
+    const extractedText = await extractWebSourceText(body);
+    const sourceName = body.source ? `${body.title} (${body.source})` : body.title;
 
     const { data: insertedFile, error: insertError } = await supabase
       .from("study_files")
@@ -70,6 +71,23 @@ export async function POST(req: Request) {
 
     if (fetchError) {
       throw fetchError;
+    }
+
+    try {
+      await supabase.from("study_site_events").insert({
+        visitor_key: user.id,
+        user_id: user.id,
+        user_email: user.email ?? null,
+        event_type: "source_import",
+        page: `/dashboard/workspace/${body.sessionId}`,
+        feature: body.source ?? "web",
+        metadata: {
+          title: body.title,
+          url: body.url
+        }
+      });
+    } catch {
+      // Source imports should still succeed when telemetry is unavailable.
     }
 
     return NextResponse.json({

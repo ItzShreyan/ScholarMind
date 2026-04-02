@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Link from "next/link";
 import { Settings, UserCircle2 } from "lucide-react";
+import { BrandLink } from "@/components/common/BrandLink";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 
 const navItems = [
@@ -19,13 +20,7 @@ export function DashboardHeader({ email }: { email?: string }) {
     <header className="px-3 pt-3 md:px-4">
       <div className="panel panel-border flex items-center justify-between rounded-[28px] px-4 py-3.5">
         <div className="flex items-center gap-3">
-          <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="playful-pop h-10 w-10 rounded-2xl bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))]" />
-            <div>
-              <p className="text-sm font-semibold">ScholarMind</p>
-              <p className="muted text-xs">Study studios and AI tools</p>
-            </div>
-          </Link>
+          <BrandLink href="/dashboard" subtitle="Study studios and AI tools" />
         </div>
 
         <nav className="hidden items-center gap-2 lg:flex">

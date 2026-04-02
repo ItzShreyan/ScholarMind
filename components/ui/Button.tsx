@@ -16,7 +16,7 @@ export function buttonVariants({
   size?: Size;
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-2xl font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60 active:scale-[0.98]";
+    "inline-flex cursor-pointer select-none touch-manipulation items-center justify-center gap-2 rounded-2xl font-medium transition-all duration-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 active:scale-[0.98]";
   const variants: Record<Variant, string> = {
     primary:
       "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold)_42%,var(--accent-sky))] text-slate-950 shadow-[0_18px_40px_rgba(255,125,89,0.28)] hover:-translate-y-0.5 hover:brightness-105",
