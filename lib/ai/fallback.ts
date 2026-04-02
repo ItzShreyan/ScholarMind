@@ -28,6 +28,22 @@ export async function generateWithFallback(input: AIRequest) {
   const cached = getCached(cacheKey);
   if (cached) return { text: cached, provider: "cache" };
 
+  // If a specific primary provider is set, use only that provider without fallback
+  const primaryProvider = process.env.AI_PRIMARY_PROVIDER;
+  if (primaryProvider === "openrouter") {
+    try {
+      const result = await openRouterProvider.generate(input);
+      if (result.text?.trim()) {
+        setCached(cacheKey, result.text);
+        return result;
+      }
+      throw new Error(`openrouter: empty response`);
+    } catch (error) {
+      throw new Error(`OpenRouter (Nemotron) failed: ${(error as Error).message}`);
+    }
+  }
+
+  // Fallback to provider order if primary provider is not explicitly set to openrouter
   const failures: string[] = [];
   for (const provider of providerOrder()) {
     try {
