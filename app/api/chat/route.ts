@@ -1,31 +1,36 @@
 import { NextResponse } from "next/server";
-import { generateWithFallback } from "@/lib/ai/fallback";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const result = await generateWithFallback({
-      action: "chat",
-      prompt: body.prompt,
-      context: body.context,
-      sessionId: body.sessionId
-    });
+    const { input } = await req.json();
 
-    const encoder = new TextEncoder();
-    const chunks = result.text.match(/.{1,180}/g) || [result.text];
+    const messages = input.history?.length
+      ? input.history
+      : input.messages || [{ role: "user", content: input.message || input.prompt || "" }];
 
-    const stream = new ReadableStream({
-      start(controller) {
-        chunks.forEach((part, index) => {
-          setTimeout(() => controller.enqueue(encoder.encode(part)), index * 25);
-        });
-        setTimeout(() => controller.close(), chunks.length * 25 + 10);
-      }
-    });
-
-    return new NextResponse(stream, {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
       headers: {
-        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-8b-instruct:free",
+        messages,
+        temperature: 0.4,
+        max_tokens: 1200,
+        stream: true
+      })
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return new NextResponse(text, { status: response.status });
+    }
+
+    return new Response(response.body, {
+      headers: {
+        "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache"
       }
     });

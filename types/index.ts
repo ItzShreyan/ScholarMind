@@ -9,9 +9,18 @@ export type AIAction =
   | "study_plan"
   | "insights";
 
+export type ChatHistoryItem = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 export type AIRequest = {
   action: AIAction;
   prompt: string;
+  message?: string;
+  history?: ChatHistoryItem[];
+  mode?: AIAction | string;
+  content?: string;
   context?: string;
   sessionId?: string;
   userId?: string;

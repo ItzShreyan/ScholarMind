@@ -2,57 +2,90 @@ import { AIRequest } from "@/types";
 import { getCached, setCached } from "@/lib/cache";
 import { AIProvider } from "@/lib/ai/types";
 import { geminiProvider } from "@/lib/ai/providers/gemini";
-import { groqProvider } from "@/lib/ai/providers/groq";
+import { groqProviderV2 } from "@/lib/ai/providers/groq_v2";
 import { huggingFaceProvider } from "@/lib/ai/providers/huggingface";
 import { localProvider } from "@/lib/ai/providers/local";
-import { openRouterProvider } from "@/lib/ai/providers/openrouter";
+import { openrouterProviderV2 } from "@/lib/ai/providers/openrouter_v2";
 import { togetherProvider } from "@/lib/ai/providers/together";
+import { selectProvider } from "@/lib/ai/router";
 
-function providerOrder(): AIProvider[] {
-  const preferred = process.env.AI_PRIMARY_PROVIDER || (process.env.GROQ_API_KEY ? "groq" : "gemini");
-  const all: Record<string, AIProvider> = {
-    gemini: geminiProvider,
-    groq: groqProvider,
-    huggingface: huggingFaceProvider,
-    local: localProvider,
-    openrouter: openRouterProvider,
-    together: togetherProvider
+const providers: Record<string, AIProvider> = {
+  gemini: geminiProvider,
+  groq_v2: groqProviderV2,
+  huggingface: huggingFaceProvider,
+  local: localProvider,
+  openrouter_v2: openrouterProviderV2,
+  together: togetherProvider
+};
+
+function normalizeInput(input: AIRequest): AIRequest {
+  const message = input.message || input.prompt || input.content || "";
+  const mode = input.mode || input.action;
+  const history = input.history?.slice(-8) ?? [];
+
+  return {
+    ...input,
+    message,
+    mode,
+    history
   };
-  const defaults = [preferred, "gemini", "groq", "huggingface", "openrouter", "together", "local"];
-  const unique = Array.from(new Set(defaults));
-  return unique.map((name) => all[name]).filter(Boolean);
 }
 
-export async function generateWithFallback(input: AIRequest) {
-  const cacheKey = JSON.stringify({ version: 5, input });
+function isBadResponse(text: string, mode?: string): boolean {
+  const normalized = (text || "").toLowerCase();
+
+  if (!normalized.trim()) return true;
+  if ((mode === "flashcards" || mode === "flashcards") && !normalized.includes("q:")) return true;
+  if ((mode === "quiz" || mode === "quiz") && !/\b1\./.test(normalized)) return true;
+
+  return false;
+}
+
+export async function generateWithFallback(rawInput: AIRequest) {
+  const input = normalizeInput(rawInput);
+  const cacheKey = JSON.stringify({ v: 6, mode: input.mode, message: input.message });
   const cached = getCached(cacheKey);
   if (cached) return { text: cached, provider: "cache" };
 
-  // If a specific primary provider is set, use only that provider without fallback
-  const primaryProvider = process.env.AI_PRIMARY_PROVIDER;
-  if (primaryProvider === "openrouter") {
-    try {
-      const result = await openRouterProvider.generate(input);
-      if (result.text?.trim()) {
+  // ✅ SMART ROUTING (THIS IS THE MAIN UPGRADE)
+  const selected = selectProvider(input);
+  const primary = providers[selected];
+
+  const failures: string[] = [];
+
+  try {
+    if (primary) {
+      const result = await primary.generate(input);
+      if (result.text?.trim() && !isBadResponse(result.text, input.mode)) {
         setCached(cacheKey, result.text);
         return result;
       }
-      throw new Error(`openrouter: empty response`);
-    } catch (error) {
-      throw new Error(`OpenRouter (Nemotron) failed: ${(error as Error).message}`);
+      failures.push(`${primary.name}: bad response`);
     }
+  } catch (err) {
+    failures.push(`${primary?.name || "primary"}: ${(err as Error).message}`);
   }
 
-  // Fallback to provider order if primary provider is not explicitly set to openrouter
-  const failures: string[] = [];
-  for (const provider of providerOrder()) {
+  // 🔁 FALLBACK CHAIN
+  const fallbackOrder = [
+    providers.gemini,
+    providers.groq_v2,
+    providers.openrouter_v2,
+    providers.huggingface,
+    providers.together,
+    providers.local
+  ];
+
+  for (const provider of fallbackOrder) {
+    if (!provider) continue;
+
     try {
       const result = await provider.generate(input);
-      if (result.text?.trim()) {
+      if (result.text?.trim() && !isBadResponse(result.text, input.mode)) {
         setCached(cacheKey, result.text);
         return result;
       }
-      failures.push(`${provider.name}: empty response`);
+      failures.push(`${provider.name}: bad/empty response`);
     } catch (error) {
       failures.push(`${provider.name}: ${(error as Error).message}`);
     }

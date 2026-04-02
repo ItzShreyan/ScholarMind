@@ -1,16 +1,40 @@
-export function selectProvider(input: any) {
-  const mode = input.mode || "chat";
+import { AIRequest } from "@/types";
 
-  // Free fast model for light tasks
-  if (mode === "chat" || mode === "eli10" || mode === "summary") {
-    return "openrouter_v2";
-  }
+export function normalizeAIRequest(input: AIRequest): AIRequest {
+  const message = input.message || input.prompt || input.content || "";
+  const mode = input.mode || input.action;
 
-  // Stronger structured outputs
-  if (mode === "quiz" || mode === "flashcards" || mode === "deep") {
+  return {
+    ...input,
+    message,
+    mode
+  };
+}
+
+export function selectProvider(input: AIRequest): string {
+  const norm = normalizeAIRequest(input);
+
+  // Explicit per-mode routing
+  if (norm.mode === "flashcards" || norm.action === "flashcards") {
     return "groq_v2";
   }
 
-  // fallback
-  return "gemini";
+  if (norm.mode === "quiz" || norm.action === "quiz") {
+    return "groq_v2";
+  }
+
+  if (norm.mode === "exam" || norm.action === "exam") {
+    return "openrouter_v2";
+  }
+
+  if (norm.mode === "study_plan" || norm.action === "study_plan" || norm.action === "insights") {
+    return "groq_v2";
+  }
+
+  if (norm.mode === "chat" || norm.action === "chat") {
+    return "openrouter_v2";
+  }
+
+  // fallback default
+  return "groq_v2";
 }

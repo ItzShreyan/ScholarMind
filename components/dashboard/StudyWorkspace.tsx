@@ -33,6 +33,7 @@ import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
 import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
+import { parseFlashcards } from "@/lib/ai/parse";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 import {
   defaultMaxUploadFileSizeMb,
@@ -209,6 +210,26 @@ function cleanGeneratedText(text: string) {
     .replace(/^Local fallback response\s*/i, "")
     .replace(/```(?:json)?/gi, "")
     .trim();
+}
+
+function parseSSEChunk(chunk: string): string {
+  const lines = chunk.split(/\r?\n/);
+  let extracted = "";
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.replace(/^data:\s*/, "").trim();
+    if (payload === "[DONE]") continue;
+    try {
+      const data = JSON.parse(payload);
+      const delta = data?.choices?.[0]?.delta?.content;
+      if (typeof delta === "string") {
+        extracted += delta;
+      }
+    } catch {
+      // not JSON: ignore
+    }
+  }
+  return extracted;
 }
 
 function normalizeLine(line: string) {
@@ -862,7 +883,10 @@ export function StudyWorkspace({
   const parsedFlashcards = useMemo(
     () =>
       activeAction === "flashcards"
-        ? normalizeFlashcards(parseJsonBlock<FlashcardItem[]>(output) ?? parseFlashcardsFallback(output))
+        ? normalizeFlashcards(
+            parseJsonBlock<FlashcardItem[]>(output) ??
+              (parseFlashcards(output).length ? parseFlashcards(output).map((item) => ({ front: item.question, back: item.answer })) : parseFlashcardsFallback(output))
+          )
         : null,
     [activeAction, output]
   );
@@ -1837,28 +1861,51 @@ export function StudyWorkspace({
     setTab("chat");
     setStatusNote("");
 
-    const context = buildContextForPrompt(
-      [question, ...historySnapshot.slice(-3).map((message) => message.content)].join("\n"),
-      "chat" as AIAction
-    );
-
     try {
-      const response = await fetch("/api/ai/generate", {
+      setMessages((current) => [...current, { role: "ai", content: "" }]);
+
+      const streamResponse = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          action: "chat",
-          prompt: enrichedPrompt,
-          context,
-          sessionId: activeSessionId ?? undefined
+          input: {
+            message: enrichedPrompt,
+            history: historySnapshot,
+            mode: "chat",
+            sessionId: activeSessionId ?? undefined
+          }
         })
       });
-      const json = await readJsonResponse(response);
-      if (!response.ok) {
-        throw new Error(json.error || "Unable to generate a reply.");
+
+      if (!streamResponse.ok) {
+        const json = await readJsonResponse(streamResponse);
+        throw new Error(json.error || `Stream request failed: ${streamResponse.status}`);
       }
-      const text = json.text || json.error || "No response";
-      setMessages((current) => [...current, { role: "ai", content: text }]);
+
+      const reader = streamResponse.body?.getReader();
+      if (!reader) {
+        throw new Error("No streaming body available.");
+      }
+
+      const decoder = new TextDecoder();
+      let accumulated = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        accumulated += parseSSEChunk(chunk);
+
+        setMessages((current) => {
+          const next = [...current];
+          const lastIndex = next.length - 1;
+          if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
+            next[lastIndex] = { ...next[lastIndex], content: accumulated };
+          }
+          return next;
+        });
+      }
+
       setStatusNote("");
     } catch (error) {
       const message = (error as Error).message || "Unable to generate a reply.";
@@ -1869,7 +1916,7 @@ export function StudyWorkspace({
       setChatLoading(false);
     }
     return true;
-  }, [activeSessionId, buildContextForPrompt, chatLoading, currentFiles.length, currentMetrics, currentSession?.title, loading, messages]);
+  }, [activeSessionId, chatLoading, currentFiles.length, currentMetrics, currentSession?.title, loading, messages]);
 
   const sendChat = async () => {
     const question = chat.trim();
