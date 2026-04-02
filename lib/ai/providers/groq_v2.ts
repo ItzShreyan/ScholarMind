@@ -41,7 +41,11 @@ async function streamResponseToText(response: Response): Promise<string> {
     const lines = buffer.split(/\r?\n/);
     for (const line of lines) {
       if (!line.startsWith("data:")) continue;
-                      lin                 \s*               f                       lin                 \s*     const json = JSON.parse(payload);
+      const payload = line.replace(/^data:\s*/, "");
+      if (payload === "[DONE]") break;
+
+      try {
+        const json = JSON.parse(payload);
         const fragment = (json.choices?.[0]?.delta?.content as string) || "";
         accumulated += fragment;
       } catch {
@@ -54,26 +58,42 @@ async function streamResponseToText(response: Response): Promise<string> {
 }
 
 function buildMessages(input: AIRequest) {
-  if (input.history?.length) return  if (input.history?.length) return  iut.m  if (input.history?.length) re.content || "").trim();
+  if (input.history?.length) return input.history;
+  const content = (input.message || input.prompt || input.content || "").trim();
   return content ? [{ role: "user", content }] : [];
 }
 
-export const groqProviderV2export const groqProviderV2export c
+export const groqProviderV2: AIProvider = {
+  name: "groq_v2",
   async generate(input) {
-    con    ciKey = process.env.GROQ_API_KEY;
-    if    if    if    if    if    if    if    if    if    if    if    if    if    idMe    if    if    if    ift run = async () => {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error("Missing GROQ_API_KEY");
+    const messages = buildMessages(input);
+
+    const run = async () => {
       const res = await fetchWithTimeout(
-        "  tps        "  tpsm/openai/v1/chat/completions",
+        "https://api.groq.com/openai/v1/chat/completions",
         {
-                                                                               li                                                                               li                                                           Q_MODE                                                                            e: 0.4,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+            messages,
+            temperature: 0.4,
             max_tokens: 1200,
             stream: true
-            
+          })
         },
         15000
       );
 
-                                          or(                                          or(                                          or(                                        as const, text };
+      if (!res.ok) throw new Error(`Groq V2 failed: ${res.status}`);
+
+      const text = await streamResponseToText(res);
+      return { provider: "groq_v2" as const, text };
     };
 
     return retries(run, 2);

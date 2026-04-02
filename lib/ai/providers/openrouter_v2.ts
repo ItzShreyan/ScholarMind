@@ -1,11 +1,36 @@
-import import import import impibimport import import import impibimport /types";
+import { AIProvider } from "@/lib/ai/types";
+import { AIRequest } from "@/types";
 import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
 
-async function streamResponseToText(response: Response):async function streamResponseToText(resp rasync function streamResponseToText(response: Response):aonasynccoderasync function streamResponseToText(response: Response):async function streamResponseToText(resp rasync function streamResponseToText(response: Response):aonasynccoderasync function streamResponseToText(response: Response):async function streamResponseToText(resp rasync function streamResponseToText(responsestasync function streamResponslineIndex).trim();
-      buffer = buffer      buewl      buffer);
+async function streamResponseToText(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let accumulated = "";
+  let buffer = "";
 
-      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      if      i*/, "");
-                          DON  ") re  rn                           DON  ") re  rn    json                          DON  ") re  rn                           DON  ") re  rnt                          DON  ") re  rn                           catch {
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let newlineIndex: number;
+    while ((newlineIndex = buffer.indexOf("\n\n")) !== -1) {
+      const chunk = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 2);
+      if (!chunk) continue;
+
+      const lines = chunk.split(/\r?\n/);
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.replace(/^data:\s*/, "");
+        if (payload === "[DONE]") return accumulated;
+
+        try {
+          const json = JSON.parse(payload);
+          const fragment = (json.choices?.[0]?.delta?.content as string) || "";
+          accumulated += fragment;
+        } catch {
           continue;
         }
       }
@@ -18,6 +43,7 @@ async function streamResponseToText(response: Response):async function streamRes
       if (!line.startsWith("data:")) continue;
       const payload = line.replace(/^data:\s*/, "");
       if (payload === "[DONE]") break;
+
       try {
         const json = JSON.parse(payload);
         const fragment = (json.choices?.[0]?.delta?.content as string) || "";
@@ -31,41 +57,47 @@ async function streamResponseToText(response: Response):async function streamRes
   return accumulated;
 }
 
-fufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufrProvfufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufufuf (ifufufufufufufufufufufufufufufufufufufufufufuun = async () => {
+function buildMessages(input: AIRequest) {
+  if (input.history?.length) return input.history;
+  const content = (input.message || input.prompt || input.content || "").trim();
+  return content ? [{ role: "user", content }] : [];
+}
+
+export const openrouterProviderV2: AIProvider = {
+  name: "openrouter_v2",
+  async generate(input) {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
+    const messages = buildMessages(input);
+
+    const run = async () => {
       const res = await fetchWithTimeout(
         "https://openrouter.ai/api/v1/chat/completions",
         {
           method: "POST",
           headers: {
-                                                            Autho                       Key}`
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`
           },
-                                             model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-8b-instruct:free",
+          body: JSON.stringify({
+            model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-8b-instruct:free",
             messages,
             temperature: 0.4,
             max_tokens: 1200,
-                      ue
-          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }          }  ode || input.action;
+            stream: true
+          })
+        },
+        15000
+      );
 
-  return {
-    ...inpu    ...inpu    ...inpu    ...inpu    ...inpu    ...iectProvider(input: AIRequest): string {
-                  malizeAIRequest(input);
+      if (!res.ok) {
+        throw new Error(`OpenRouter V2 failed: ${res.status}`);
+      }
 
-  if (norm.mode === "flashcards" || norm.action === "flashcards") {
-    return "groq_v2";
+      const text = await streamResponseToText(res);
+      return { provider: "openrouter_v2" as const, text };
+    };
+
+    return retries(run, 2);
   }
-
-  if (norm.mode === "quiz" || norm.action === "quiz") {
-    return "groq_v2";
-  }
-
-  if (norm.mode === "exam" || norm.action === "exam") {
-    return "openrouter_v2"    return "openrouter_=== "st    return "openm.action === "study_plan" || norm.action === "insights") {
-    return "groq_v2";
-  }
-
-  if (norm.mode === "chat" || norm.action === "chat") {
-    return "openrouter_v2";
-  }
-
-  return "groq_v2";
-}
+};
