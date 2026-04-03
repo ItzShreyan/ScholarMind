@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { BarChart3, Crown, Eye, LineChart, Settings2, Users } from "lucide-react";
 import type { SiteSettings } from "@/lib/site-settings";
+import { normalizeErrorMessage } from "@/lib/ai/util";
 
 type SiteEvent = {
   id: string;
@@ -127,13 +128,13 @@ export function HostPanel({
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to save host settings.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to save host settings."));
       }
 
       setSettings(json.settings);
       setStatus("Host settings saved.");
     } catch (error) {
-      setStatus((error as Error).message || "Unable to save host settings.");
+      setStatus(normalizeErrorMessage(error, "Unable to save host settings."));
     } finally {
       setSaving(false);
     }

@@ -850,7 +850,14 @@ export async function extractWebSourceText({
     );
   }
 
-  throw new Error(
-    `ScholarMind could not read enough of ${hostnameFrom(url)} to turn it into a reliable study source. Try another result or upload a clearer file instead.`
+  return clipText(
+    cleanReadableText(
+      [
+        `Source title: ${title}`,
+        `Source URL: ${url}`,
+        "Imported note: This source could not be fully parsed. Open it in the preview and re-import if needed."
+      ].join("\n")
+    ),
+    32000
   );
 }

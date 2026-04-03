@@ -2,15 +2,18 @@ import { AIRequest } from "@/types";
 import { getCached, setCached } from "@/lib/cache";
 import { AIProvider } from "@/lib/ai/types";
 import { geminiProvider } from "@/lib/ai/providers/gemini";
+import { groqProvider } from "@/lib/ai/providers/groq";
 import { groqProviderV2 } from "@/lib/ai/providers/groq_v2";
 import { huggingFaceProvider } from "@/lib/ai/providers/huggingface";
 import { localProvider } from "@/lib/ai/providers/local";
 import { openrouterProviderV2 } from "@/lib/ai/providers/openrouter_v2";
 import { togetherProvider } from "@/lib/ai/providers/together";
 import { selectProvider } from "@/lib/ai/router";
+import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
 
 const providers: Record<string, AIProvider> = {
   gemini: geminiProvider,
+  groq: groqProvider,
   groq_v2: groqProviderV2,
   huggingface: huggingFaceProvider,
   local: localProvider,
@@ -45,7 +48,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
   const cacheKey = JSON.stringify({ v: 6, mode: input.mode, message: input.message });
   const cached = getCached(cacheKey);
-  if (cached) return { text: cached, provider: "cache" };
+  if (cached) return { text: normalizeAIText(cached), provider: "cache" };
 
   // ✅ SMART ROUTING (THIS IS THE MAIN UPGRADE)
   const selected = selectProvider(input);
@@ -56,23 +59,25 @@ export async function generateWithFallback(rawInput: AIRequest) {
   try {
     if (primary) {
       const result = await primary.generate(input);
-      if (result.text?.trim() && !isBadResponse(result.text, input.mode)) {
-        setCached(cacheKey, result.text);
-        return result;
+      const normalizedText = normalizeAIText(result.text);
+      if (normalizedText && !isBadResponse(normalizedText, input.mode)) {
+        setCached(cacheKey, normalizedText);
+        return { ...result, text: normalizedText };
       }
       failures.push(`${primary.name}: bad response`);
     }
   } catch (err) {
-    failures.push(`${primary?.name || "primary"}: ${(err as Error).message}`);
+    failures.push(`${primary?.name || "primary"}: ${normalizeErrorMessage(err)}`);
   }
 
   // 🔁 FALLBACK CHAIN
   const fallbackOrder = [
-    providers.gemini,
     providers.groq_v2,
+    providers.groq,
+    providers.gemini,
     providers.openrouter_v2,
-    providers.huggingface,
     providers.together,
+    providers.huggingface,
     providers.local
   ];
 
@@ -81,13 +86,14 @@ export async function generateWithFallback(rawInput: AIRequest) {
 
     try {
       const result = await provider.generate(input);
-      if (result.text?.trim() && !isBadResponse(result.text, input.mode)) {
-        setCached(cacheKey, result.text);
-        return result;
+      const normalizedText = normalizeAIText(result.text);
+      if (normalizedText && !isBadResponse(normalizedText, input.mode)) {
+        setCached(cacheKey, normalizedText);
+        return { ...result, text: normalizedText };
       }
       failures.push(`${provider.name}: bad/empty response`);
     } catch (error) {
-      failures.push(`${provider.name}: ${(error as Error).message}`);
+      failures.push(`${provider.name}: ${normalizeErrorMessage(error)}`);
     }
   }
 

@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AIProvider } from "@/lib/ai/types";
 import { buildPrompt } from "@/lib/ai/prompt";
+import { normalizeAIText } from "@/lib/ai/util";
 
 export const geminiProvider: AIProvider = {
   name: "gemini",
@@ -12,7 +13,7 @@ export const geminiProvider: AIProvider = {
       model: process.env.GEMINI_MODEL || "gemini-2.5-flash"
     });
     const result = await model.generateContent(buildPrompt(input));
-    const text = result.response.text();
+    const text = normalizeAIText(result.response.text());
     return { provider: "gemini", text };
   }
 };

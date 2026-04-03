@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
 import type { RevisionPlanDay } from "@/lib/revision-plans/utils";
+import { normalizeErrorMessage } from "@/lib/ai/util";
 
 type SessionOption = {
   id: string;
@@ -144,14 +145,14 @@ export function RevisionScheduleWorkspace({
         });
         const json = await readJsonResponse(response);
         if (!response.ok) {
-          throw new Error(json.error || "Unable to autosave this study day.");
+          throw new Error(normalizeErrorMessage(json.error, "Unable to autosave this study day."));
         }
 
         const nextPlan = normalizePlan(json.plan);
         setPlans((current) => current.map((plan) => (plan.id === nextPlan.id ? nextPlan : plan)));
         setStatus("Revision plan autosaved.");
       } catch (error) {
-        setStatus((error as Error).message || "Unable to autosave this study day.");
+        setStatus(normalizeErrorMessage(error, "Unable to autosave this study day."));
       } finally {
         setSaving(false);
       }
@@ -177,7 +178,7 @@ export function RevisionScheduleWorkspace({
       });
       const json = await readJsonResponse(response);
       if (!response.ok) {
-        throw new Error(json.error || "Unable to generate the revision schedule.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to generate the revision schedule."));
       }
 
       const nextPlan = normalizePlan(json.plan);
@@ -190,7 +191,7 @@ export function RevisionScheduleWorkspace({
           : "Revision schedule ready."
       );
     } catch (error) {
-      setStatus((error as Error).message || "Unable to generate the revision schedule.");
+      setStatus(normalizeErrorMessage(error, "Unable to generate the revision schedule."));
     } finally {
       setGenerating(false);
     }
@@ -226,14 +227,14 @@ export function RevisionScheduleWorkspace({
       });
       const json = await readJsonResponse(response);
       if (!response.ok) {
-        throw new Error(json.error || "Unable to save the revision plan.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to save the revision plan."));
       }
 
       const nextPlan = normalizePlan(json.plan);
       setPlans((current) => current.map((plan) => (plan.id === nextPlan.id ? nextPlan : plan)));
       setStatus("Revision plan saved.");
     } catch (error) {
-      setStatus((error as Error).message || "Unable to save the revision plan.");
+      setStatus(normalizeErrorMessage(error, "Unable to save the revision plan."));
     } finally {
       setSaving(false);
     }

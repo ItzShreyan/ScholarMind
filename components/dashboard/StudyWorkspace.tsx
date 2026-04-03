@@ -138,6 +138,15 @@ type RevisionScheduleItem = {
 
 type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
 
+const desktopLeftPanelDefault = 360;
+const desktopRightPanelDefault = 440;
+const desktopLeftPanelMin = 300;
+const desktopLeftPanelMax = 520;
+const desktopRightPanelMin = 340;
+const desktopRightPanelMax = 620;
+const desktopCenterPanelMin = 460;
+const desktopResizeHandleWidth = 14;
+
 const sourceEngineOptions: Array<{
   key: SourceSearchEngine;
   label: string;
@@ -212,6 +221,42 @@ function cleanGeneratedText(text: string) {
     .trim();
 }
 
+function normalizeAIText(value: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed && trimmed !== "[object Object]" && trimmed !== "{}" ? trimmed : "";
+  }
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferred = [record.error, record.message, record.text, record.content];
+    for (const item of preferred) {
+      const normalized = normalizeAIText(item);
+      if (normalized) return normalized;
+    }
+    try {
+      const json = JSON.stringify(value);
+      return json === "{}" ? "" : json;
+    } catch {
+      return "";
+    }
+  }
+  return String(value).trim();
+}
+
+function normalizeErrorMessage(value: unknown, fallback = "Unexpected error") {
+  const normalized = normalizeAIText(value);
+  if (!normalized || normalized === "[object Object]" || normalized === "{}") {
+    return fallback;
+  }
+  return normalized;
+}
+
+function sanitizeDisplayText(value: unknown, fallback: string) {
+  const normalized = normalizeErrorMessage(value, fallback);
+  return normalized === "[object Object]" ? fallback : normalized;
+}
+
 function parseSSEChunk(chunk: string): string {
   const lines = chunk.split(/\r?\n/);
   let extracted = "";
@@ -222,9 +267,7 @@ function parseSSEChunk(chunk: string): string {
     try {
       const data = JSON.parse(payload);
       const delta = data?.choices?.[0]?.delta?.content;
-      if (typeof delta === "string") {
-        extracted += delta;
-      }
+      extracted += normalizeAIText(delta);
     } catch {
       // not JSON: ignore
     }
@@ -657,6 +700,7 @@ export function StudyWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const workspaceGridRef = useRef<HTMLDivElement>(null);
   const chatViewportRef = useRef<HTMLDivElement>(null);
   const quickImportInputRef = useRef<HTMLInputElement>(null);
   const planLaunchAttemptRef = useRef<string | null>(null);
@@ -711,6 +755,12 @@ export function StudyWorkspace({
   const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
   const [sourcePromptedForStudio, setSourcePromptedForStudio] = useState<string | null>(null);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+  const [desktopLayoutEnabled, setDesktopLayoutEnabled] = useState(false);
+  const [desktopPanelWidths, setDesktopPanelWidths] = useState({
+    left: desktopLeftPanelDefault,
+    right: desktopRightPanelDefault
+  });
+  const [draggingDivider, setDraggingDivider] = useState<null | "left" | "right">(null);
   const [preview, setPreview] = useState<PreviewState>({
     open: false,
     loading: false,
@@ -727,6 +777,32 @@ export function StudyWorkspace({
   }, [sessions]);
 
   useEffect(() => {
+    try {
+      const savedLeft = Number(localStorage.getItem("scholarmind_workspace_left_width"));
+      const savedRight = Number(localStorage.getItem("scholarmind_workspace_right_width"));
+
+      setDesktopPanelWidths({
+        left: Number.isFinite(savedLeft) && savedLeft > 0 ? savedLeft : desktopLeftPanelDefault,
+        right: Number.isFinite(savedRight) && savedRight > 0 ? savedRight : desktopRightPanelDefault
+      });
+    } catch {
+      setDesktopPanelWidths({
+        left: desktopLeftPanelDefault,
+        right: desktopRightPanelDefault
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("scholarmind_workspace_left_width", String(Math.round(desktopPanelWidths.left)));
+      localStorage.setItem("scholarmind_workspace_right_width", String(Math.round(desktopPanelWidths.right)));
+    } catch {
+      // Ignore storage issues.
+    }
+  }, [desktopPanelWidths]);
+
+  useEffect(() => {
     if (!initialSessionId) return;
     setFilesBySession((current) => ({ ...current, [initialSessionId]: initialFiles }));
   }, [initialFiles, initialSessionId]);
@@ -739,7 +815,7 @@ export function StudyWorkspace({
         const response = await fetch("/api/preferences");
         const json = await readJsonResponse(response);
         if (!response.ok) {
-          throw new Error(json.error || "Unable to load your account preferences.");
+          throw new Error(normalizeErrorMessage(json.error, "Unable to load your account preferences."));
         }
         if (ignore) return;
 
@@ -930,6 +1006,15 @@ export function StudyWorkspace({
   const parsedSchedule = useMemo(
     () => (activeAction === "study_plan" ? parseRevisionSchedule(output) : []),
     [activeAction, output]
+  );
+  const desktopGridStyle = useMemo(
+    () =>
+      desktopLayoutEnabled
+        ? {
+            gridTemplateColumns: `${desktopPanelWidths.left}px ${desktopResizeHandleWidth}px minmax(0,1fr) ${desktopResizeHandleWidth}px ${desktopPanelWidths.right}px`
+          }
+        : undefined,
+    [desktopLayoutEnabled, desktopPanelWidths.left, desktopPanelWidths.right]
   );
 
   const updateMetrics = useCallback(
@@ -1199,7 +1284,7 @@ export function StudyWorkspace({
         const response = await fetch(`/api/sessions?sessionId=${activeSessionId}`);
         const json = await readJsonResponse(response);
         if (!response.ok) {
-          throw new Error(json.error || "Unable to load files for this studio.");
+          throw new Error(normalizeErrorMessage(json.error, "Unable to load files for this studio."));
         }
         if (ignore) return;
 
@@ -1232,6 +1317,111 @@ export function StudyWorkspace({
       behavior: messages.length > 1 ? "smooth" : "auto"
     });
   }, [chatLoading, messages]);
+
+  useEffect(() => {
+    const syncDesktopLayout = () => {
+      const enabled = window.innerWidth >= 1024;
+      setDesktopLayoutEnabled(enabled);
+
+      const container = workspaceGridRef.current;
+      if (!enabled || !container) return;
+
+      const availableWidth = container.getBoundingClientRect().width - desktopResizeHandleWidth * 2;
+      if (availableWidth <= desktopCenterPanelMin) return;
+
+      setDesktopPanelWidths((current) => {
+        const maxLeft = Math.min(
+          desktopLeftPanelMax,
+          availableWidth - desktopRightPanelMin - desktopCenterPanelMin
+        );
+        const nextLeft = Math.min(
+          Math.max(current.left, desktopLeftPanelMin),
+          Math.max(desktopLeftPanelMin, maxLeft)
+        );
+
+        const maxRight = Math.min(
+          desktopRightPanelMax,
+          availableWidth - nextLeft - desktopCenterPanelMin
+        );
+        const nextRight = Math.min(
+          Math.max(current.right, desktopRightPanelMin),
+          Math.max(desktopRightPanelMin, maxRight)
+        );
+
+        return current.left === nextLeft && current.right === nextRight
+          ? current
+          : { left: nextLeft, right: nextRight };
+      });
+    };
+
+    syncDesktopLayout();
+    window.addEventListener("resize", syncDesktopLayout);
+    return () => window.removeEventListener("resize", syncDesktopLayout);
+  }, []);
+
+  useEffect(() => {
+    if (!draggingDivider) return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const container = workspaceGridRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const availableWidth = rect.width - desktopResizeHandleWidth * 2;
+      if (availableWidth <= desktopCenterPanelMin) return;
+
+      setDesktopPanelWidths((current) => {
+        if (draggingDivider === "left") {
+          const maxLeft = Math.min(
+            desktopLeftPanelMax,
+            availableWidth - current.right - desktopCenterPanelMin
+          );
+          const nextLeft = Math.min(
+            Math.max(event.clientX - rect.left, desktopLeftPanelMin),
+            Math.max(desktopLeftPanelMin, maxLeft)
+          );
+
+          return {
+            ...current,
+            left: nextLeft
+          };
+        }
+
+        const distanceFromRight = rect.right - event.clientX;
+        const maxRight = Math.min(
+          desktopRightPanelMax,
+          availableWidth - current.left - desktopCenterPanelMin
+        );
+        const nextRight = Math.min(
+          Math.max(distanceFromRight, desktopRightPanelMin),
+          Math.max(desktopRightPanelMin, maxRight)
+        );
+
+        return {
+          ...current,
+          right: nextRight
+        };
+      });
+    };
+
+    const onMouseUp = () => {
+      setDraggingDivider(null);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [draggingDivider]);
 
   const buildContextForPrompt = useCallback(
     (hint: string, action: AIAction) =>
@@ -1344,7 +1534,7 @@ export function StudyWorkspace({
       const response = await fetch("/api/sessions");
       const json = await readJsonResponse(response);
       if (!response.ok) {
-        throw new Error(json.error || "Unable to refresh the studio list.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to refresh the studio list."));
       }
 
       setSessionList(Array.isArray(json.sessions) ? json.sessions : []);
@@ -1376,7 +1566,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to prepare a studio.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to prepare a studio."));
       }
 
       const nextSession = { id: json.id as string, title: json.title as string };
@@ -1448,7 +1638,7 @@ export function StudyWorkspace({
             ...(Array.isArray(json.rejectedFiles) ? json.rejectedFiles : []),
             {
               fileName: file.name,
-              reason: json.error || "Upload failed."
+              reason: normalizeErrorMessage(json.error, "Upload failed.")
             }
           );
           setUploadProgress(20 + ((index + 1) / allowedFiles.length) * 70);
@@ -1465,7 +1655,9 @@ export function StudyWorkspace({
         const refreshResponse = await fetch(`/api/sessions?sessionId=${sessionId}`);
         const refreshJson = await readJsonResponse(refreshResponse);
         if (!refreshResponse.ok) {
-          throw new Error(refreshJson.error || "Upload finished, but the files could not be refreshed.");
+          throw new Error(
+            normalizeErrorMessage(refreshJson.error, "Upload finished, but the files could not be refreshed.")
+          );
         }
         nextFiles = Array.isArray(refreshJson.files) ? refreshJson.files : [];
       }
@@ -1532,7 +1724,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to search the web right now.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to search the web right now."));
       }
 
       setSourceSearchResults(Array.isArray(json.results) ? json.results : []);
@@ -1560,7 +1752,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to remove this source.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to remove this source."));
       }
 
       const sessionId = activeSessionId;
@@ -1605,7 +1797,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to import this web source.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to import this web source."));
       }
 
       setActiveSessionId(sessionId);
@@ -1647,7 +1839,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to copy sources.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to copy sources."));
       }
 
       setFilesBySession((current) => ({
@@ -1695,7 +1887,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to open this file.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to open this file."));
       }
 
       setPreview({
@@ -1782,12 +1974,15 @@ export function StudyWorkspace({
       });
       const json = await readJsonResponse(response);
       if (!response.ok) {
-        throw new Error(json.error || "No response");
+        const errorMessage = normalizeErrorMessage(json.error, "No response");
+        throw new Error(errorMessage);
       }
 
-      setOutput(json.text || "No response");
-      saveToolResult(action, json.text || "No response", action === toolDraft.action ? toolDraft.focus : "");
+      const normalized = sanitizeDisplayText(json.text || json.error, "No response");
+      setOutput(normalized || "No response");
+      saveToolResult(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
       updateMetrics((current) => ({
+
         ...current,
         toolRuns: {
           ...current.toolRuns,
@@ -1807,7 +2002,7 @@ export function StudyWorkspace({
       );
       return json.text || "No response";
     } catch (error) {
-      setStatusNote((error as Error).message || "No response");
+      setStatusNote(normalizeErrorMessage(error, "No response"));
       return null;
     } finally {
       setLoading(false);
@@ -1864,13 +2059,18 @@ export function StudyWorkspace({
     try {
       setMessages((current) => [...current, { role: "ai", content: "" }]);
 
+      const providerHistory = historySnapshot.map((message) => ({
+        role: message.role === "ai" ? "assistant" : "user",
+        content: message.content
+      }));
+
       const streamResponse = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input: {
             message: enrichedPrompt,
-            history: historySnapshot,
+            history: providerHistory,
             mode: "chat",
             sessionId: activeSessionId ?? undefined
           }
@@ -1879,7 +2079,11 @@ export function StudyWorkspace({
 
       if (!streamResponse.ok) {
         const json = await readJsonResponse(streamResponse);
-        throw new Error(json.error || `Stream request failed: ${streamResponse.status}`);
+        const errorMessage = normalizeErrorMessage(
+          json.error,
+          `Stream request failed: ${streamResponse.status}`
+        );
+        throw new Error(errorMessage);
       }
 
       const reader = streamResponse.body?.getReader();
@@ -1896,11 +2100,12 @@ export function StudyWorkspace({
         const chunk = decoder.decode(value, { stream: true });
         accumulated += parseSSEChunk(chunk);
 
+        const safeAccumulated = sanitizeDisplayText(accumulated, "");
         setMessages((current) => {
           const next = [...current];
           const lastIndex = next.length - 1;
           if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
-            next[lastIndex] = { ...next[lastIndex], content: accumulated };
+            next[lastIndex] = { ...next[lastIndex], content: safeAccumulated };
           }
           return next;
         });
@@ -1908,8 +2113,16 @@ export function StudyWorkspace({
 
       setStatusNote("");
     } catch (error) {
-      const message = (error as Error).message || "Unable to generate a reply.";
-      setMessages((current) => [...current, { role: "ai", content: message }]);
+      const message = sanitizeDisplayText(error, "Unable to generate a reply.");
+      setMessages((current) => {
+        const next = [...current];
+        const lastIndex = next.length - 1;
+        if (lastIndex >= 0 && next[lastIndex]?.role === "ai" && !next[lastIndex]?.content) {
+          next[lastIndex] = { ...next[lastIndex], content: message };
+          return next;
+        }
+        return [...current, { role: "ai", content: message }];
+      });
       setStatusNote(message);
       return false;
     } finally {
@@ -1949,7 +2162,7 @@ export function StudyWorkspace({
         const response = await fetch(`/api/revision-plans/${planId}`);
         const json = await readJsonResponse(response);
         if (!response.ok) {
-          throw new Error(json.error || "Unable to open this revision day.");
+          throw new Error(normalizeErrorMessage(json.error, "Unable to open this revision day."));
         }
 
         if (ignore) return;
@@ -2040,7 +2253,7 @@ export function StudyWorkspace({
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(json.error || "Unable to schedule reminder.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to schedule reminder."));
       }
 
       setStatusNote("Reminder created for two days from now.");
@@ -2594,7 +2807,9 @@ export function StudyWorkspace({
           </div>
 
           {statusNote ? (
-            <div className="mt-4 rounded-[24px] bg-[rgba(57,208,255,0.12)] px-4 py-3 text-sm">{statusNote}</div>
+            <div className="mt-4 rounded-[24px] bg-[rgba(57,208,255,0.12)] px-4 py-3 text-sm">
+              {sanitizeDisplayText(statusNote, "Something went wrong. Please try again.")}
+            </div>
           ) : null}
         </div>
       </section>
@@ -2614,8 +2829,12 @@ export function StudyWorkspace({
         ))}
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-[22rem_minmax(0,1fr)_34rem] xl:grid-cols-[24rem_minmax(0,1fr)_39rem] 2xl:grid-cols-[25rem_minmax(0,1fr)_41rem]">
-        <aside className={`${tab !== "files" ? "hidden lg:block" : "block"}`}>
+      <div
+        ref={workspaceGridRef}
+        className="mt-4 grid gap-4 lg:items-start"
+        style={desktopGridStyle}
+      >
+        <aside className={`min-w-0 ${tab !== "files" ? "hidden lg:block" : "block"}`}>
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -2849,7 +3068,20 @@ export function StudyWorkspace({
           </div>
         </aside>
 
-        <section className={`${tab !== "chat" ? "hidden lg:block" : "block"}`}>
+        {desktopLayoutEnabled ? (
+          <div className="hidden lg:flex lg:items-stretch">
+            <button
+              type="button"
+              aria-label="Resize left panel"
+              onMouseDown={() => setDraggingDivider("left")}
+              className="group flex w-full cursor-col-resize items-center justify-center"
+            >
+              <span className="h-20 w-[4px] rounded-full bg-white/10 transition group-hover:bg-[rgba(57,208,255,0.36)]" />
+            </button>
+          </div>
+        ) : null}
+
+        <section className={`min-w-0 ${tab !== "chat" ? "hidden lg:block" : "block"}`}>
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -2894,7 +3126,12 @@ export function StudyWorkspace({
                     {message.role === "user" ? (
                       <p className="whitespace-pre-wrap text-[15px] leading-8 md:text-base">{message.content}</p>
                     ) : (
-                      <RichStudyText content={message.content} />
+                      <RichStudyText
+                        content={sanitizeDisplayText(
+                          message.content,
+                          "Something went wrong generating that reply. Please try again."
+                        )}
+                      />
                     )}
                   </motion.div>
                 ))
@@ -2939,7 +3176,20 @@ export function StudyWorkspace({
           </div>
         </section>
 
-        <aside className={`${tab !== "tools" ? "hidden lg:block" : "block"}`}>
+        {desktopLayoutEnabled ? (
+          <div className="hidden lg:flex lg:items-stretch">
+            <button
+              type="button"
+              aria-label="Resize right panel"
+              onMouseDown={() => setDraggingDivider("right")}
+              className="group flex w-full cursor-col-resize items-center justify-center"
+            >
+              <span className="h-20 w-[4px] rounded-full bg-white/10 transition group-hover:bg-[rgba(57,208,255,0.36)]" />
+            </button>
+          </div>
+        ) : null}
+
+        <aside className={`min-w-0 ${tab !== "tools" ? "hidden lg:block" : "block"}`}>
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="flex items-center justify-between gap-3">
               <div>

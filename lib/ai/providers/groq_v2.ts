@@ -1,6 +1,7 @@
 import { AIProvider } from "@/lib/ai/types";
 import { AIRequest } from "@/types";
 import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
+import { normalizeAIText } from "@/lib/ai/util";
 
 async function streamResponseToText(response: Response): Promise<string> {
   if (!response.body) return "";
@@ -92,8 +93,8 @@ export const groqProviderV2: AIProvider = {
 
       if (!res.ok) throw new Error(`Groq V2 failed: ${res.status}`);
 
-      const text = await streamResponseToText(res);
-      return { provider: "groq_v2" as const, text };
+      const rawText = await streamResponseToText(res);
+      return { provider: "groq_v2" as const, text: normalizeAIText(rawText) };
     };
 
     return retries(run, 2);

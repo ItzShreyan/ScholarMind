@@ -1,5 +1,6 @@
 import { AIProvider } from "@/lib/ai/types";
 import { buildPrompt } from "@/lib/ai/prompt";
+import { normalizeAIText } from "@/lib/ai/util";
 
 export const togetherProvider: AIProvider = {
   name: "together",
@@ -20,7 +21,7 @@ export const togetherProvider: AIProvider = {
     });
     if (!res.ok) throw new Error(`Together failed: ${res.status}`);
     const json = await res.json();
-    const text = json.choices?.[0]?.message?.content || "";
+    const text = normalizeAIText(json.choices?.[0]?.message?.content || "");
     return { provider: "together", text };
   }
 };

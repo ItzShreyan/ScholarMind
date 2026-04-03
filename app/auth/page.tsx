@@ -18,6 +18,7 @@ import { createClient } from "@/lib/supabase/client";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { normalizeErrorMessage } from "@/lib/ai/util";
 
 const highlights = [
   {
@@ -49,6 +50,10 @@ export default function AuthPage() {
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [nextPath, setNextPath] = useState("/dashboard");
 
+  const setSafeMessage = (value: unknown, fallback = "") => {
+    setMessage(normalizeErrorMessage(value, fallback));
+  };
+
   useEffect(() => {
     router.prefetch("/dashboard");
   }, [router]);
@@ -63,12 +68,12 @@ export default function AuthPage() {
     if (!authError) return;
 
     setStatus("error");
-    setMessage(authError);
+    setSafeMessage(authError, "We could not complete that sign-in step. Please try again.");
   }, []);
 
   const switchMode = (nextMode: "signin" | "signup") => {
     setMode(nextMode);
-    setMessage("");
+    setSafeMessage("");
     setStatus("idle");
   };
 
@@ -80,7 +85,7 @@ export default function AuthPage() {
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setMessage("");
+    setSafeMessage("");
     setStatus("loading");
 
     if (mode === "signup") {
@@ -94,13 +99,13 @@ export default function AuthPage() {
 
       if (error) {
         setStatus("error");
-        setMessage(error.message);
+        setSafeMessage(error.message, "Unable to create your account.");
         return;
       }
 
       setStatus("success");
       setMode("signin");
-      setMessage("Check your inbox to verify your email, then sign in to open the workspace.");
+      setSafeMessage("Check your inbox to verify your email, then sign in to open the workspace.");
       return;
     }
 
@@ -108,17 +113,17 @@ export default function AuthPage() {
 
     if (error) {
       setStatus("error");
-      setMessage(error.message);
+      setSafeMessage(error.message, "Unable to sign you in.");
       return;
     }
 
     setStatus("success");
-    setMessage("Opening your dashboard...");
+    setSafeMessage("Opening your dashboard...");
     window.location.assign(nextPath);
   };
 
   const signInGoogle = async () => {
-    setMessage("");
+    setSafeMessage("");
     setStatus("loading");
 
     const { error } = await supabase.auth.signInWithOAuth({
@@ -130,7 +135,7 @@ export default function AuthPage() {
 
     if (error) {
       setStatus("error");
-      setMessage(
+      setSafeMessage(
         `${error.message}. Make sure Google auth is enabled in Supabase and that /auth/callback is allowed as a redirect URL.`
       );
     }

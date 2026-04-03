@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { defaultUserPreferences, type PreferenceTool, type UserPreferences } from "@/lib/preferences/defaults";
+import { normalizeErrorMessage } from "@/lib/ai/util";
 
 const defaultToolOptions = [
   { value: "summary", label: "Summary" },
@@ -61,12 +62,12 @@ export function SettingsPanel({
 
       if (!response.ok) {
         const json = await response.json().catch(() => ({}));
-        throw new Error(json.error || "Unable to save your settings.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to save your settings."));
       }
 
       setSaveState("Synced to your account.");
     } catch (error) {
-      setSaveState((error as Error).message || "Unable to save your settings.");
+      setSaveState(normalizeErrorMessage(error, "Unable to save your settings."));
     }
   }
 

@@ -5,7 +5,13 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 function normalizeStudyContent(content: string) {
-  return content.replace(/^Local fallback response\s*/i, "").trim();
+  const normalized = content.replace(/^Local fallback response\s*/i, "").trim();
+
+  if (!normalized || normalized === "[object Object]" || normalized === "{}") {
+    return "Something went wrong generating that reply. Please try again.";
+  }
+
+  return normalized;
 }
 
 function MermaidBlock({ chart }: { chart: string }) {

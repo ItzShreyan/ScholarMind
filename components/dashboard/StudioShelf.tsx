@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { ArrowRight, NotebookPen, Plus, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { normalizeErrorMessage } from "@/lib/ai/util";
 
 type Studio = {
   id: string;
@@ -48,7 +49,7 @@ export function StudioShelf({ initialStudios }: { initialStudios: Studio[] }) {
       });
       const json = await response.json();
       if (!response.ok) {
-        throw new Error(json.error || "Unable to create a studio.");
+        throw new Error(normalizeErrorMessage(json.error, "Unable to create a studio."));
       }
 
       const nextStudio = {
@@ -61,7 +62,7 @@ export function StudioShelf({ initialStudios }: { initialStudios: Studio[] }) {
       rememberStudio(nextStudio.id);
       router.push(`/dashboard/workspace/${nextStudio.id}`);
     } catch (createError) {
-      setError((createError as Error).message || "Unable to create a studio.");
+      setError(normalizeErrorMessage(createError, "Unable to create a studio."));
     } finally {
       setCreating(false);
     }

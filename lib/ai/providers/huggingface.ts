@@ -1,5 +1,6 @@
 import { AIProvider } from "@/lib/ai/types";
 import { buildPrompt } from "@/lib/ai/prompt";
+import { normalizeAIText } from "@/lib/ai/util";
 
 export const huggingFaceProvider: AIProvider = {
   name: "huggingface",
@@ -17,10 +18,10 @@ export const huggingFaceProvider: AIProvider = {
     });
     if (!res.ok) throw new Error(`HuggingFace failed: ${res.status}`);
     const data = await res.json();
-    const text =
+    const rawText =
       data?.[0]?.generated_text ||
       data?.generated_text ||
       JSON.stringify(data).slice(0, 4000);
-    return { provider: "huggingface", text };
+    return { provider: "huggingface", text: normalizeAIText(rawText) };
   }
 };

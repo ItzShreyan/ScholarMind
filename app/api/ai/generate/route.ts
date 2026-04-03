@@ -3,6 +3,7 @@ import { z } from "zod";
 import { generateWithFallback } from "@/lib/ai/fallback";
 import { getSiteSettings } from "@/lib/site-settings";
 import { createClient } from "@/lib/supabase/server";
+import { normalizeErrorMessage } from "@/lib/ai/util";
 import {
   formatExamLimitMessage,
   formatAiLimitMessage,
@@ -106,8 +107,10 @@ export async function POST(req: Request) {
         // Telemetry should never block study responses.
       }
 
+      const text = typeof result.text === "string" ? result.text : JSON.stringify(result.text || "");
       return NextResponse.json({
         ...result,
+        text,
         usage: {
           hourlyRemaining: reservation.hourlyRemaining,
           dailyRemaining: reservation.dailyRemaining,
@@ -136,7 +139,7 @@ export async function POST(req: Request) {
     }
   } catch (error) {
     return NextResponse.json(
-      { error: (error as Error).message || "Generation failed" },
+      { error: normalizeErrorMessage(error, "Generation failed") },
       { status: 400 }
     );
   }

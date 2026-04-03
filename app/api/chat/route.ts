@@ -1,40 +1,71 @@
 import { NextResponse } from "next/server";
+import { generateWithFallback } from "@/lib/ai/fallback";
+import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
+
+function normalizeHistory(history: unknown) {
+  if (!Array.isArray(history)) return [];
+
+  return history
+    .map((item) => {
+      const record = item as { role?: string; content?: unknown };
+      const content = normalizeAIText(record?.content);
+      if (!content) return null;
+
+      return {
+        role: record?.role === "assistant" || record?.role === "ai" ? "assistant" : "user",
+        content
+      };
+    })
+    .filter((item): item is { role: "user" | "assistant"; content: string } => Boolean(item));
+}
+
+function makeSseResponse(text: string) {
+  const encoder = new TextEncoder();
+  const payload = JSON.stringify({
+    choices: [{ delta: { content: text } }]
+  });
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    }
+  });
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache"
+    }
+  });
+}
 
 export async function POST(req: Request) {
   try {
     const { input } = await req.json();
 
     const messages = input.history?.length
-      ? input.history
+      ? normalizeHistory(input.history)
       : input.messages || [{ role: "user", content: input.message || input.prompt || "" }];
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-8b-instruct:free",
-        messages,
-        temperature: 0.4,
-        max_tokens: 1200,
-        stream: true
-      })
+    const content = normalizeAIText(input.message || input.prompt || "");
+    const result = await generateWithFallback({
+      action: "chat",
+      prompt: content,
+      message: content,
+      history: messages,
+      mode: "chat",
+      sessionId: input.sessionId
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      return new NextResponse(text, { status: response.status });
+    const safeText = normalizeAIText(result.text);
+    if (!safeText || safeText === "[object Object]") {
+      throw new Error("The AI reply came back in an unreadable format. Please try again.");
     }
 
-    return new Response(response.body, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache"
-      }
-    });
+    return makeSseResponse(safeText);
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 400 });
+    const message = normalizeErrorMessage(error, "Unexpected error");
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
