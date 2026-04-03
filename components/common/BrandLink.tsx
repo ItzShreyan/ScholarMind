@@ -6,21 +6,26 @@ import { useRouter } from "next/navigation";
 type BrandLinkProps = {
   href: string;
   subtitle: string;
+  allowMobileHostShortcut?: boolean;
 };
 
-export function BrandLink({ href, subtitle }: BrandLinkProps) {
+export function BrandLink({ href, subtitle, allowMobileHostShortcut = false }: BrandLinkProps) {
   const router = useRouter();
 
   return (
     <Link
       href={href}
       onClick={(event) => {
-        if (!event.shiftKey) return;
+        const mobileHostShortcut =
+          allowMobileHostShortcut &&
+          typeof window !== "undefined" &&
+          window.matchMedia("(max-width: 767px)").matches;
+        if (!event.shiftKey && !mobileHostShortcut) return;
         event.preventDefault();
         router.push("/host");
       }}
       className="flex items-center gap-3"
-      title="Shift + click to open the host panel"
+      title={allowMobileHostShortcut ? "Shift + click, or tap on mobile, to open the host panel" : "Shift + click to open the host panel"}
     >
       <div className="playful-pop h-10 w-10 rounded-2xl bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))]" />
       <div>

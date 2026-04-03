@@ -18,6 +18,7 @@ import {
   Globe2,
   LoaderCircle,
   Lock,
+  Pencil,
   Plus,
   Search,
   SendHorizonal,
@@ -34,6 +35,7 @@ import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@
 import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
 import { parseFlashcards } from "@/lib/ai/parse";
+import type { SiteSettings } from "@/lib/site-settings";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 import {
   defaultMaxUploadFileSizeMb,
@@ -42,7 +44,14 @@ import {
 } from "@/lib/documents/formats";
 
 type Session = { id: string; title: string };
-type FileItem = { id: string; file_name: string; extracted_text: string; file_type: string; storage_path: string };
+type FileItem = {
+  id: string;
+  file_name: string;
+  extracted_text: string;
+  file_type: string;
+  storage_path: string;
+  source_enabled?: boolean;
+};
 type ChatMessage = { role: "user" | "ai"; content: string };
 type AIAction =
   | "summary"
@@ -137,6 +146,11 @@ type RevisionScheduleItem = {
 };
 
 type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
+type CopiedSourceClipboard = {
+  sourceSessionId: string;
+  sourceStudioTitle: string;
+  copiedAt: number;
+};
 
 const desktopLeftPanelDefault = 360;
 const desktopRightPanelDefault = 440;
@@ -146,6 +160,7 @@ const desktopRightPanelMin = 340;
 const desktopRightPanelMax = 620;
 const desktopCenterPanelMin = 460;
 const desktopResizeHandleWidth = 14;
+const sourceClipboardStorageKey = "scholarmind_source_clipboard";
 
 const sourceEngineOptions: Array<{
   key: SourceSearchEngine;
@@ -294,6 +309,27 @@ function summarizeGeneratedOutput(text: string) {
       .trim(),
     180
   );
+}
+
+function isTutorSmallTalk(text: string) {
+  const normalized = text.trim().toLowerCase();
+  return /^(hi|hey|hello|yo|hiya|good morning|good afternoon|good evening)\b/.test(normalized) ||
+    /how are you( doing)?/i.test(normalized) ||
+    /what'?s up/i.test(normalized);
+}
+
+function detectChatToolRequest(text: string): AIAction | null {
+  const normalized = text.toLowerCase();
+  if (!/\b(make|build|create|generate|turn|give me)\b/.test(normalized)) return null;
+  if (/\bflashcards?\b/.test(normalized)) return "flashcards";
+  if (/\bquiz\b|\bmcq\b|\bmultiple[- ]choice\b/.test(normalized)) return "quiz";
+  if (/\bstudy plan\b|\brevision plan\b|\bschedule\b/.test(normalized)) return "study_plan";
+  if (/\bconcept map\b|\bmind map\b|\bmap\b/.test(normalized)) return "concepts";
+  if (/\bexam\b|\bmock paper\b|\btest paper\b/.test(normalized)) return "exam";
+  if (/\binsights?\b|\breport\b/.test(normalized)) return "insights";
+  if (/\btrap\b|\bhard mode\b/.test(normalized)) return "hard_mode";
+  if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
+  return null;
 }
 
 async function readJsonResponse(response: Response) {
@@ -520,7 +556,7 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
     case "exam":
       return `${preface} Generate a long full ${focus} mock exam in markdown with around ${Math.max(30, count + 16)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the length of a real school exam paper, not a short worksheet. Keep it realistic for GCSE, A-Level, or the level named in the focus. If the material is mathematical, include method-based questions, multi-step problems, diagrams or tables when helpful, and require working.`;
     case "summary":
-      return `${preface} Return ${count} short bullet points, one per line, each highlighting a key revision takeaway. If the difficulty is foundation-level, keep the wording clearer and simpler. Where the sources contain formulas, dates, or comparisons, prefer compact table-friendly wording over vague prose.`;
+      return `${preface} Return a full revision summary in markdown. Use these sections in order: ## What this topic is about, ## Key points to remember, ## Step-by-step explanation, ## What to memorise, ## Quick self-check. Keep it concise but complete, use short paragraphs or bullets where helpful, and use a table only when the source naturally contains comparisons, formulas, or dates.`;
     case "insights":
       return `${preface} Return a short performance report with weak spots, misconceptions, and next-best study actions. Use a markdown table when it helps.`;
     case "hard_mode":
@@ -691,11 +727,13 @@ function escapeHtml(value: string) {
 export function StudyWorkspace({
   sessions,
   initialSessionId,
-  initialFiles
+  initialFiles,
+  siteSettings
 }: {
   sessions: Session[];
   initialSessionId: string | null;
   initialFiles: FileItem[];
+  siteSettings?: SiteSettings;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -739,6 +777,9 @@ export function StudyWorkspace({
   const [showStudioBrowser, setShowStudioBrowser] = useState(false);
   const [studioBrowserRefreshing, setStudioBrowserRefreshing] = useState(false);
   const [copyingStudioId, setCopyingStudioId] = useState<string | null>(null);
+  const [copiedSourceClipboard, setCopiedSourceClipboard] = useState<CopiedSourceClipboard | null>(null);
+  const [renamingStudioId, setRenamingStudioId] = useState<string | null>(null);
+  const [deletingStudioId, setDeletingStudioId] = useState<string | null>(null);
   const [toolModalOpen, setToolModalOpen] = useState(false);
   const [toolModalView, setToolModalView] = useState<"setup" | "result">("setup");
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
@@ -755,6 +796,7 @@ export function StudyWorkspace({
   const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
   const [sourcePromptedForStudio, setSourcePromptedForStudio] = useState<string | null>(null);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+  const [togglingFileId, setTogglingFileId] = useState<string | null>(null);
   const [desktopLayoutEnabled, setDesktopLayoutEnabled] = useState(false);
   const [desktopPanelWidths, setDesktopPanelWidths] = useState({
     left: desktopLeftPanelDefault,
@@ -780,11 +822,18 @@ export function StudyWorkspace({
     try {
       const savedLeft = Number(localStorage.getItem("scholarmind_workspace_left_width"));
       const savedRight = Number(localStorage.getItem("scholarmind_workspace_right_width"));
+      const storedClipboard = localStorage.getItem(sourceClipboardStorageKey);
 
       setDesktopPanelWidths({
         left: Number.isFinite(savedLeft) && savedLeft > 0 ? savedLeft : desktopLeftPanelDefault,
         right: Number.isFinite(savedRight) && savedRight > 0 ? savedRight : desktopRightPanelDefault
       });
+      if (storedClipboard) {
+        const parsed = JSON.parse(storedClipboard) as CopiedSourceClipboard;
+        if (parsed?.sourceSessionId && parsed?.sourceStudioTitle) {
+          setCopiedSourceClipboard(parsed);
+        }
+      }
     } catch {
       setDesktopPanelWidths({
         left: desktopLeftPanelDefault,
@@ -797,10 +846,15 @@ export function StudyWorkspace({
     try {
       localStorage.setItem("scholarmind_workspace_left_width", String(Math.round(desktopPanelWidths.left)));
       localStorage.setItem("scholarmind_workspace_right_width", String(Math.round(desktopPanelWidths.right)));
+      if (copiedSourceClipboard) {
+        localStorage.setItem(sourceClipboardStorageKey, JSON.stringify(copiedSourceClipboard));
+      } else {
+        localStorage.removeItem(sourceClipboardStorageKey);
+      }
     } catch {
       // Ignore storage issues.
     }
-  }, [desktopPanelWidths]);
+  }, [copiedSourceClipboard, desktopPanelWidths]);
 
   useEffect(() => {
     if (!initialSessionId) return;
@@ -919,17 +973,22 @@ export function StudyWorkspace({
     () => (activeSessionId ? filesBySession[activeSessionId] ?? [] : []),
     [activeSessionId, filesBySession]
   );
+  const sourceEnabledFiles = useMemo(
+    () => currentFiles.filter((file) => file.source_enabled !== false),
+    [currentFiles]
+  );
+  const sourceEnabledCount = sourceEnabledFiles.length;
   const hasCurrentFiles = activeSessionId ? activeSessionId in filesBySession : false;
   const currentSession = sessionList.find((session) => session.id === activeSessionId) ?? null;
   const currentToolHistory = activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : [];
   const currentMetrics = activeSessionId ? metricsBySession[activeSessionId] ?? createEmptyMetrics() : createEmptyMetrics();
   const currentFilesLabel = useMemo(() => {
-    if (!currentFiles.length) return "No uploaded sources yet";
-    if (currentFiles.length === 1) return currentFiles[0].file_name;
-    const preview = currentFiles.slice(0, 2).map((file) => file.file_name).join(", ");
-    return currentFiles.length > 2 ? `${preview} +${currentFiles.length - 2} more` : preview;
-  }, [currentFiles]);
-  const toolsLocked = currentFiles.length === 0;
+    if (!sourceEnabledFiles.length) return "No source-enabled files yet";
+    if (sourceEnabledFiles.length === 1) return sourceEnabledFiles[0].file_name;
+    const preview = sourceEnabledFiles.slice(0, 2).map((file) => file.file_name).join(", ");
+    return sourceEnabledFiles.length > 2 ? `${preview} +${sourceEnabledFiles.length - 2} more` : preview;
+  }, [sourceEnabledFiles]);
+  const toolsLocked = sourceEnabledCount === 0;
 
   const closeSourceModal = () => {
     setSourceModalOpen(false);
@@ -1007,6 +1066,13 @@ export function StudyWorkspace({
     () => (activeAction === "study_plan" ? parseRevisionSchedule(output) : []),
     [activeAction, output]
   );
+  const effectiveSiteSettings = siteSettings ?? {
+    aiDailyLimit: defaultFreePreviewDailyLimit,
+    aiHourlyLimit: 8,
+    examWeeklyLimit: defaultExamGeneratorWeeklyLimit,
+    researchModeLocked: true,
+    maintenanceMessage: ""
+  };
   const desktopGridStyle = useMemo(
     () =>
       desktopLayoutEnabled
@@ -1048,8 +1114,8 @@ export function StudyWorkspace({
       studio: currentSession?.title || "Study studio",
       action: activeAction,
       generatedAt: new Date().toISOString(),
-      sourceCount: currentFiles.length,
-      sources: currentFiles.map((file) => ({
+      sourceCount: sourceEnabledFiles.length,
+      sources: sourceEnabledFiles.map((file) => ({
         id: file.id,
         name: file.file_name,
         type: file.file_type
@@ -1095,7 +1161,7 @@ export function StudyWorkspace({
       cards: parsedCards,
       markdown: output
     };
-  }, [activeAction, currentFiles, currentSession?.title, examAnswers, output, parsedCards, parsedExamQuestions, parsedFlashcards, parsedQuiz, parsedSchedule, quizResultRows]);
+  }, [activeAction, currentSession?.title, examAnswers, output, parsedCards, parsedExamQuestions, parsedFlashcards, parsedQuiz, parsedSchedule, quizResultRows, sourceEnabledFiles]);
 
   const exportCurrentResultAsJson = useCallback(() => {
     if (!output) {
@@ -1178,7 +1244,7 @@ export function StudyWorkspace({
         </head>
         <body>
           <h1>${escapeHtml(actionButtons.find((item) => item.key === activeAction)?.label || "Study export")}</h1>
-          <p class="meta">${escapeHtml(currentSession?.title || "Study studio")} • ${currentFiles.length} source(s)</p>
+          <p class="meta">${escapeHtml(currentSession?.title || "Study studio")} • ${sourceEnabledCount} source-enabled file(s)</p>
           ${quizTable}
           ${examAnswerSheet}
           <pre>${escapeHtml(output)}</pre>
@@ -1187,7 +1253,7 @@ export function StudyWorkspace({
       </html>`);
     printableWindow.document.close();
     setStatusNote("PDF export opened in a print window.");
-  }, [activeAction, currentFiles.length, currentSession?.title, examAnswers, output, parsedExamQuestions, quizResultRows]);
+  }, [activeAction, currentSession?.title, examAnswers, output, parsedExamQuestions, quizResultRows, sourceEnabledCount]);
 
   useEffect(() => {
     setRevealedQuiz({});
@@ -1210,14 +1276,14 @@ export function StudyWorkspace({
   }, [activeSessionId]);
 
   useEffect(() => {
-    if (currentFiles.length) {
+    if (sourceEnabledCount) {
       setSourceModalOpen(false);
       setSourceModalError("");
     }
-  }, [currentFiles.length]);
+  }, [sourceEnabledCount]);
 
   useEffect(() => {
-    if (!activeSessionId || currentFiles.length || sourcePromptedForStudio === activeSessionId) return;
+    if (!activeSessionId || sourceEnabledCount || sourcePromptedForStudio === activeSessionId) return;
 
     const timeoutId = window.setTimeout(() => {
       openSourceModal("Upload a source or import a web source before you start chatting or generating tools.");
@@ -1225,7 +1291,7 @@ export function StudyWorkspace({
     }, 450);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeSessionId, currentFiles.length, sourcePromptedForStudio]);
+  }, [activeSessionId, sourceEnabledCount, sourcePromptedForStudio]);
 
   useEffect(() => {
     if (!preferencesReady || defaultToolAppliedRef.current) return;
@@ -1425,11 +1491,11 @@ export function StudyWorkspace({
 
   const buildContextForPrompt = useCallback(
     (hint: string, action: AIAction) =>
-      buildStudyContext(currentFiles, hint, {
+      buildStudyContext(sourceEnabledFiles, hint, {
         maxCharacters: action === "exam" ? 14000 : action === "quiz" || action === "flashcards" ? 10000 : 8000,
         maxChunks: action === "exam" ? 18 : action === "quiz" || action === "flashcards" ? 12 : 8
       }),
-    [currentFiles]
+    [sourceEnabledFiles]
   );
 
   const saveToolResult = useCallback(
@@ -1581,6 +1647,80 @@ export function StudyWorkspace({
     } catch (error) {
       setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to prepare a studio."));
       return null;
+    }
+  };
+
+  const renameStudio = async (sessionId: string, currentTitle: string) => {
+    const nextTitle = window.prompt("Rename studio", currentTitle)?.trim();
+    if (!nextTitle || nextTitle === currentTitle) {
+      return;
+    }
+
+    setRenamingStudioId(sessionId);
+    setStatusNote("Renaming studio...");
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, title: nextTitle })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to rename this studio."));
+      }
+
+      setSessionList((current) =>
+        current.map((session) => (session.id === sessionId ? { ...session, title: json.title || nextTitle } : session))
+      );
+      setStatusNote(`Studio renamed to ${json.title || nextTitle}.`);
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to rename this studio."));
+    } finally {
+      setRenamingStudioId(null);
+    }
+  };
+
+  const deleteStudio = async (sessionId: string, title: string) => {
+    const confirmed = window.confirm(`Delete "${title}"? This will remove the studio and its uploaded sources.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingStudioId(sessionId);
+    setStatusNote("Deleting studio...");
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to delete this studio."));
+      }
+
+      const nextSessions = Array.isArray(json.sessions) ? json.sessions : [];
+      setSessionList(nextSessions);
+      setFilesBySession((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(nextSessions[0]?.id ?? null);
+      }
+
+      setShowStudioBrowser(false);
+      setStatusNote(`Deleted ${title}.`);
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to delete this studio."));
+    } finally {
+      setDeletingStudioId(null);
     }
   };
 
@@ -1815,31 +1955,47 @@ export function StudyWorkspace({
     }
   };
 
-  const copySourcesFromStudio = async (sourceSessionId: string) => {
-    const targetSessionId = await ensureActiveSession();
-    if (!targetSessionId) return;
-
-    if (sourceSessionId === targetSessionId) {
+  const copySourcesFromStudio = (sourceSessionId: string, sourceStudioTitle: string) => {
+    if (sourceSessionId === activeSessionId) {
       setStatusNote("You are already inside that studio.");
       return;
     }
 
-    setCopyingStudioId(sourceSessionId);
-    setStatusNote("Copying sources into the current studio...");
+    setCopiedSourceClipboard({
+      sourceSessionId,
+      sourceStudioTitle,
+      copiedAt: Date.now()
+    });
+    setShowStudioBrowser(false);
+    setTab("files");
+    setStatusNote(`Copied ${sourceStudioTitle} into your source clipboard. Open a studio and paste it into Files when you're ready.`);
+  };
+
+  const pasteCopiedSourcesIntoStudio = async () => {
+    const targetSessionId = await ensureActiveSession();
+    if (!targetSessionId || !copiedSourceClipboard) return;
+
+    if (copiedSourceClipboard.sourceSessionId === targetSessionId) {
+      setStatusNote("Those copied sources already belong to this studio.");
+      return;
+    }
+
+    setCopyingStudioId(copiedSourceClipboard.sourceSessionId);
+    setStatusNote(`Pasting sources from ${copiedSourceClipboard.sourceStudioTitle} into this studio...`);
 
     try {
       const response = await fetch("/api/sessions/copy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sourceSessionId,
+          sourceSessionId: copiedSourceClipboard.sourceSessionId,
           targetSessionId
         })
       });
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(normalizeErrorMessage(json.error, "Unable to copy sources."));
+        throw new Error(normalizeErrorMessage(json.error, "Unable to paste copied sources."));
       }
 
       setFilesBySession((current) => ({
@@ -1847,15 +2003,58 @@ export function StudyWorkspace({
         [targetSessionId]: json.files ?? current[targetSessionId] ?? []
       }));
       setTab("files");
-      setShowStudioBrowser(false);
       setStatusNote(
         json.message ||
           `Copied ${typeof json.copiedCount === "number" ? json.copiedCount : 0} source(s) into this studio.`
       );
     } catch (error) {
-      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to copy sources."));
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to paste copied sources."));
     } finally {
       setCopyingStudioId(null);
+    }
+  };
+
+  const toggleFileSource = async (file: FileItem) => {
+    const sessionId = activeSessionId;
+    if (!sessionId) return;
+
+    setTogglingFileId(file.id);
+
+    try {
+      const response = await fetch(`/api/files/${file.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceEnabled: file.source_enabled === false
+        })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to update this source."));
+      }
+
+      setFilesBySession((current) => ({
+        ...current,
+        [sessionId]: (current[sessionId] ?? []).map((item) => (item.id === file.id ? json.file ?? item : item))
+      }));
+
+      if (preview.file?.id === file.id) {
+        setPreview((current) => ({
+          ...current,
+          file: json.file ?? current.file
+        }));
+      }
+
+      setStatusNote(
+        file.source_enabled === false
+          ? `${file.file_name} is source-enabled again for tutor chat, tools, and revision plans.`
+          : `${file.file_name} is excluded from tutor chat, study tools, and revision plans until you re-enable it.`
+      );
+    } catch (error) {
+      setStatusNote(normalizeErrorMessage(error, "Unable to update this source."));
+    } finally {
+      setTogglingFileId(null);
     }
   };
 
@@ -1952,7 +2151,7 @@ export function StudyWorkspace({
     uploadFiles(Array.from(event.dataTransfer.files));
   };
 
-  const runAI = async (action: AIAction, prompt: string) => {
+  const runAI = useCallback(async (action: AIAction, prompt: string) => {
     setActiveAction(action);
     setLoading(true);
     setOutput("");
@@ -1998,7 +2197,7 @@ export function StudyWorkspace({
           ? ` ${json.usage.examWeeklyRemaining} full exam generation(s) left this week.`
           : "";
       setStatusNote(
-        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${currentFiles.length} uploaded source(s).${remainingUsage}${examUsage}`
+        `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${sourceEnabledCount} source-enabled file(s).${remainingUsage}${examUsage}`
       );
       return json.text || "No response";
     } catch (error) {
@@ -2007,18 +2206,57 @@ export function StudyWorkspace({
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeSessionId, buildContextForPrompt, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.focus, updateMetrics]);
 
   const submitChatQuestion = useCallback(async (questionInput: string) => {
     const question = questionInput.trim();
     if (!question || loading || chatLoading) return false;
+    const smallTalk = isTutorSmallTalk(question);
+    const requestedTool = detectChatToolRequest(question);
 
-    if (!currentFiles.length) {
+    if (!sourceEnabledCount && !smallTalk) {
       const message = "Upload sources or files to continue. AI answers stay locked to uploaded material in this workspace.";
       setStatusNote(message);
       openSourceModal(message);
       setTab("chat");
       return false;
+    }
+
+    if (requestedTool && sourceEnabledCount) {
+      const actionLabel = actionButtons.find((item) => item.key === requestedTool)?.label || "tool";
+      const nextDraft = {
+        ...createToolDraft(requestedTool),
+        focus: question
+      };
+
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: question },
+        { role: "ai", content: `Generating your ${actionLabel.toLowerCase()} from the current sources now.` }
+      ]);
+      setToolDraft(nextDraft);
+      setChatLoading(true);
+
+      const toolPrompt = buildToolPrompt(nextDraft, sourceEnabledFiles);
+      const generated = await runAI(requestedTool, toolPrompt);
+
+      setMessages((current) => {
+        const next = [...current];
+        const lastIndex = next.length - 1;
+        if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
+          next[lastIndex] = {
+            role: "ai",
+            content: generated
+              ? `${actionLabel} is ready in Study Tools and saved to this studio. Open the tools panel to review it.`
+              : `I couldn't finish that ${actionLabel.toLowerCase()} yet. Please try again.`
+          };
+        }
+        return next;
+      });
+
+      setChatLoading(false);
+      setTab("tools");
+      return Boolean(generated);
     }
 
     const historySnapshot = messages.slice(-6);
@@ -2027,6 +2265,10 @@ export function StudyWorkspace({
       currentMetrics.flashcardsFlipped > 0 ||
       Object.values(currentMetrics.toolRuns).some((count) => count > 0);
     const studyProfile = hasStudyHistory ? buildPerformanceSummary(currentMetrics) : "";
+    const chatContext = buildStudyContext(sourceEnabledFiles, question, {
+      maxCharacters: 9000,
+      maxChunks: 10
+    });
     const enrichedPrompt = historySnapshot.length
       ? [
           currentSession?.title ? `Current studio: ${currentSession.title}` : "",
@@ -2046,7 +2288,9 @@ export function StudyWorkspace({
           currentSession?.title ? `Current studio: ${currentSession.title}` : "",
           studyProfile ? `How this student has been working so far:\n${studyProfile}` : "",
           `Latest user question: ${question}`,
-          "Answer the question directly, use only the uploaded sources, and finish with one small next step."
+          smallTalk
+            ? "Reply warmly in 1-2 short sentences, then invite the student to share what they are revising."
+            : "Answer the question directly, use only the uploaded sources, and finish with one small next step."
         ]
           .filter(Boolean)
           .join("\n\n");
@@ -2071,6 +2315,7 @@ export function StudyWorkspace({
           input: {
             message: enrichedPrompt,
             history: providerHistory,
+            context: chatContext,
             mode: "chat",
             sessionId: activeSessionId ?? undefined
           }
@@ -2129,7 +2374,7 @@ export function StudyWorkspace({
       setChatLoading(false);
     }
     return true;
-  }, [activeSessionId, chatLoading, currentFiles.length, currentMetrics, currentSession?.title, loading, messages]);
+  }, [activeSessionId, chatLoading, currentMetrics, currentSession?.title, loading, messages, runAI, sourceEnabledCount, sourceEnabledFiles]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -2149,7 +2394,7 @@ export function StudyWorkspace({
       return;
     }
 
-    if (!currentFiles.length) {
+    if (!sourceEnabledCount) {
       setStatusNote("This revision day needs at least one uploaded source in the linked studio before it can open as a guided session.");
       return;
     }
@@ -2223,10 +2468,10 @@ export function StudyWorkspace({
     return () => {
       ignore = true;
     };
-  }, [activeSessionId, currentFiles.length, hasCurrentFiles, pathname, router, searchParams, submitChatQuestion]);
+  }, [activeSessionId, hasCurrentFiles, pathname, router, searchParams, sourceEnabledCount, submitChatQuestion]);
 
   const createReminder = async () => {
-    if (!currentFiles.length) {
+    if (!sourceEnabledCount) {
       const message = "Upload at least one file before setting a reminder for this study stack.";
       setStatusNote(message);
       openSourceModal(message);
@@ -2291,7 +2536,7 @@ export function StudyWorkspace({
       toolDraft.action === "insights"
         ? `\n\nPerformance data from this studio:\n${buildPerformanceSummary(currentMetrics)}`
         : "";
-    const result = await runAI(toolDraft.action, `${buildToolPrompt(toolDraft, currentFiles)}${performanceNote}`);
+    const result = await runAI(toolDraft.action, `${buildToolPrompt(toolDraft, sourceEnabledFiles)}${performanceNote}`);
     if (result) {
       setToolModalView("result");
     }
@@ -2722,6 +2967,18 @@ export function StudyWorkspace({
       );
     }
 
+    if (activeAction === "summary" && output) {
+      return (
+        <motion.article
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`rounded-[26px] border px-5 py-5 ${toolTones[activeAction]}`}
+        >
+          <RichStudyText content={output} />
+        </motion.article>
+      );
+    }
+
     if (output && looksRichOutput(output)) {
       return (
         <motion.article
@@ -2791,7 +3048,7 @@ export function StudyWorkspace({
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[var(--accent-coral)]">
-                Study Studio
+                Studio
               </p>
               <h1 className="mt-3 text-3xl font-semibold md:text-4xl">
                 {currentSession?.title || "Study workspace"}
@@ -2838,14 +3095,15 @@ export function StudyWorkspace({
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <p className="text-sm font-semibold">Studios</p>
+                <p className="text-sm font-semibold">Studio</p>
                 <p className="muted text-xs">Keep the current notebook focused and pull in other sources only when you need them.</p>
               </div>
               <div className="glass rounded-full px-3 py-1 text-xs font-medium">{sessionList.length} total</div>
             </div>
 
             <div className="rounded-[24px] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.18))] p-4">
-              <div className="flex items-start gap-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
                 <FolderOpen className="mt-0.5 h-4 w-4 text-[var(--accent-coral)]" />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
@@ -2855,9 +3113,32 @@ export function StudyWorkspace({
                     {currentSession?.title || "Preparing your studio..."}
                   </p>
                   <p className="muted mt-1 text-xs">
-                    {currentFiles.length} source(s) ready in this notebook.
+                    {sourceEnabledCount} source-enabled file(s) ready in this notebook.
                   </p>
                 </div>
+                </div>
+                {currentSession ? (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => renameStudio(currentSession.id, currentSession.title)}
+                      disabled={renamingStudioId === currentSession.id || deletingStudioId === currentSession.id}
+                      className="rounded-full bg-white/12 p-2 text-white/80 transition hover:bg-white/18 disabled:opacity-50"
+                      aria-label="Rename current studio"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteStudio(currentSession.id, currentSession.title)}
+                      disabled={deletingStudioId === currentSession.id || renamingStudioId === currentSession.id}
+                      className="rounded-full bg-white/12 p-2 text-[var(--accent-coral)] transition hover:bg-white/18 disabled:opacity-50"
+                      aria-label="Delete current studio"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -2901,11 +3182,31 @@ export function StudyWorkspace({
                               {knownFileCount === null ? "Saved studio" : `${knownFileCount} source(s) known in this studio`}
                             </p>
                           </div>
-                          {isCurrentStudio ? (
-                            <div className="rounded-full bg-[rgba(57,208,255,0.16)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--accent-sky)]">
-                              Current
-                            </div>
-                          ) : null}
+                          <div className="flex items-center gap-2">
+                            {isCurrentStudio ? (
+                              <div className="rounded-full bg-[rgba(57,208,255,0.16)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--accent-sky)]">
+                                Current
+                              </div>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={() => renameStudio(session.id, session.title)}
+                              disabled={renamingStudioId === session.id || deletingStudioId === session.id}
+                              className="rounded-full bg-white/10 p-2 text-white/80 transition hover:bg-white/18 disabled:opacity-50"
+                              aria-label={`Rename ${session.title}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteStudio(session.id, session.title)}
+                              disabled={deletingStudioId === session.id || renamingStudioId === session.id}
+                              className="rounded-full bg-white/10 p-2 text-[var(--accent-coral)] transition hover:bg-white/18 disabled:opacity-50"
+                              aria-label={`Delete ${session.title}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
 
                         {!isCurrentStudio ? (
@@ -2919,12 +3220,12 @@ export function StudyWorkspace({
                             </button>
                             <button
                               type="button"
-                              onClick={() => copySourcesFromStudio(session.id)}
+                              onClick={() => copySourcesFromStudio(session.id, session.title)}
                               disabled={copyingStudioId === session.id}
                               className="inline-flex items-center justify-center gap-2 rounded-[16px] bg-[linear-gradient(135deg,rgba(255,125,89,0.2),rgba(57,208,255,0.18))] px-3 py-2 text-xs font-medium transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                               <Copy className="h-3.5 w-3.5" />
-                              {copyingStudioId === session.id ? "Copying..." : "Copy sources"}
+                              {copyingStudioId === session.id ? "Pasting..." : "Copy sources"}
                             </button>
                           </div>
                         ) : null}
@@ -2943,10 +3244,10 @@ export function StudyWorkspace({
               <Button
                 onClick={() =>
                   openSourceModal(
-                    currentFiles.length
+                    sourceEnabledCount
                       ? "Add more files or search verified sources to expand this studio."
                       : "Add a file or a verified web source to unlock chat and tools.",
-                    currentFiles.length ? "web" : "upload"
+                    sourceEnabledCount ? "web" : "upload"
                   )
                 }
                 variant="secondary"
@@ -3008,7 +3309,22 @@ export function StudyWorkspace({
 
             <div className="mt-5">
               <div className="mb-3 flex items-center justify-between">
-                <p className="text-sm font-semibold">Files</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold">Files</p>
+                  {copiedSourceClipboard && copiedSourceClipboard.sourceSessionId !== activeSessionId ? (
+                    <button
+                      type="button"
+                      onClick={pasteCopiedSourcesIntoStudio}
+                      disabled={copyingStudioId === copiedSourceClipboard.sourceSessionId}
+                      className="inline-flex items-center gap-1 rounded-full bg-[rgba(57,208,255,0.14)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--accent-sky)] transition hover:bg-[rgba(57,208,255,0.22)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Copy className="h-3 w-3" />
+                      {copyingStudioId === copiedSourceClipboard.sourceSessionId
+                        ? "Pasting..."
+                        : `Paste from ${copiedSourceClipboard.sourceStudioTitle}`}
+                    </button>
+                  ) : null}
+                </div>
                 {fetchingFiles ? <p className="muted text-xs">Loading...</p> : null}
               </div>
               <div className="hide-scrollbar max-h-[24rem] space-y-2 overflow-auto pr-1">
@@ -3027,6 +3343,22 @@ export function StudyWorkspace({
                           </p>
                         </button>
                         <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleFileSource(file);
+                            }}
+                            disabled={togglingFileId === file.id}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                              file.source_enabled === false
+                                ? "bg-white/10 text-white/70 hover:bg-white/16"
+                                : "bg-[rgba(121,247,199,0.14)] text-[var(--accent-mint)] hover:bg-[rgba(121,247,199,0.22)]"
+                            }`}
+                          >
+                            {togglingFileId === file.id ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
+                            {file.source_enabled === false ? "Excluded" : "Source enabled"}
+                          </button>
                           <button
                             type="button"
                             onClick={() => openFilePreview(file)}
@@ -3054,6 +3386,11 @@ export function StudyWorkspace({
                         </div>
                       </div>
                       <button type="button" onClick={() => openFilePreview(file)} className="mt-2 w-full text-left">
+                        {file.source_enabled === false ? (
+                          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/50">
+                            Excluded from tutor, tools, and revision plans
+                          </p>
+                        ) : null}
                         <p className="muted line-clamp-3 text-xs">{file.extracted_text}</p>
                       </button>
                     </motion.div>
@@ -3085,11 +3422,11 @@ export function StudyWorkspace({
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold">AI Chat</p>
-                <p className="muted text-xs">Ask about uploaded notes once the source files are inside this studio.</p>
+                <p className="text-sm font-semibold">AI Tutor</p>
+                <p className="muted text-xs">Ask for step-by-step help, source-grounded explanations, and guided revision inside this studio.</p>
               </div>
               <div className="glass rounded-full px-4 py-2 text-xs font-medium">
-                {currentFiles.length ? currentSession?.title || "Study chat" : "Upload required"}
+                {sourceEnabledCount ? currentSession?.title || "Study chat" : "Upload required"}
               </div>
             </div>
 
@@ -3097,19 +3434,30 @@ export function StudyWorkspace({
               ref={chatViewportRef}
               className="hide-scrollbar mt-4 max-h-[27rem] min-h-[21.5rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4"
             >
-              {!currentFiles.length ? (
+              {!sourceEnabledCount ? (
                 <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
                   <p className="font-semibold">Upload sources or files to continue</p>
                   <p className="muted mt-2">
-                    Chat, quizzes, summaries, and the other AI tools unlock after this studio has at least one uploaded source.
+                    Tutor chat, quizzes, summaries, and the other AI tools unlock after this studio has at least one uploaded source.
                   </p>
                 </div>
               ) : messages.length === 0 ? (
                 <div className="rounded-[24px] bg-white/16 p-4 text-sm">
-                  <p className="font-semibold">Start with a grounded question</p>
+                  <p className="font-semibold">Start with a guided tutoring question</p>
                   <p className="muted mt-2">
-                    Ask for explanations, summaries, comparisons, or likely exam questions based on the uploaded notes.
+                    Ask for a step-by-step explanation, a guided summary, a worked comparison, or a likely exam-style question from the uploaded notes.
                   </p>
+                  <div className="mt-4 grid gap-2 text-xs md:grid-cols-3">
+                    {[
+                      "1. Ask what is confusing you.",
+                      "2. Read the step-by-step guide.",
+                      "3. Use the check-yourself prompt."
+                    ].map((step) => (
+                      <div key={step} className="rounded-[18px] bg-white/10 px-3 py-3">
+                        {step}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 messages.map((message, index) => (
@@ -3125,6 +3473,20 @@ export function StudyWorkspace({
                   >
                     {message.role === "user" ? (
                       <p className="whitespace-pre-wrap text-[15px] leading-8 md:text-base">{message.content}</p>
+                    ) : !message.content.trim() ? (
+                      <div className="space-y-2 text-sm">
+                        <p className="font-semibold">Your tutor is shaping the reply...</p>
+                        <div className="flex gap-2">
+                          {[0, 1, 2].map((item) => (
+                            <motion.span
+                              key={item}
+                              className="h-2 w-2 rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
+                              animate={{ opacity: [0.2, 1, 0.2], y: [0, -3, 0] }}
+                              transition={{ duration: 0.9, delay: item * 0.12, repeat: Infinity }}
+                            />
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <RichStudyText
                         content={sanitizeDisplayText(
@@ -3140,11 +3502,16 @@ export function StudyWorkspace({
                 <motion.div
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="max-w-[18rem] rounded-[28px] bg-white/16 px-5 py-4 text-sm"
+                  className="max-w-[22rem] rounded-[28px] bg-white/16 px-5 py-4 text-sm"
                 >
                   <div className="flex items-center gap-2">
                     <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                    <p className="font-semibold">Reading your sources and shaping the answer...</p>
+                    <p className="font-semibold">Your tutor is building a guided answer...</p>
+                  </div>
+                  <div className="mt-4 space-y-2 text-xs">
+                    <p className="rounded-[16px] bg-white/8 px-3 py-2">1. Reading the strongest source evidence</p>
+                    <p className="rounded-[16px] bg-white/8 px-3 py-2">2. Turning it into a clear step-by-step guide</p>
+                    <p className="rounded-[16px] bg-white/8 px-3 py-2">3. Adding a quick check-yourself next step</p>
                   </div>
                   <div className="mt-3 flex gap-2">
                     {[0, 1, 2].map((item) => (
@@ -3165,11 +3532,11 @@ export function StudyWorkspace({
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
                 onKeyDown={onChatKeyDown}
-                placeholder={currentFiles.length ? "Ask about your uploaded notes..." : "Upload files to unlock AI chat"}
-                disabled={!currentFiles.length}
+                placeholder={sourceEnabledCount ? "Ask your tutor about these notes..." : "Upload files to unlock AI tutor"}
+                disabled={!sourceEnabledCount}
                 className="w-full rounded-[22px] border border-white/20 bg-white/20 px-4 py-3 outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
               />
-              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading || !currentFiles.length}>
+              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading || !sourceEnabledCount}>
                 {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
               </Button>
             </div>
@@ -3207,7 +3574,7 @@ export function StudyWorkspace({
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
                     Source stack
                   </p>
-                  <p className="mt-2 text-sm font-semibold">{currentFiles.length} uploaded source(s)</p>
+                  <p className="mt-2 text-sm font-semibold">{sourceEnabledCount} source-enabled file(s)</p>
                   <p className="muted mt-2 text-xs">{currentFilesLabel}</p>
                 </div>
                 {!toolsLocked ? (
@@ -3236,7 +3603,7 @@ export function StudyWorkspace({
                     <p className="text-sm font-semibold">{action.label}</p>
                     {action.key === "exam" ? (
                       <span className="rounded-full bg-[rgba(255,209,102,0.14)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--accent-gold)]">
-                        {defaultExamGeneratorWeeklyLimit}/week
+                        {effectiveSiteSettings.examWeeklyLimit}/week
                       </span>
                     ) : action.key === "concepts" ? (
                       <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
@@ -3252,7 +3619,7 @@ export function StudyWorkspace({
             <div className="mt-4 rounded-[22px] bg-white/10 px-4 py-3 text-xs">
               <p className="font-semibold">Free preview limits</p>
               <p className="muted mt-2">
-                Up to {defaultFreePreviewDailyLimit} AI runs per day. Full exam papers are heavier and capped at {defaultExamGeneratorWeeklyLimit} per week.
+                Up to {effectiveSiteSettings.aiDailyLimit} AI runs per day. Full exam papers are heavier and capped at {effectiveSiteSettings.examWeeklyLimit} per week.
               </p>
             </div>
 
@@ -3262,23 +3629,33 @@ export function StudyWorkspace({
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
                     Research Mode
                   </p>
-                  <p className="mt-2 text-sm font-semibold">Locked for Pro</p>
+                  <p className="mt-2 text-sm font-semibold">
+                    {effectiveSiteSettings.researchModeLocked ? "Locked for Pro" : "Available soon in this workspace"}
+                  </p>
                   <p className="muted mt-2 text-xs">
-                    Multi-source web research, cross-checking, and deeper scholar-style briefs are coming soon.
+                    {effectiveSiteSettings.researchModeLocked
+                      ? "Multi-source web research, cross-checking, and deeper scholar-style briefs are coming soon."
+                      : "Host settings have unlocked this panel, but the deeper research workflow is still being finished."}
                   </p>
                 </div>
                 <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-1 text-xs font-medium text-[var(--accent-gold)]">
-                  Pro
+                  {effectiveSiteSettings.researchModeLocked ? "Pro" : "Live setting"}
                 </div>
               </div>
               <Button
-                onClick={() => setStatusNote("Research Mode is a Pro feature and is coming soon.")}
+                onClick={() =>
+                  setStatusNote(
+                    effectiveSiteSettings.researchModeLocked
+                      ? "Research Mode is a Pro feature and is coming soon."
+                      : "Research Mode has been unlocked in settings, but the deeper workflow is still coming soon."
+                  )
+                }
                 variant="ghost"
                 size="sm"
                 className="mt-4 w-full justify-center rounded-[18px] bg-white/10"
               >
                 <Lock className="h-4 w-4" />
-                Coming soon
+                {effectiveSiteSettings.researchModeLocked ? "Coming soon" : "Preview status"}
               </Button>
             </div>
 
@@ -3754,7 +4131,7 @@ export function StudyWorkspace({
                       Live preview
                     </p>
                     <p className="mt-3 text-sm font-semibold">
-                      {actionButtons.find((item) => item.key === toolDraft.action)?.label || "Tool"} will use {currentFiles.length} source(s)
+                      {actionButtons.find((item) => item.key === toolDraft.action)?.label || "Tool"} will use {sourceEnabledCount} source-enabled file(s)
                     </p>
                     <p className="muted mt-2 text-sm">{currentFilesLabel}</p>
 

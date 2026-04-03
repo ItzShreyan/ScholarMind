@@ -43,17 +43,22 @@ function makeSseResponse(text: string) {
 export async function POST(req: Request) {
   try {
     const { input } = await req.json();
-
-    const messages = input.history?.length
-      ? normalizeHistory(input.history)
-      : input.messages || [{ role: "user", content: input.message || input.prompt || "" }];
-
     const content = normalizeAIText(input.message || input.prompt || "");
+    const baseHistory = input.history?.length
+      ? normalizeHistory(input.history)
+      : Array.isArray(input.messages)
+        ? normalizeHistory(input.messages)
+        : [];
+    const messages = content
+      ? [...baseHistory, { role: "user" as const, content }]
+      : baseHistory;
+
     const result = await generateWithFallback({
       action: "chat",
       prompt: content,
       message: content,
       history: messages,
+      context: normalizeAIText(input.context || ""),
       mode: "chat",
       sessionId: input.sessionId
     });

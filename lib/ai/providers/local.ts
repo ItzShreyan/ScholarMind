@@ -1,4 +1,5 @@
 import { AIProvider } from "@/lib/ai/types";
+import { sanitizeInlineStudyText, cleanStudySourceText } from "@/lib/documents/clean";
 import { AIRequest } from "@/types";
 
 type SourceBlock = {
@@ -157,31 +158,11 @@ function normalizeText(text?: string) {
 }
 
 function cleanInlineText(text: string) {
-  return normalizeText(
-    text
-      .replace(/\|/g, " / ")
-      .replace(/\s+/g, " ")
-      .replace(/\[[^\]]*\]/g, " ")
-      .replace(/\((?:https?:\/\/|www\.)[^)]*\)/gi, " ")
-      .replace(/https?:\/\/\S+/gi, " ")
-  );
+  return normalizeText(sanitizeInlineStudyText(text));
 }
 
 function sanitizeContext(text?: string) {
-  return normalizeText(
-    (text || "")
-      .replace(/^source:\s*[^\n]+$/gim, " ")
-      .replace(/^source title:\s*[^\n]+$/gim, " ")
-      .replace(/^source url:\s*[^\n]+$/gim, " ")
-      .replace(/^summary:\s*[^\n]+$/gim, " ")
-      .replace(/^trust:\s*[^\n]+$/gim, " ")
-      .replace(/^title:\s*[^\n]+$/gim, " ")
-      .replace(/^description:\s*[^\n]+$/gim, " ")
-      .replace(/^url source:\s*[^\n]+$/gim, " ")
-      .replace(/^markdown content:\s*$/gim, " ")
-      .replace(/\b[\w-]+\.(pdf|docx|txt|png|jpe?g|xlsx?|csv|md)\b/gi, " ")
-      .replace(/https?:\/\/\S+/gi, " ")
-  );
+  return normalizeText(cleanStudySourceText(text || ""));
 }
 
 function splitSentences(text: string) {
@@ -510,13 +491,35 @@ function summaryResponse(input: AIRequest) {
   const evidence = pickEvidence(input, 6);
   if (!evidence.length) {
     return [
-      "## Fast Summary",
+      "## Tutor Summary",
       "",
       "- Upload clearer source material first so the summary can lock onto real content."
     ].join("\n");
   }
 
-  return ["## Fast Summary", "", markdownBullets(evidence.slice(0, 5).map((item) => item.sentence))].join("\n");
+  return [
+    "## Tutor Summary",
+    "",
+    ...evidence.slice(0, 4).map((item) => `- ${item.sentence}`),
+    "",
+    "## In plain words",
+    "",
+    trimSentence(evidence[0]?.sentence || "", 260),
+    "",
+    "## How to revise this",
+    "",
+    markdownBullets(
+      evidence.slice(0, 3).map((item, index) => {
+        const focus = titleCase(keywordsFrom(input, 4)[index] || `idea ${index + 1}`);
+        return `Explain ${focus} in your own words, then check it against ${item.source}.`;
+      })
+    )
+  ].join("\n");
+}
+
+function isSmallTalkPrompt(prompt: string) {
+  const normalized = normalizeText(prompt).toLowerCase();
+  return /^(hi|hey|hello|yo|hiya|how are you|how are you doing|good morning|good afternoon|good evening)\b/.test(normalized);
 }
 
 function flashcardResponse(input: AIRequest) {
@@ -584,6 +587,10 @@ function chatResponse(input: AIRequest) {
   const keywords = keywordsFrom(input, 6);
   const questionRefs = extractQuestionRefs(input.prompt);
 
+  if (isSmallTalkPrompt(input.prompt)) {
+    return "## Hello\n\nI’m doing well, and I’m ready to help you study. Tell me the topic, upload a source, or ask for a step-by-step explanation.";
+  }
+
   if (!input.context) {
     return [
       "## Upload a source first",
@@ -616,7 +623,7 @@ function chatResponse(input: AIRequest) {
       "",
       buildMermaidMap(input, keywords),
       "",
-      "## Grounded points",
+      "## Step-by-step guide",
       "",
       markdownBullets(buildSourceBullets(evidence, 4))
     ].join("\n");
@@ -637,7 +644,7 @@ function chatResponse(input: AIRequest) {
       "",
       directAnswer,
       "",
-      "## Revision table",
+      "## Step-by-step guide",
       "",
       markdownTable(["Focus", "Source", "Evidence", "What to do next"], rows),
       "",
@@ -663,11 +670,18 @@ function chatResponse(input: AIRequest) {
     "",
     directAnswer,
     "",
-    "## Evidence from your sources",
+    "## Step-by-step guide",
     "",
     markdownBullets(buildSourceBullets(evidence, 4)),
     keywords.length
-      ? ["", "## Focus terms", "", markdownBullets(keywords.slice(0, 5).map(titleCase))].join("\n")
+      ? [
+          "",
+          "## Check yourself",
+          "",
+          markdownBullets(
+            keywords.slice(0, 3).map((keyword) => `Can you explain ${titleCase(keyword)} without looking at the source?`)
+          )
+        ].join("\n")
       : ""
   ]
     .filter(Boolean)

@@ -1,67 +1,14 @@
 import { AIProvider } from "@/lib/ai/types";
 import { AIRequest } from "@/types";
 import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
-import { normalizeAIText } from "@/lib/ai/util";
-
-async function streamResponseToText(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let accumulated = "";
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let newlineIndex: number;
-    while ((newlineIndex = buffer.indexOf("\n\n")) !== -1) {
-      const chunk = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 2);
-      if (!chunk) continue;
-
-      const lines = chunk.split(/\r?\n/);
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const payload = line.replace(/^data:\s*/, "");
-        if (payload === "[DONE]") return accumulated;
-
-        try {
-          const json = JSON.parse(payload);
-          const fragment = (json.choices?.[0]?.delta?.content as string) || "";
-          accumulated += fragment;
-        } catch {
-          continue;
-        }
-      }
-    }
-  }
-
-  if (buffer) {
-    const lines = buffer.split(/\r?\n/);
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue;
-      const payload = line.replace(/^data:\s*/, "");
-      if (payload === "[DONE]") break;
-
-      try {
-        const json = JSON.parse(payload);
-        const fragment = (json.choices?.[0]?.delta?.content as string) || "";
-        accumulated += fragment;
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  return accumulated;
-}
+import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
 
 function buildMessages(input: AIRequest) {
-  if (input.history?.length) return input.history;
   const content = (input.message || input.prompt || input.content || "").trim();
-  return content ? [{ role: "user", content }] : [];
+  const history = Array.isArray(input.history) ? input.history.filter((item) => normalizeAIText(item.content)) : [];
+  if (!content) return history;
+  if (history.length && normalizeAIText(history[history.length - 1]?.content) === content) return history;
+  return [...history, { role: "user" as const, content }];
 }
 
 export const openrouterProviderV2: AIProvider = {
@@ -84,18 +31,21 @@ export const openrouterProviderV2: AIProvider = {
             model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-8b-instruct:free",
             messages,
             temperature: 0.4,
-            max_tokens: 1200,
-            stream: true
+            max_tokens: 1200
           })
         },
-        15000
+        25000
       );
 
       if (!res.ok) {
-        throw new Error(`OpenRouter V2 failed: ${res.status}`);
+        const details = normalizeErrorMessage(await res.text(), `OpenRouter V2 failed: ${res.status}`);
+        throw new Error(details);
       }
 
-      const rawText = await streamResponseToText(res);
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const rawText = normalizeAIText(data?.choices?.[0]?.message?.content);
       return { provider: "openrouter_v2" as const, text: normalizeAIText(rawText) };
     };
 

@@ -5,6 +5,7 @@ import {
   isSpreadsheetDocument,
   isTextLikeDocument
 } from "@/lib/documents/formats";
+import { cleanStudySourceText } from "@/lib/documents/clean";
 
 type ExtractionResult = {
   text: string;
@@ -207,7 +208,7 @@ async function extractFromBuffer({
       return unreadable("This file type is not supported yet. Reupload it as PDF, image, text, Word, or spreadsheet.");
     }
 
-    const normalized = clipText(normalizeWhitespace(text));
+    const normalized = clipText(cleanStudySourceText(text));
 
     const isLightweightSource = isImageDocument(fileName, fileType) || isPdfDocument(fileName, fileType);
 

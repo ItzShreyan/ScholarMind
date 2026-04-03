@@ -115,6 +115,22 @@ export function HostPanel({
     };
   }, [initialEvents, initialSubscriptions]);
 
+  const apiUsageWarnings = useMemo(() => {
+    const warnings: string[] = [];
+
+    if (settings.aiDailyLimit <= 20) {
+      warnings.push(`Free users only have ${settings.aiDailyLimit} AI runs per day right now, so they may hit the cap quickly.`);
+    }
+    if (settings.aiHourlyLimit <= 4) {
+      warnings.push(`Hourly AI usage is tight at ${settings.aiHourlyLimit} run(s) per hour, which can feel restrictive during peak study times.`);
+    }
+    if (settings.examWeeklyLimit <= 3) {
+      warnings.push(`Full exam generation is low at ${settings.examWeeklyLimit} per week, so heavy exam practice users may run out fast.`);
+    }
+
+    return warnings;
+  }, [settings.aiDailyLimit, settings.aiHourlyLimit, settings.examWeeklyLimit]);
+
   const saveSettings = async () => {
     setSaving(true);
     setStatus("");
@@ -258,6 +274,24 @@ export function HostPanel({
             <Settings2 className="h-5 w-5 text-[var(--accent-sky)]" />
             <h2 className="text-xl font-semibold">Site settings</h2>
           </div>
+          <div className="mb-4 rounded-[22px] border border-white/10 bg-white/6 px-4 py-4 text-sm">
+            <p className="font-semibold">Live for everyone</p>
+            <p className="muted mt-2">
+              The AI limits, research-mode lock, and maintenance banner below apply across the live site, not just your own account.
+            </p>
+          </div>
+          {apiUsageWarnings.length ? (
+            <div className="mb-4 rounded-[22px] border border-[rgba(255,209,102,0.2)] bg-[rgba(255,209,102,0.08)] px-4 py-4 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">Usage warning</p>
+              <div className="mt-2 space-y-2">
+                {apiUsageWarnings.map((warning) => (
+                  <p key={warning} className="muted">
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="grid gap-4">
             <label className="grid gap-2 text-sm">
               <span className="muted">Free AI runs per day</span>
@@ -315,6 +349,12 @@ export function HostPanel({
                 placeholder="Optional note for launch days, incidents, or waitlist pushes."
               />
             </label>
+            {settings.maintenanceMessage ? (
+              <div className="rounded-[22px] border border-white/10 bg-[linear-gradient(135deg,rgba(255,125,89,0.14),rgba(57,208,255,0.12))] px-4 py-4 text-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">Banner preview</p>
+                <p className="mt-2">{settings.maintenanceMessage}</p>
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={saveSettings}

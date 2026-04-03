@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { ArrowRight, NotebookPen, Plus, Sparkles } from "lucide-react";
+import { ArrowRight, NotebookPen, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { normalizeErrorMessage } from "@/lib/ai/util";
 
@@ -22,6 +22,8 @@ export function StudioShelf({ initialStudios }: { initialStudios: Studio[] }) {
   const [studios, setStudios] = useState(initialStudios);
   const [draftTitle, setDraftTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const latestStudio = useMemo(() => studios[0] ?? null, [studios]);
@@ -68,6 +70,58 @@ export function StudioShelf({ initialStudios }: { initialStudios: Studio[] }) {
     }
   };
 
+  const renameStudio = async (studio: Studio) => {
+    const nextTitle = window.prompt("Rename studio", studio.title)?.trim();
+    if (!nextTitle || nextTitle === studio.title) return;
+
+    setRenamingId(studio.id);
+    setError("");
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: studio.id, title: nextTitle })
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to rename this studio."));
+      }
+
+      setStudios((current) => current.map((item) => (item.id === studio.id ? { ...item, title: json.title || nextTitle } : item)));
+    } catch (renameError) {
+      setError(normalizeErrorMessage(renameError, "Unable to rename this studio."));
+    } finally {
+      setRenamingId(null);
+    }
+  };
+
+  const deleteStudio = async (studio: Studio) => {
+    const confirmed = window.confirm(`Delete "${studio.title}"? This will remove the studio and its uploaded sources.`);
+    if (!confirmed) return;
+
+    setDeletingId(studio.id);
+    setError("");
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: studio.id })
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to delete this studio."));
+      }
+
+      setStudios(Array.isArray(json.sessions) ? json.sessions : []);
+    } catch (deleteError) {
+      setError(normalizeErrorMessage(deleteError, "Unable to delete this studio."));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <section className="mt-6">
       <div className="mb-4 flex items-center justify-between gap-4">
@@ -109,10 +163,8 @@ export function StudioShelf({ initialStudios }: { initialStudios: Studio[] }) {
 
         {studios.length ? (
           studios.map((studio, index) => (
-            <Link
+            <div
               key={studio.id}
-              href={`/dashboard/workspace/${studio.id}`}
-              onClick={() => rememberStudio(studio.id)}
               className="panel panel-border smooth-hover rounded-[26px] p-5"
             >
               <div className="mb-4 flex items-start justify-between gap-3">
@@ -123,11 +175,38 @@ export function StudioShelf({ initialStudios }: { initialStudios: Studio[] }) {
                     <NotebookPen className="h-5 w-5 text-[var(--accent-coral)]" />
                   )}
                 </div>
-                <ArrowRight className="h-4 w-4 text-[var(--accent-sky)]" />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => renameStudio(studio)}
+                    disabled={renamingId === studio.id || deletingId === studio.id}
+                    className="rounded-full bg-white/10 p-2 transition hover:bg-white/16 disabled:opacity-50"
+                    aria-label={`Rename ${studio.title}`}
+                  >
+                    <Pencil className="h-4 w-4 text-[var(--accent-sky)]" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteStudio(studio)}
+                    disabled={deletingId === studio.id || renamingId === studio.id}
+                    className="rounded-full bg-white/10 p-2 transition hover:bg-white/16 disabled:opacity-50"
+                    aria-label={`Delete ${studio.title}`}
+                  >
+                    <Trash2 className="h-4 w-4 text-[var(--accent-coral)]" />
+                  </button>
+                </div>
               </div>
               <p className="text-lg font-semibold">{studio.title}</p>
               <p className="muted mt-2 text-sm">Open this studio and continue building notes, tools, and recall practice.</p>
-            </Link>
+              <Link
+                href={`/dashboard/workspace/${studio.id}`}
+                onClick={() => rememberStudio(studio.id)}
+                className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-[var(--accent-sky)]"
+              >
+                Open studio
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           ))
         ) : (
           <div className="panel panel-border rounded-[26px] p-5 text-sm">

@@ -52,7 +52,8 @@ export async function POST(req: Request) {
           file_name: sourceName,
           file_type: "text/web",
           storage_path: `inline://web/${user.id}/${body.sessionId}/${Date.now()}`,
-          extracted_text: extractedText
+          extracted_text: extractedText,
+          source_enabled: true
         }
       ])
       .select("*")

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getSessionFiles, getUserSessions } from "@/lib/db/queries";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { StudyWorkspace } from "@/components/dashboard/StudyWorkspace";
+import { getSiteSettings } from "@/lib/site-settings";
 
 export default async function StudioPage() {
   const supabase = await createClient();
@@ -22,7 +23,10 @@ export default async function StudioPage() {
   }
 
   const activeSessionId = sessions[0]?.id || null;
-  const files = activeSessionId ? await getSessionFiles(activeSessionId, user.id, supabase) : [];
+  const [files, siteSettings] = await Promise.all([
+    activeSessionId ? getSessionFiles(activeSessionId, user.id, supabase) : Promise.resolve([]),
+    getSiteSettings(supabase)
+  ]);
 
   return (
     <>
@@ -30,12 +34,14 @@ export default async function StudioPage() {
       <StudyWorkspace
         sessions={sessions.map((s) => ({ id: s.id, title: s.title }))}
         initialSessionId={activeSessionId}
+        siteSettings={siteSettings}
         initialFiles={files.map((f) => ({
           id: f.id,
           file_name: f.file_name,
           extracted_text: f.extracted_text,
           file_type: f.file_type,
-          storage_path: f.storage_path
+          storage_path: f.storage_path,
+          source_enabled: f.source_enabled
         }))}
       />
     </>

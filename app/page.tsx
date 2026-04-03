@@ -29,13 +29,13 @@ import {
 const studyFeatures = [
   {
     icon: Brain,
-    title: "Separate revision schedule workspace",
-    copy: "Plan toward the real exam, open each day as its own study session, and keep progress synced to the same account."
+    title: "Personalised AI tutor",
+    copy: "Get step-by-step explanations, guided revision help, and clearer follow-up questions that stay grounded in your own sources."
   },
   {
     icon: MessageSquare,
-    title: "Grounded chat and clearer help",
-    copy: "Ask source-based questions and get cleaner answers, revision tables, and more readable step-by-step support."
+    title: "Separate revision schedule workspace",
+    copy: "Plan toward the real exam, open each day as its own study session, and keep progress synced to the same account."
   },
   {
     icon: FileText,
@@ -128,11 +128,11 @@ export default function LandingPage() {
 
             <div className="space-y-3 sm:space-y-4">
               <h1 className="max-w-4xl text-4xl font-semibold leading-[0.96] sm:text-5xl md:text-6xl lg:text-7xl">
-                Upload notes. Turn them into chat, quizzes, flashcards, exams, and a revision plan.
+                Upload notes. Turn them into a personal AI tutor, revision tools, and a real study plan.
               </h1>
               <p className="muted max-w-2xl text-sm sm:text-base md:text-lg">
                 Built for students who need one place to upload notes, pull in verified web sources, ask grounded
-                questions, and keep study progress moving without rewriting everything by hand.
+                questions, get step-by-step help, and keep study progress moving without rewriting everything by hand.
               </p>
             </div>
 
@@ -156,12 +156,12 @@ export default function LandingPage() {
                 {
                   icon: MessageSquare,
                   label: "Clear chat",
-                  copy: "Read spaced-out answers, tables, and diagrams instead of dense response blocks."
+                  copy: "Read tutor-style answers, tables, diagrams, and step-by-step guides instead of dense response blocks."
                 },
                 {
                   icon: Brain,
-                  label: "Trap radar",
-                  copy: "Spot exam mistakes before they show up in real questions."
+                  label: "Tutor flow",
+                  copy: "Ask, learn step by step, check yourself, then move straight into quizzes or exams."
                 }
               ].map((item) => (
                 <div key={item.label} className="glass rounded-[22px] p-3.5 sm:rounded-[26px] sm:p-4">
@@ -192,11 +192,11 @@ export default function LandingPage() {
                     Made for study material
                   </p>
                   <h2 className="mt-2 text-2xl font-semibold sm:text-3xl md:text-4xl">
-                    Notes, scanned pages, scholar-style sources, and revision packs can all feed the same studio.
+                    Notes, scanned pages, scholar-style sources, and revision packs can all feed the same AI tutor workspace.
                   </h2>
                 </div>
                 <p className="muted max-w-md text-sm">
-                  The point is to build one grounded study stack that can answer questions, generate practice, and expose misconceptions quickly.
+                  The point is to build one grounded study stack that can teach the topic, generate practice, and expose misconceptions quickly.
                 </p>
               </CardHeader>
             </Card>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { cleanStudySourceText } from "@/lib/documents/clean";
 import { resolvePreviewKind } from "@/lib/documents/formats";
 
 export async function GET(req: Request) {
@@ -31,6 +32,7 @@ export async function GET(req: Request) {
   }
 
   const kind = resolvePreviewKind(file.file_name, file.file_type, file.storage_path);
+  const previewText = file.file_type === "text/web" ? cleanStudySourceText(file.extracted_text) : file.extracted_text;
 
   if ((kind === "pdf" || kind === "image") && !file.storage_path.startsWith("inline://")) {
     const { data: signedData, error: signedError } = await supabase.storage
@@ -41,7 +43,7 @@ export async function GET(req: Request) {
       return NextResponse.json({
         kind: "text",
         fileName: file.file_name,
-        text: file.extracted_text
+        text: previewText
       });
     }
 
@@ -49,13 +51,13 @@ export async function GET(req: Request) {
       kind,
       fileName: file.file_name,
       url: signedData.signedUrl,
-      text: file.extracted_text
+      text: previewText
     });
   }
 
   return NextResponse.json({
     kind,
     fileName: file.file_name,
-    text: file.extracted_text
+    text: previewText
   });
 }

@@ -5,22 +5,24 @@ import Link from "next/link";
 import { Settings, UserCircle2 } from "lucide-react";
 import { BrandLink } from "@/components/common/BrandLink";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
+import { isHostOwner } from "@/lib/host";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/studio", label: "Studios" },
+  { href: "/studio", label: "Studio" },
   { href: "/schedule", label: "Schedule" },
   { href: "/settings", label: "Settings" }
 ];
 
 export function DashboardHeader({ email }: { email?: string }) {
   const pathname = usePathname();
+  const ownerHostShortcut = isHostOwner(email);
 
   return (
     <header className="px-3 pt-3 md:px-4">
       <div className="panel panel-border flex items-center justify-between rounded-[28px] px-4 py-3.5">
         <div className="flex items-center gap-3">
-          <BrandLink href="/dashboard" subtitle="Study studios and AI tools" />
+          <BrandLink href="/dashboard" subtitle="Studio and AI tutor" allowMobileHostShortcut={ownerHostShortcut} />
         </div>
 
         <nav className="hidden items-center gap-2 lg:flex">

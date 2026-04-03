@@ -60,7 +60,7 @@ export async function POST(req: Request) {
 
     const { data: sourceFiles, error: sourceFilesError } = await supabase
       .from("study_files")
-      .select("file_name, file_type, storage_path, extracted_text")
+      .select("file_name, file_type, storage_path, extracted_text, source_enabled")
       .eq("user_id", user.id)
       .eq("session_id", sourceSessionId)
       .order("created_at", { ascending: false });
@@ -95,7 +95,8 @@ export async function POST(req: Request) {
       file_name: createCopiedFileName(file.file_name, sourceSession.title, existingNames),
       file_type: file.file_type,
       storage_path: file.storage_path,
-      extracted_text: file.extracted_text
+      extracted_text: file.extracted_text,
+      source_enabled: file.source_enabled !== false
     }));
 
     const { error: insertError } = await supabase.from("study_files").insert(copiedRows);

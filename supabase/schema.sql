@@ -15,8 +15,12 @@ create table if not exists public.study_files (
   file_type text not null,
   storage_path text not null,
   extracted_text text not null default '',
+  source_enabled boolean not null default true,
   created_at timestamptz default now()
 );
+
+alter table public.study_files
+add column if not exists source_enabled boolean not null default true;
 
 create table if not exists public.study_reminders (
   id uuid primary key default uuid_generate_v4(),

@@ -34,12 +34,67 @@ function normalizeInput(input: AIRequest): AIRequest {
   };
 }
 
-function isBadResponse(text: string, mode?: string): boolean {
+const groundingStopWords = new Set([
+  "about",
+  "answer",
+  "because",
+  "chapter",
+  "content",
+  "definition",
+  "example",
+  "explain",
+  "explanation",
+  "guide",
+  "help",
+  "learn",
+  "material",
+  "notes",
+  "prompt",
+  "question",
+  "revise",
+  "source",
+  "sources",
+  "step",
+  "steps",
+  "study",
+  "summary",
+  "teach",
+  "topic",
+  "tutor",
+  "uploaded",
+  "using",
+  "what",
+  "your"
+]);
+
+function groundingTerms(text: string) {
+  return [...new Set((text.toLowerCase().match(/[a-z][a-z0-9-]{3,}/g) ?? []).filter((term) => !groundingStopWords.has(term)))];
+}
+
+function isGroundedEnough(text: string, input: AIRequest) {
+  if (!input.context) return true;
+  const response = text.toLowerCase();
+  const contextTerms = groundingTerms(`${input.prompt || ""} ${input.context || ""}`).slice(0, 12);
+  if (!contextTerms.length) return true;
+  return contextTerms.some((term) => response.includes(term));
+}
+
+function isBadResponse(text: string, input: AIRequest): boolean {
   const normalized = (text || "").toLowerCase();
+  const letters = (normalized.match(/[a-z]/g) ?? []).length;
+  const digits = (normalized.match(/\d/g) ?? []).length;
+  const mode = input.mode;
 
   if (!normalized.trim()) return true;
   if ((mode === "flashcards" || mode === "flashcards") && !normalized.includes("q:")) return true;
   if ((mode === "quiz" || mode === "quiz") && !/\b1\./.test(normalized)) return true;
+  if (normalized === "[object object]" || normalized === "{}") return true;
+  if (/(?:0{3,},){4,}0{3,}/.test(normalized)) return true;
+  if (digits > letters * 2 && normalized.length > 80) return true;
+  if (/^(okay|sure|alright)[,\s]+(?:0|,|\.){12,}/.test(normalized)) return true;
+  if (["chat", "summary", "insights", "concepts", "study_plan", "hard_mode"].includes(String(mode)) && !isGroundedEnough(normalized, input)) {
+    return true;
+  }
 
   return false;
 }
@@ -60,7 +115,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
     if (primary) {
       const result = await primary.generate(input);
       const normalizedText = normalizeAIText(result.text);
-      if (normalizedText && !isBadResponse(normalizedText, input.mode)) {
+      if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
         return { ...result, text: normalizedText };
       }
@@ -87,7 +142,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
     try {
       const result = await provider.generate(input);
       const normalizedText = normalizeAIText(result.text);
-      if (normalizedText && !isBadResponse(normalizedText, input.mode)) {
+      if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
         return { ...result, text: normalizedText };
       }

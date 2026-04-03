@@ -59,9 +59,11 @@ async function streamResponseToText(response: Response): Promise<string> {
 }
 
 function buildMessages(input: AIRequest) {
-  if (input.history?.length) return input.history;
   const content = (input.message || input.prompt || input.content || "").trim();
-  return content ? [{ role: "user", content }] : [];
+  const history = Array.isArray(input.history) ? input.history.filter((item) => normalizeAIText(item.content)) : [];
+  if (!content) return history;
+  if (history.length && normalizeAIText(history[history.length - 1]?.content) === content) return history;
+  return [...history, { role: "user" as const, content }];
 }
 
 export const groqProviderV2: AIProvider = {

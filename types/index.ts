@@ -41,5 +41,6 @@ export type StudyFile = {
   file_type: string;
   storage_path: string;
   extracted_text: string;
+  source_enabled?: boolean;
   created_at: string;
 };

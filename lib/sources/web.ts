@@ -1,4 +1,5 @@
 import { getFileExtension, isImageDocument, isPdfDocument } from "@/lib/documents/formats";
+import { cleanStudySourceText } from "@/lib/documents/clean";
 
 export type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
 
@@ -180,13 +181,7 @@ function flattenDuckTopics(items: unknown[]): Array<{ Text?: string; FirstURL?: 
 }
 
 function cleanReadableText(text: string) {
-  return normalizeWhitespace(
-    text
-      .replace(/^title:\s.*$/gim, " ")
-      .replace(/^url source:\s.*$/gim, " ")
-      .replace(/^markdown content:\s*$/gim, " ")
-      .replace(/^description:\s.*$/gim, " ")
-  );
+  return normalizeWhitespace(cleanStudySourceText(text));
 }
 
 async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 15000) {
@@ -844,18 +839,14 @@ export async function extractWebSourceText({
 
   const snippetFallback = cleanReadableText(snippet || "");
   if (snippetFallback.length >= 40) {
-    return clipText(
-      [`Source title: ${title}`, `Source URL: ${url}`, `Imported preview: ${snippetFallback}`].join("\n"),
-      32000
-    );
+    return clipText(snippetFallback, 32000);
   }
 
   return clipText(
     cleanReadableText(
       [
-        `Source title: ${title}`,
-        `Source URL: ${url}`,
-        "Imported note: This source could not be fully parsed. Open it in the preview and re-import if needed."
+        title,
+        "This web source could not be fully parsed. Open the preview and import a clearer article or PDF if needed."
       ].join("\n")
     ),
     32000

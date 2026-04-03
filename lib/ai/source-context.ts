@@ -1,3 +1,5 @@
+import { cleanStudySourceText } from "@/lib/documents/clean";
+
 type SourceLike = {
   file_name: string;
   extracted_text: string;
@@ -69,19 +71,7 @@ function tokenize(text: string) {
 }
 
 export function sanitizeSourceText(text: string) {
-  return normalizeWhitespace(
-    text
-      .replace(/^source:\s.*$/gim, "")
-      .replace(/^source title:\s.*$/gim, "")
-      .replace(/^source url:\s.*$/gim, "")
-      .replace(/^summary:\s.*$/gim, "")
-      .replace(/^trust:\s.*$/gim, "")
-      .replace(/^title:\s.*$/gim, "")
-      .replace(/^description:\s.*$/gim, "")
-      .replace(/^url source:\s.*$/gim, "")
-      .replace(/https?:\/\/\S+/g, "")
-      .replace(/\b[\w-]+\.(pdf|docx|txt|png|jpe?g|xlsx?|csv|md)\b/gi, "")
-  );
+  return normalizeWhitespace(cleanStudySourceText(text));
 }
 
 function splitIntoChunks(text: string) {

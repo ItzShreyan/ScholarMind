@@ -71,13 +71,14 @@ export async function POST(req: Request) {
 
     const { data: files, error: filesError } = await supabase
       .from("study_files")
-      .select("file_name, extracted_text")
+      .select("*")
       .eq("user_id", user.id)
       .eq("session_id", body.sessionId)
       .order("created_at", { ascending: false });
 
     if (filesError) throw filesError;
-    if (!files?.length) {
+    const sourceEnabledFiles = (files ?? []).filter((file) => file.source_enabled !== false);
+    if (!sourceEnabledFiles.length) {
       return NextResponse.json(
         { error: "Upload study sources to this studio before generating a revision schedule." },
         { status: 400 }
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
 
     try {
       const prompt = buildRevisionPlanPrompt(body);
-      const context = buildStudyContext(files, `${body.examName} ${body.goals || ""}`, {
+      const context = buildStudyContext(sourceEnabledFiles, `${body.examName} ${body.goals || ""}`, {
         maxCharacters: 12000,
         maxChunks: 14
       });
