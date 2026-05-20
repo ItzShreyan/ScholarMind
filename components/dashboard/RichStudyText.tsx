@@ -29,7 +29,9 @@ function MermaidBlock({ chart }: { chart: string }) {
         mermaid.initialize({
           startOnLoad: false,
           theme: document.documentElement.dataset.theme === "light" ? "default" : "dark",
-          securityLevel: "loose"
+          // 🛡️ Sentinel: Using "strict" security level to prevent XSS.
+          // "loose" allows HTML tags in diagrams which can be dangerous when using dangerouslySetInnerHTML.
+          securityLevel: "strict"
         });
         const { svg } = await mermaid.render(`mermaid-${chartId}`, chart);
         if (!ignore) {
