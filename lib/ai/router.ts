@@ -16,7 +16,7 @@ export function normalizeAIRequest(input: AIRequest): AIRequest {
 }
 
 export function selectProvider(_input: AIRequest): string {
-  void _input;
+  if (_input.action === "notes" && hasKey(process.env.OPENROUTER_API_KEY)) return "openrouter_v2";
   const preferred = (process.env.AI_PRIMARY_PROVIDER || "").toLowerCase();
   const providers = ["openrouter_v2", "groq_v2", "groq", "gemini", "huggingface", "together", "local"];
 

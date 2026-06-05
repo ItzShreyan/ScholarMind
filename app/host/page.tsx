@@ -14,7 +14,7 @@ export default async function HostPage() {
   if (!user) redirect("/auth");
   if (!isHostOwner(user.email)) redirect("/dashboard");
 
-  const [settingsResponse, eventsResponse, subscriptionsResponse] = await Promise.all([
+  const [settingsResponse, eventsResponse, subscriptionsResponse, onboardingResponse] = await Promise.all([
     getSiteSettings(supabase),
     supabase
       .from("study_site_events")
@@ -22,7 +22,10 @@ export default async function HostPage() {
       .gte("created_at", new Date(Date.now() - 1000 * 60 * 60 * 24 * 30).toISOString())
       .order("created_at", { ascending: false })
       .limit(4000),
-    supabase.from("study_user_subscriptions").select("plan")
+    supabase.from("study_user_subscriptions").select("plan"),
+    supabase
+      .from("study_user_onboarding")
+      .select("discovery_source, education_level, country, curriculum_stage, subjects, learning_style, goal, completed_at")
   ]);
 
   return (
@@ -32,6 +35,7 @@ export default async function HostPage() {
         initialSettings={settingsResponse}
         initialEvents={eventsResponse.data ?? []}
         initialSubscriptions={subscriptionsResponse.data ?? []}
+        initialOnboarding={onboardingResponse.data ?? []}
       />
     </>
   );

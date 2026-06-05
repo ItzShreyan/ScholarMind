@@ -21,6 +21,17 @@ type SubscriptionRow = {
   plan: "free" | "pro";
 };
 
+type OnboardingRow = {
+  discovery_source?: string[] | null;
+  education_level?: string | null;
+  country?: string | null;
+  curriculum_stage?: string | null;
+  subjects?: string[] | null;
+  learning_style?: string[] | null;
+  goal?: string | null;
+  completed_at?: string | null;
+};
+
 function formatShortDay(input: string) {
   return new Date(input).toLocaleDateString("en-GB", { month: "short", day: "numeric" });
 }
@@ -34,11 +45,13 @@ function toDisplayLabel(value: string) {
 export function HostPanel({
   initialEvents,
   initialSubscriptions,
-  initialSettings
+  initialSettings,
+  initialOnboarding = []
 }: {
   initialEvents: SiteEvent[];
   initialSubscriptions: SubscriptionRow[];
   initialSettings: SiteSettings;
+  initialOnboarding?: OnboardingRow[];
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [status, setStatus] = useState<string>("");
@@ -103,6 +116,29 @@ export function HostPanel({
       .sort((left, right) => right.count - left.count)
       .slice(0, 5);
 
+    const topValues = (values: string[]) =>
+      Array.from(
+        values.reduce((accumulator, value) => {
+          const key = value || "Unknown";
+          accumulator.set(key, (accumulator.get(key) ?? 0) + 1);
+          return accumulator;
+        }, new Map<string, number>())
+      )
+        .map(([label, count]) => ({ label, count }))
+        .sort((left, right) => right.count - left.count)
+        .slice(0, 6);
+
+    const onboarding = {
+      completed: initialOnboarding.filter((row) => row.completed_at).length,
+      educationLevels: topValues(initialOnboarding.map((row) => row.education_level || "").filter(Boolean)),
+      countries: topValues(initialOnboarding.map((row) => row.country || "").filter(Boolean)),
+      stages: topValues(initialOnboarding.map((row) => row.curriculum_stage || "").filter(Boolean)),
+      subjects: topValues(initialOnboarding.flatMap((row) => row.subjects ?? [])),
+      learningStyles: topValues(initialOnboarding.flatMap((row) => row.learning_style ?? [])),
+      goals: topValues(initialOnboarding.map((row) => row.goal || "").filter(Boolean)),
+      discovery: topValues(initialOnboarding.flatMap((row) => row.discovery_source ?? []))
+    };
+
     return {
       activeVisitors,
       uniqueVisitors,
@@ -111,9 +147,10 @@ export function HostPanel({
       mostPopularFeature,
       featureUsage,
       visitsByDay,
-      topPages
+      topPages,
+      onboarding
     };
-  }, [initialEvents, initialSubscriptions]);
+  }, [initialEvents, initialOnboarding, initialSubscriptions]);
 
   const apiUsageWarnings = useMemo(() => {
     const warnings: string[] = [];
@@ -175,6 +212,45 @@ export function HostPanel({
             <p className="muted text-xs uppercase tracking-[0.24em]">Most popular</p>
             <p className="mt-1 text-lg font-semibold">{toDisplayLabel(analytics.mostPopularFeature)}</p>
           </div>
+        </div>
+      </section>
+
+      <section className="panel rounded-[30px] p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--accent-sky)]">Onboarding analytics</p>
+            <h2 className="mt-2 text-xl font-semibold">Who ScholarMind is serving</h2>
+          </div>
+          <div className="rounded-full bg-white/10 px-4 py-2 text-sm font-medium">
+            {analytics.onboarding.completed} completed
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Education", analytics.onboarding.educationLevels],
+            ["Country", analytics.onboarding.countries],
+            ["Stage", analytics.onboarding.stages],
+            ["Subjects", analytics.onboarding.subjects],
+            ["Learning style", analytics.onboarding.learningStyles],
+            ["Goals", analytics.onboarding.goals],
+            ["Discovery", analytics.onboarding.discovery]
+          ].map(([label, rows]) => (
+            <div key={label as string} className="rounded-[24px] bg-white/8 p-4">
+              <p className="text-sm font-semibold">{label as string}</p>
+              <div className="mt-3 space-y-2">
+                {(rows as Array<{ label: string; count: number }>).length ? (
+                  (rows as Array<{ label: string; count: number }>).map((row) => (
+                    <div key={`${label}-${row.label}`} className="flex items-center justify-between gap-3 text-xs">
+                      <span className="muted">{toDisplayLabel(row.label)}</span>
+                      <span className="rounded-full bg-white/10 px-2 py-1">{row.count}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted text-xs">No data yet.</p>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

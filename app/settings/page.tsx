@@ -4,6 +4,7 @@ import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { Container } from "@/components/ui/Container";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { getUserPreferences } from "@/lib/db/queries";
+import { getOnboardingForUser } from "@/lib/onboarding";
 
 export default async function SettingsPage() {
   const supabase = await createClient();
@@ -12,13 +13,16 @@ export default async function SettingsPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth");
 
-  const preferences = await getUserPreferences(user.id, supabase);
+  const [preferences, onboarding] = await Promise.all([
+    getUserPreferences(user.id, supabase),
+    getOnboardingForUser(user.id, supabase)
+  ]);
 
   return (
     <>
       <DashboardHeader email={user.email} />
       <Container className="py-6">
-        <SettingsPanel email={user.email} initialPreferences={preferences} />
+        <SettingsPanel email={user.email} initialPreferences={preferences} initialOnboarding={onboarding} />
       </Container>
     </>
   );

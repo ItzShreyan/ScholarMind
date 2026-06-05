@@ -46,10 +46,56 @@ create table if not exists public.study_user_preferences (
   playful_motion boolean not null default true,
   remember_last_studio boolean not null default true,
   last_studio_id uuid references public.study_sessions(id) on delete set null,
-  default_tool text not null default 'summary' check (default_tool in ('summary', 'flashcards', 'quiz', 'exam', 'insights', 'hard_mode', 'study_plan', 'concepts')),
+  default_tool text not null default 'summary' check (default_tool in ('summary', 'flashcards', 'quiz', 'notes', 'exam', 'insights', 'hard_mode', 'study_plan', 'concepts')),
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
+
+do $$
+declare
+  constraint_name text;
+begin
+  select con.conname into constraint_name
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'study_user_preferences'
+    and con.contype = 'c'
+    and pg_get_constraintdef(con.oid) like '%default_tool%';
+
+  if constraint_name is not null then
+    execute format('alter table public.study_user_preferences drop constraint %I', constraint_name);
+  end if;
+
+  alter table public.study_user_preferences
+  add constraint study_user_preferences_default_tool_check
+  check (default_tool in ('summary', 'flashcards', 'quiz', 'notes', 'exam', 'insights', 'hard_mode', 'study_plan', 'concepts'));
+end $$;
+
+create table if not exists public.study_user_onboarding (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  discovery_source text[] not null default '{}'::text[],
+  education_level text not null default '',
+  country text not null default '',
+  curriculum_stage text not null default '',
+  state_region text not null default '',
+  subjects text[] not null default '{}'::text[],
+  exam_boards jsonb not null default '{}'::jsonb,
+  subject_tiers jsonb not null default '{}'::jsonb,
+  university_subject text not null default '',
+  learning_style text[] not null default '{}'::text[],
+  goal text not null default '',
+  completed_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.study_user_onboarding
+add column if not exists exam_boards jsonb not null default '{}'::jsonb;
+
+alter table public.study_user_onboarding
+add column if not exists subject_tiers jsonb not null default '{}'::jsonb;
 
 create table if not exists public.study_revision_plans (
   id uuid primary key default uuid_generate_v4(),
@@ -102,6 +148,7 @@ alter table public.study_files enable row level security;
 alter table public.study_reminders enable row level security;
 alter table public.study_ai_usage enable row level security;
 alter table public.study_user_preferences enable row level security;
+alter table public.study_user_onboarding enable row level security;
 alter table public.study_revision_plans enable row level security;
 alter table public.study_user_subscriptions enable row level security;
 alter table public.study_site_events enable row level security;
@@ -112,6 +159,8 @@ drop policy if exists "files owner read/write" on public.study_files;
 drop policy if exists "reminders owner read/write" on public.study_reminders;
 drop policy if exists "ai usage owner read/write" on public.study_ai_usage;
 drop policy if exists "preferences owner read/write" on public.study_user_preferences;
+drop policy if exists "onboarding owner read/write" on public.study_user_onboarding;
+drop policy if exists "onboarding host read" on public.study_user_onboarding;
 drop policy if exists "revision plans owner read/write" on public.study_revision_plans;
 drop policy if exists "subscriptions host read/write" on public.study_user_subscriptions;
 drop policy if exists "site events public insert" on public.study_site_events;
@@ -148,6 +197,17 @@ on public.study_user_preferences for all
 to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
+
+create policy "onboarding owner read/write"
+on public.study_user_onboarding for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "onboarding host read"
+on public.study_user_onboarding for select
+to authenticated
+using (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com');
 
 create policy "revision plans owner read/write"
 on public.study_revision_plans for all
@@ -187,6 +247,9 @@ on public.study_ai_usage (user_id, scope, created_at desc);
 
 create index if not exists study_revision_plans_user_created_at_idx
 on public.study_revision_plans (user_id, created_at desc);
+
+create index if not exists study_user_onboarding_completed_at_idx
+on public.study_user_onboarding (completed_at desc);
 
 create index if not exists study_site_events_created_at_idx
 on public.study_site_events (created_at desc);

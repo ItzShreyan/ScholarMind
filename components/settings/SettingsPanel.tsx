@@ -13,11 +13,14 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { defaultUserPreferences, type PreferenceTool, type UserPreferences } from "@/lib/preferences/defaults";
 import { normalizeErrorMessage } from "@/lib/ai/util";
+import type { OnboardingRecord } from "@/lib/onboarding-profile";
+import { onboardingOptions } from "@/lib/onboarding-options";
 
 const defaultToolOptions = [
   { value: "summary", label: "Summary" },
   { value: "quiz", label: "Quiz" },
   { value: "flashcards", label: "Flashcards" },
+  { value: "notes", label: "AI Notes" },
   { value: "study_plan", label: "Study plan" },
   { value: "exam", label: "Exam" },
   { value: "insights", label: "Insights" },
@@ -27,15 +30,19 @@ const defaultToolOptions = [
 
 export function SettingsPanel({
   email,
-  initialPreferences = defaultUserPreferences
+  initialPreferences = defaultUserPreferences,
+  initialOnboarding
 }: {
   email?: string;
   initialPreferences?: UserPreferences;
+  initialOnboarding?: OnboardingRecord | null;
 }) {
   const [theme, setTheme] = useState<"dark" | "light">(initialPreferences.theme);
   const [playfulMotion, setPlayfulMotion] = useState(initialPreferences.playfulMotion);
   const [rememberLastStudio, setRememberLastStudio] = useState(initialPreferences.rememberLastStudio);
   const [defaultTool, setDefaultTool] = useState<PreferenceTool>(initialPreferences.defaultTool);
+  const [examBoards, setExamBoards] = useState<Record<string, string>>(initialOnboarding?.exam_boards ?? {});
+  const [subjectTiers, setSubjectTiers] = useState<Record<string, string>>(initialOnboarding?.subject_tiers ?? {});
   const [mounted, setMounted] = useState(false);
   const [saveState, setSaveState] = useState("Synced to your account.");
 
@@ -49,6 +56,11 @@ export function SettingsPanel({
     setRememberLastStudio(initialPreferences.rememberLastStudio);
     setDefaultTool(initialPreferences.defaultTool);
   }, [initialPreferences]);
+
+  useEffect(() => {
+    setExamBoards(initialOnboarding?.exam_boards ?? {});
+    setSubjectTiers(initialOnboarding?.subject_tiers ?? {});
+  }, [initialOnboarding]);
 
   async function patchPreferences(patch: Partial<UserPreferences>) {
     setSaveState("Saving to your account...");
@@ -98,6 +110,40 @@ export function SettingsPanel({
     setDefaultTool(value);
     localStorage.setItem("scholarmind_default_tool", value);
     void patchPreferences({ defaultTool: value });
+  };
+
+  const patchOnboarding = async (nextExamBoards = examBoards, nextSubjectTiers = subjectTiers) => {
+    if (!initialOnboarding) return;
+    setSaveState("Saving study profile...");
+
+    try {
+      const response = await fetch("/api/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          discoverySource: initialOnboarding.discovery_source ?? [],
+          educationLevel: initialOnboarding.education_level || "Other",
+          country: initialOnboarding.country || "Other",
+          curriculumStage: initialOnboarding.curriculum_stage || "Other",
+          stateRegion: initialOnboarding.state_region || "",
+          subjects: initialOnboarding.subjects ?? [],
+          examBoards: nextExamBoards,
+          subjectTiers: nextSubjectTiers,
+          universitySubject: initialOnboarding.university_subject || "",
+          learningStyle: initialOnboarding.learning_style?.length ? initialOnboarding.learning_style : ["Step-by-step"],
+          goal: initialOnboarding.goal || "Understand lessons faster"
+        })
+      });
+
+      if (!response.ok) {
+        const json = await response.json().catch(() => ({}));
+        throw new Error(normalizeErrorMessage(json.error, "Unable to save study profile."));
+      }
+
+      setSaveState("Synced to your account.");
+    } catch (error) {
+      setSaveState(normalizeErrorMessage(error, "Unable to save study profile."));
+    }
   };
 
   useEffect(() => {
@@ -159,6 +205,88 @@ export function SettingsPanel({
             </div>
           </CardContent>
         </Card>
+
+        {initialOnboarding ? (
+          <Card className="md:col-span-2">
+            <CardHeader className="space-y-2">
+              <Stars className="h-5 w-5 text-[var(--accent-sky)]" />
+              <p className="text-sm font-semibold">Curriculum profile</p>
+            </CardHeader>
+            <CardContent className="space-y-4 text-sm">
+              <p className="muted">
+                Your tutor uses these choices to tailor AI Notes, examples, quizzes, and exam-style practice.
+              </p>
+              <div className="rounded-[22px] bg-white/12 px-4 py-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-coral)]">
+                  {initialOnboarding.country || "Country"} • {initialOnboarding.curriculum_stage || "Stage"}
+                </p>
+                <p className="muted mt-2 text-xs">{(initialOnboarding.subjects ?? []).join(", ") || "No subjects saved yet."}</p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                {(initialOnboarding.subjects ?? []).map((subject) => {
+                  const examBoardOptions =
+                    onboardingOptions.examBoards[initialOnboarding.country]?.[initialOnboarding.curriculum_stage] ??
+                    onboardingOptions.examBoards[initialOnboarding.country]?.Other ??
+                    [];
+                  const showTier =
+                    initialOnboarding.country === "United Kingdom" &&
+                    initialOnboarding.curriculum_stage === "GCSE" &&
+                    onboardingOptions.tieredSubjects.includes(subject);
+
+                  return (
+                    <div key={subject} className="rounded-[22px] bg-white/10 p-4">
+                      <p className="font-semibold">{subject}</p>
+                      {examBoardOptions.length ? (
+                        <label className="mt-3 block text-xs font-semibold">
+                          Exam board
+                          <select
+                            value={examBoards[subject] || ""}
+                            onChange={(event) => {
+                              const next = { ...examBoards, [subject]: event.target.value };
+                              setExamBoards(next);
+                              void patchOnboarding(next, subjectTiers);
+                            }}
+                            className="mt-2 w-full rounded-[16px] border border-white/12 bg-white/10 px-3 py-2 text-sm outline-none"
+                          >
+                            <option value="">Not sure yet</option>
+                            {examBoardOptions.map((board) => (
+                              <option key={board}>{board}</option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      {showTier ? (
+                        <div className="mt-3">
+                          <p className="text-xs font-semibold">Tier</p>
+                          <div className="mt-2 flex gap-2">
+                            {["Foundation", "Higher"].map((tier) => (
+                              <button
+                                key={`${subject}-${tier}`}
+                                type="button"
+                                onClick={() => {
+                                  const next = { ...subjectTiers, [subject]: tier };
+                                  setSubjectTiers(next);
+                                  void patchOnboarding(examBoards, next);
+                                }}
+                                className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                                  subjectTiers[subject] === tier
+                                    ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.2),rgba(57,208,255,0.18))]"
+                                    : "bg-white/12"
+                                }`}
+                              >
+                                {tier}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader className="space-y-2">

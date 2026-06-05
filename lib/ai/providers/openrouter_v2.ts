@@ -28,13 +28,13 @@ export const openrouterProviderV2: AIProvider = {
             Authorization: `Bearer ${apiKey}`
           },
           body: JSON.stringify({
-            model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-8b-instruct:free",
+            model: process.env.OPENROUTER_MODEL || "nvidia/llama-3.1-nemotron-ultra-253b-v1:free",
             messages,
-            temperature: 0.4,
-            max_tokens: 1200
+            temperature: input.action === "notes" ? 0.35 : 0.4,
+            max_tokens: input.action === "notes" ? 6500 : input.action === "exam" ? 5200 : 1400
           })
         },
-        25000
+        input.action === "notes" || input.action === "exam" ? 45000 : 25000
       );
 
       if (!res.ok) {

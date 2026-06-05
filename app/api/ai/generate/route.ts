@@ -19,6 +19,7 @@ const schema = z.object({
     "flashcards",
     "quiz",
     "chat",
+    "notes",
     "exam",
     "concepts",
     "hard_mode",

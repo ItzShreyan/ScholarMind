@@ -30,10 +30,12 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
+import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
 import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
 import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
+import { onboardingSummary, type OnboardingRecord } from "@/lib/onboarding-profile";
 import { parseFlashcards } from "@/lib/ai/parse";
 import type { SiteSettings } from "@/lib/site-settings";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
@@ -57,6 +59,7 @@ type AIAction =
   | "summary"
   | "flashcards"
   | "quiz"
+  | "notes"
   | "exam"
   | "insights"
   | "hard_mode"
@@ -186,6 +189,7 @@ const sourceEngineOptions: Array<{
 
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
+  { key: "notes", label: "AI Notes", copy: "Build long textbook-style notes with formulas, examples, questions, and science labs." },
   { key: "flashcards", label: "Flashcards", copy: "Turn the notes into quick active-recall prompts." },
   { key: "quiz", label: "Quiz", copy: "Generate multiple-choice questions from the uploaded sources." },
   { key: "exam", label: "Exam Generator", copy: "Build a full GCSE, A-Level, or custom mock paper from the source stack." },
@@ -197,6 +201,7 @@ const actionButtons: { key: AIAction; label: string; copy: string }[] = [
 
 const toolTones: Record<AIAction, string> = {
   summary: "border-[rgba(57,208,255,0.22)] bg-[rgba(57,208,255,0.1)]",
+  notes: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.1)]",
   flashcards: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.1)]",
   quiz: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.1)]",
   exam: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.08)]",
@@ -209,7 +214,7 @@ const toolTones: Record<AIAction, string> = {
 function createToolDraft(action: AIAction): ToolDraft {
   return {
     action,
-    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 14 : 5,
+    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 14 : action === "notes" ? 8 : 5,
     difficulty: action === "hard_mode" || action === "exam" ? "exam" : "foundation",
     focus: ""
   };
@@ -326,6 +331,7 @@ function detectChatToolRequest(text: string): AIAction | null {
   if (/\bstudy plan\b|\brevision plan\b|\bschedule\b/.test(normalized)) return "study_plan";
   if (/\bconcept map\b|\bmind map\b|\bmap\b/.test(normalized)) return "concepts";
   if (/\bexam\b|\bmock paper\b|\btest paper\b/.test(normalized)) return "exam";
+  if (/\b(ai notes|long notes|textbook notes|study notes|detailed notes)\b/.test(normalized)) return "notes";
   if (/\binsights?\b|\breport\b/.test(normalized)) return "insights";
   if (/\btrap\b|\bhard mode\b/.test(normalized)) return "hard_mode";
   if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
@@ -555,6 +561,8 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
       return `${preface} Generate ${count} flashcards. Each front should be a real term, question, formula, or recall cue from the sources, not a generic word. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
     case "exam":
       return `${preface} Generate a long full ${focus} mock exam in markdown with around ${Math.max(30, count + 16)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the length of a real school exam paper, not a short worksheet. Keep it realistic for GCSE, A-Level, or the level named in the focus. If the material is mathematical, include method-based questions, multi-step problems, diagrams or tables when helpful, and require working.`;
+    case "notes":
+      return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, and much more detailed than a summary. Include sections with clear paragraphs, callouts, formulaBlocks where relevant, workedExamples, practiceQuestions with hints and answers, diagrams when useful, and sourceNotes. If the material is science (biology, chemistry, physics, combined science, cells, particles, waves, circuits, forces, energy, rates, osmosis, diffusion), include one safe simulationSpec with type particles, waves, circuits, forces, energy, reaction_rate, or diffusion. Do not include simulationSpec for non-science.`;
     case "summary":
       return `${preface} Return a full revision summary in markdown. Use these sections in order: ## What this topic is about, ## Key points to remember, ## Step-by-step explanation, ## What to memorise, ## Quick self-check. Keep it concise but complete, use short paragraphs or bullets where helpful, and use a table only when the source naturally contains comparisons, formulas, or dates.`;
     case "insights":
@@ -597,6 +605,7 @@ function createEmptyMetrics(): StudyMetrics {
     flashcardsFlipped: 0,
     toolRuns: {
       summary: 0,
+      notes: 0,
       flashcards: 0,
       quiz: 0,
       exam: 0,
@@ -728,12 +737,14 @@ export function StudyWorkspace({
   sessions,
   initialSessionId,
   initialFiles,
-  siteSettings
+  siteSettings,
+  onboarding
 }: {
   sessions: Session[];
   initialSessionId: string | null;
   initialFiles: FileItem[];
   siteSettings?: SiteSettings;
+  onboarding?: OnboardingRecord | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -1490,12 +1501,17 @@ export function StudyWorkspace({
   }, [draggingDivider]);
 
   const buildContextForPrompt = useCallback(
-    (hint: string, action: AIAction) =>
-      buildStudyContext(sourceEnabledFiles, hint, {
-        maxCharacters: action === "exam" ? 14000 : action === "quiz" || action === "flashcards" ? 10000 : 8000,
-        maxChunks: action === "exam" ? 18 : action === "quiz" || action === "flashcards" ? 12 : 8
-      }),
-    [sourceEnabledFiles]
+    (hint: string, action: AIAction) => {
+      const sourceContext = buildStudyContext(sourceEnabledFiles, hint, {
+        maxCharacters:
+          action === "notes" ? 22000 : action === "exam" ? 16000 : action === "quiz" || action === "flashcards" ? 10000 : 8000,
+        maxChunks: action === "notes" ? 24 : action === "exam" ? 18 : action === "quiz" || action === "flashcards" ? 12 : 8
+      });
+      const profile = onboardingSummary(onboarding);
+
+      return [profile ? `Student profile:\n${profile}` : "", sourceContext].filter(Boolean).join("\n\n");
+    },
+    [onboarding, sourceEnabledFiles]
   );
 
   const saveToolResult = useCallback(
@@ -2265,6 +2281,7 @@ export function StudyWorkspace({
       currentMetrics.flashcardsFlipped > 0 ||
       Object.values(currentMetrics.toolRuns).some((count) => count > 0);
     const studyProfile = hasStudyHistory ? buildPerformanceSummary(currentMetrics) : "";
+    const studentProfile = onboardingSummary(onboarding);
     const chatContext = buildStudyContext(sourceEnabledFiles, question, {
       maxCharacters: 9000,
       maxChunks: 10
@@ -2272,6 +2289,7 @@ export function StudyWorkspace({
     const enrichedPrompt = historySnapshot.length
       ? [
           currentSession?.title ? `Current studio: ${currentSession.title}` : "",
+          studentProfile ? `Student profile:\n${studentProfile}` : "",
           studyProfile ? `How this student has been working so far:\n${studyProfile}` : "",
           "Conversation so far:",
           ...historySnapshot.map(
@@ -2286,6 +2304,7 @@ export function StudyWorkspace({
           .join("\n")
       : [
           currentSession?.title ? `Current studio: ${currentSession.title}` : "",
+          studentProfile ? `Student profile:\n${studentProfile}` : "",
           studyProfile ? `How this student has been working so far:\n${studyProfile}` : "",
           `Latest user question: ${question}`,
           smallTalk
@@ -2374,7 +2393,7 @@ export function StudyWorkspace({
       setChatLoading(false);
     }
     return true;
-  }, [activeSessionId, chatLoading, currentMetrics, currentSession?.title, loading, messages, runAI, sourceEnabledCount, sourceEnabledFiles]);
+  }, [activeSessionId, chatLoading, currentMetrics, currentSession?.title, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -2977,6 +2996,10 @@ export function StudyWorkspace({
           <RichStudyText content={output} />
         </motion.article>
       );
+    }
+
+    if (activeAction === "notes" && output) {
+      return <AINotesConsole content={output} />;
     }
 
     if (output && looksRichOutput(output)) {

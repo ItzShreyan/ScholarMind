@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { unstable_cache } from "next/cache";
 
 type AppSupabaseClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -44,3 +46,23 @@ export async function getSiteSettings(existingClient?: AppSupabaseClient): Promi
     return defaultSiteSettings;
   }
 }
+
+export const getCachedSiteSettings = unstable_cache(
+  async () => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (!url || !anonKey) return defaultSiteSettings;
+
+    try {
+      const supabase = createSupabaseClient(url, anonKey, {
+        auth: { persistSession: false, autoRefreshToken: false }
+      });
+      const { data } = await supabase.from("study_site_settings").select("*").eq("id", true).maybeSingle();
+      return mapSiteSettings(data);
+    } catch {
+      return defaultSiteSettings;
+    }
+  },
+  ["scholarmind-site-settings"],
+  { revalidate: 60 }
+);

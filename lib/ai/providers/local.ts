@@ -858,6 +858,87 @@ function insightsResponse(input: AIRequest) {
   ].join("\n");
 }
 
+function notesResponse(input: AIRequest) {
+  const evidence = pickEvidence(input, 7);
+  const keywords = keywordsFrom(input, 8);
+  const isScience = /\b(physics|chemistry|biology|science|particle|wave|circuit|force|energy|reaction|diffusion|osmosis|cell)\b/i.test(
+    `${input.prompt} ${input.context}`
+  );
+  const title = titleCase(keywords.slice(0, 4).join(" ") || "Source Based Revision Notes");
+
+  return JSON.stringify(
+    {
+      title,
+      subject: isScience ? "Science" : "Study topic",
+      level: "Personalised revision",
+      estimatedTime: "20-30 minutes",
+      sections: evidence.slice(0, 5).map((item, index) => ({
+        heading: titleCase(keywords[index] || `Core idea ${index + 1}`),
+        summary: item.sentence,
+        content: [
+          `${item.sentence} This is one of the strongest source-grounded ideas to understand before moving into practice.`,
+          `A useful revision move is to restate this point in your own words, then connect it to one example from ${item.source}.`
+        ],
+        keyTerms: [
+          {
+            term: titleCase(keywords[index] || `Idea ${index + 1}`),
+            definition: item.sentence
+          }
+        ]
+      })),
+      callouts: [
+        {
+          type: "exam",
+          title: "How to revise this",
+          body: "Read each section, cover it, say the idea aloud, then answer the practice questions without looking back."
+        }
+      ],
+      formulaBlocks: [],
+      workedExamples: [
+        {
+          title: "Turn source evidence into an answer",
+          steps: [
+            "Identify the key idea in the source.",
+            "Explain what it means in simple language.",
+            "Add a specific detail from the uploaded material.",
+            "Finish with why it matters for the question."
+          ],
+          answer: "A strong answer is precise, source-grounded, and explained in steps."
+        }
+      ],
+      practiceQuestions: evidence.slice(0, 4).map((item, index) => ({
+        question: `Explain this idea from ${item.source}: ${item.sentence}`,
+        marks: `${index + 2} marks`,
+        hint: "Use one definition, one detail, and one explanation.",
+        answer: item.sentence
+      })),
+      diagrams: keywords.length
+        ? [
+            {
+              title: "Idea map",
+              description: "A simple map of the strongest linked ideas.",
+              mermaid: `graph TD\n  A[${titleCase(keywords[0] || "Topic")}] --> B[${titleCase(keywords[1] || "Key idea")}]\n  A --> C[${titleCase(keywords[2] || "Example")}]\n  B --> D[Practice questions]`
+            }
+          ]
+        : [],
+      simulationSpec: isScience
+        ? {
+            type: "particles",
+            title: "Particle model lab",
+            description: "Move the slider to see how energy changes particle motion.",
+            variableLabel: "Energy",
+            min: 0,
+            max: 100,
+            defaultValue: 45
+          }
+        : null,
+      sourceNotes: [...new Set(evidence.map((item) => item.source))].slice(0, 5)
+    },
+    null,
+    2
+  );
+}
+
 function localResponse(input: AIRequest) {
   switch (input.action) {
     case "summary":
@@ -868,6 +949,8 @@ function localResponse(input: AIRequest) {
       return quizResponse(input);
     case "chat":
       return chatResponse(input);
+    case "notes":
+      return notesResponse(input);
     case "exam":
       return examResponse(input);
     case "concepts":

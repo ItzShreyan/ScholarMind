@@ -4,6 +4,7 @@ import { getSessionFiles, getUserSessions } from "@/lib/db/queries";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { StudyWorkspace } from "@/components/dashboard/StudyWorkspace";
 import { getSiteSettings } from "@/lib/site-settings";
+import { getOnboardingForUser, hasCompletedOnboarding } from "@/lib/onboarding";
 
 export default async function StudioPage() {
   const supabase = await createClient();
@@ -11,6 +12,7 @@ export default async function StudioPage() {
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth");
+  if (!(await hasCompletedOnboarding(user.id, supabase))) redirect("/onboarding");
 
   let sessions = await getUserSessions(user.id, supabase);
   if (!sessions.length) {
@@ -23,9 +25,10 @@ export default async function StudioPage() {
   }
 
   const activeSessionId = sessions[0]?.id || null;
-  const [files, siteSettings] = await Promise.all([
+  const [files, siteSettings, onboarding] = await Promise.all([
     activeSessionId ? getSessionFiles(activeSessionId, user.id, supabase) : Promise.resolve([]),
-    getSiteSettings(supabase)
+    getSiteSettings(supabase),
+    getOnboardingForUser(user.id, supabase)
   ]);
 
   return (
@@ -35,6 +38,7 @@ export default async function StudioPage() {
         sessions={sessions.map((s) => ({ id: s.id, title: s.title }))}
         initialSessionId={activeSessionId}
         siteSettings={siteSettings}
+        onboarding={onboarding}
         initialFiles={files.map((f) => ({
           id: f.id,
           file_name: f.file_name,

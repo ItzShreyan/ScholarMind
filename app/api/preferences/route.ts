@@ -12,7 +12,9 @@ const schema = z.object({
     (value) => (typeof value === "string" && value.trim() ? value : value === null ? null : undefined),
     z.string().nullable().optional()
   ),
-  defaultTool: z.enum(["summary", "flashcards", "quiz", "exam", "insights", "hard_mode", "study_plan", "concepts"]).optional()
+  defaultTool: z
+    .enum(["summary", "flashcards", "quiz", "notes", "exam", "insights", "hard_mode", "study_plan", "concepts"])
+    .optional()
 });
 
 export async function GET() {

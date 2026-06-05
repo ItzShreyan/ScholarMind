@@ -86,8 +86,9 @@ function isBadResponse(text: string, input: AIRequest): boolean {
   const mode = input.mode;
 
   if (!normalized.trim()) return true;
-  if ((mode === "flashcards" || mode === "flashcards") && !normalized.includes("q:")) return true;
-  if ((mode === "quiz" || mode === "quiz") && !/\b1\./.test(normalized)) return true;
+  if (mode === "flashcards" && !normalized.includes('"front"') && !normalized.includes("q:") && !normalized.includes("flashcard")) return true;
+  if (mode === "quiz" && !normalized.includes('"question"') && !/\b1\./.test(normalized)) return true;
+  if (mode === "notes" && !normalized.includes('"sections"') && !normalized.includes("#")) return true;
   if (normalized === "[object object]" || normalized === "{}") return true;
   if (/(?:0{3,},){4,}0{3,}/.test(normalized)) return true;
   if (digits > letters * 2 && normalized.length > 80) return true;
@@ -126,7 +127,10 @@ export async function generateWithFallback(rawInput: AIRequest) {
   }
 
   // 🔁 FALLBACK CHAIN
-  const fallbackOrder = [
+  const fallbackOrder =
+    input.action === "notes"
+      ? [providers.openrouter_v2, providers.local]
+      : [
     providers.groq_v2,
     providers.groq,
     providers.gemini,

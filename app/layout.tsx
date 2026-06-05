@@ -3,7 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { TelemetryTracker } from "@/components/providers/TelemetryTracker";
 import { getSiteUrl } from "@/lib/site-url";
-import { getSiteSettings } from "@/lib/site-settings";
+import { getCachedSiteSettings } from "@/lib/site-settings";
 
 const siteUrl = getSiteUrl();
 
@@ -47,7 +47,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
-  const siteSettings = await getSiteSettings();
+  const siteSettings = await getCachedSiteSettings();
   const bootScript = `
     (function () {
       try {

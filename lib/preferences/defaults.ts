@@ -2,6 +2,7 @@ export type PreferenceTool =
   | "summary"
   | "flashcards"
   | "quiz"
+  | "notes"
   | "exam"
   | "insights"
   | "hard_mode"

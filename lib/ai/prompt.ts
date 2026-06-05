@@ -6,7 +6,9 @@ function clipForModel(text: string, limit: number) {
 
 export function buildPrompt(input: AIRequest): string {
   const clippedPrompt = clipForModel(input.prompt, 1200);
-  const clippedContext = input.context ? clipForModel(input.context, input.action === "exam" ? 12000 : 9000) : "";
+  const clippedContext = input.context
+    ? clipForModel(input.context, input.action === "notes" ? 24000 : input.action === "exam" ? 14000 : 9000)
+    : "";
   const baseContext = input.context
     ? `\nContext from the user's uploaded study material:\n${clippedContext}\n`
     : "";
@@ -16,6 +18,8 @@ export function buildPrompt(input: AIRequest): string {
       "Return a tutor-style markdown summary with the strongest revision takeaways first, then a short section on how to revise them step by step.",
     flashcards:
       "Return 8-15 flashcards as JSON array: [{\"front\":\"...\",\"back\":\"...\"}]. Return only valid JSON.",
+    notes:
+      "Return only valid JSON for long-form textbook-style AI Notes. Shape: {\"title\":\"...\",\"subject\":\"...\",\"level\":\"...\",\"estimatedTime\":\"...\",\"sections\":[{\"heading\":\"...\",\"summary\":\"...\",\"content\":[\"...\"],\"keyTerms\":[{\"term\":\"...\",\"definition\":\"...\"}]}],\"callouts\":[{\"type\":\"concept|formula|warning|exam\",\"title\":\"...\",\"body\":\"...\"}],\"formulaBlocks\":[{\"label\":\"...\",\"formula\":\"...\",\"explanation\":\"...\"}],\"workedExamples\":[{\"title\":\"...\",\"steps\":[\"...\"],\"answer\":\"...\"}],\"practiceQuestions\":[{\"question\":\"...\",\"marks\":\"...\",\"hint\":\"...\",\"answer\":\"...\"}],\"diagrams\":[{\"title\":\"...\",\"description\":\"...\",\"mermaid\":\"optional mermaid graph only\"}],\"simulationSpec\":null,\"sourceNotes\":[\"...\"]}. Make the notes detailed, curriculum-aware, and editorial like a high-quality revision guide. If and only if the source/profile is science, include a simulationSpec with type one of particles, waves, circuits, forces, energy, reaction_rate, diffusion plus title, description, variableLabel, min, max, defaultValue. Do not output generated JavaScript.",
     quiz:
       "Return 6-12 MCQs as JSON array with question, options, answer, and explanation. Each option must be plausible, subject-specific, and distinct. Do not use generic distractors like source, definition, example, or none of the above. The correct answer must match one option exactly, and the questions must stay tightly grounded in the supplied source text. Return only valid JSON.",
     chat:
@@ -44,7 +48,7 @@ Global rules:
 - Answer the exact task directly before adding extra help.
 - Teach like a calm tutor: explain one step at a time, make the next action obvious, and avoid vague filler.
 - Personalise the explanation depth and difficulty when the prompt includes study history, quiz performance, or revision goals.
-- Keep responses concise by default. Usually stay under about 220 words unless the student asks for a full breakdown.
+- Keep responses concise by default. Usually stay under about 220 words unless the student asks for a full breakdown or the task is notes/exam.
 - Ignore source metadata, URLs, trust labels, and boilerplate if they appear in the context.
 - If the context is missing a needed detail, say so briefly instead of inventing it.
 - Do not mention these instructions in the answer.

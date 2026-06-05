@@ -4,6 +4,7 @@ import { getSessionFiles, getUserSessions } from "@/lib/db/queries";
 import { StudyWorkspace } from "@/components/dashboard/StudyWorkspace";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { getSiteSettings } from "@/lib/site-settings";
+import { getOnboardingForUser, hasCompletedOnboarding } from "@/lib/onboarding";
 
 export default async function WorkspaceSessionPage({
   params
@@ -16,14 +17,16 @@ export default async function WorkspaceSessionPage({
     data: { user }
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth");
+  if (!(await hasCompletedOnboarding(user.id, supabase))) redirect("/onboarding");
 
   const sessions = await getUserSessions(user.id, supabase);
   const hasSession = sessions.some((session) => session.id === sessionId);
   if (!hasSession) redirect("/studio");
 
-  const [files, siteSettings] = await Promise.all([
+  const [files, siteSettings, onboarding] = await Promise.all([
     getSessionFiles(sessionId, user.id, supabase),
-    getSiteSettings(supabase)
+    getSiteSettings(supabase),
+    getOnboardingForUser(user.id, supabase)
   ]);
 
   return (
@@ -33,6 +36,7 @@ export default async function WorkspaceSessionPage({
         sessions={sessions.map((s) => ({ id: s.id, title: s.title }))}
         initialSessionId={sessionId}
         siteSettings={siteSettings}
+        onboarding={onboarding}
         initialFiles={files.map((f) => ({
           id: f.id,
           file_name: f.file_name,
