@@ -4,6 +4,7 @@ import { DragEvent as ReactDragEvent, KeyboardEvent, useCallback, useEffect, use
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Brain,
+  BookOpen,
   CalendarDays,
   ChevronLeft,
   ChevronDown,
@@ -556,7 +557,7 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
 
   switch (draft.action) {
     case "quiz":
-      return `${preface} Generate ${count} multiple-choice questions. Base each question on a real fact, concept, method, or formula from the uploaded material. Avoid generic options like "source", "definition", or "example". Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
+      return `${preface} Generate ${count} multiple-choice questions. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Base each question on a real fact, concept, method, or formula from the uploaded material. Avoid generic options like "source", "definition", or "example". Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
     case "flashcards":
       return `${preface} Generate ${count} flashcards. Each front should be a real term, question, formula, or recall cue from the sources, not a generic word. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
     case "exam":
@@ -771,6 +772,7 @@ export function StudyWorkspace({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
+  const [workspaceTab, setWorkspaceTab] = useState<"home" | "result" | "sources">("home");
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
   const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
@@ -1546,6 +1548,7 @@ export function StudyWorkspace({
     setToolModalView("result");
     setToolModalOpen(true);
     setTab("tools");
+    setWorkspaceTab("result");
   }, []);
 
   const toolResultCount =
@@ -2172,6 +2175,7 @@ export function StudyWorkspace({
     setLoading(true);
     setOutput("");
     setTab("tools");
+    setWorkspaceTab("result");
     setStatusNote("");
 
     const context = buildContextForPrompt(prompt, action);
@@ -3104,7 +3108,7 @@ export function StudyWorkspace({
               tab === item ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-white/15"
             }`}
           >
-            {item}
+            {item === "chat" ? "Workspace" : item === "tools" ? "Tutor + Tools" : "Sources"}
           </button>
         ))}
       </div>
@@ -3445,123 +3449,186 @@ export function StudyWorkspace({
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold">AI Tutor</p>
-                <p className="muted text-xs">Ask for step-by-step help, source-grounded explanations, and guided revision inside this studio.</p>
+                <p className="text-sm font-semibold">Studio Workspace</p>
+                <p className="muted text-xs">Chrome-style tabs for sources, AI Notes, quizzes, flashcards, exams, and saved outputs.</p>
               </div>
               <div className="glass rounded-full px-4 py-2 text-xs font-medium">
-                {sourceEnabledCount ? currentSession?.title || "Study chat" : "Upload required"}
+                Rebuilt Studio
               </div>
             </div>
 
-            <div
-              ref={chatViewportRef}
-              className="hide-scrollbar mt-4 max-h-[27rem] min-h-[21.5rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4"
-            >
-              {!sourceEnabledCount ? (
-                <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
-                  <p className="font-semibold">Upload sources or files to continue</p>
-                  <p className="muted mt-2">
-                    Tutor chat, quizzes, summaries, and the other AI tools unlock after this studio has at least one uploaded source.
-                  </p>
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="rounded-[24px] bg-white/16 p-4 text-sm">
-                  <p className="font-semibold">Start with a guided tutoring question</p>
-                  <p className="muted mt-2">
-                    Ask for a step-by-step explanation, a guided summary, a worked comparison, or a likely exam-style question from the uploaded notes.
-                  </p>
-                  <div className="mt-4 grid gap-2 text-xs md:grid-cols-3">
-                    {[
-                      "1. Ask what is confusing you.",
-                      "2. Read the step-by-step guide.",
-                      "3. Use the check-yourself prompt."
-                    ].map((step) => (
-                      <div key={step} className="rounded-[18px] bg-white/10 px-3 py-3">
-                        {step}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                messages.map((message, index) => (
-                  <motion.div
-                    key={`${message.role}-${index}`}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className={`max-w-[74%] rounded-[28px] px-5 py-4 ${
-                      message.role === "user"
-                        ? "ml-auto bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
-                        : "bg-white/16"
+            <div className="mt-4 overflow-hidden rounded-[26px] border border-white/10 bg-[rgba(5,10,22,0.18)]">
+              <div className="flex gap-1 overflow-x-auto border-b border-white/10 bg-white/6 px-3 pt-3">
+                {[
+                  { key: "home", label: "Home" },
+                  { key: "sources", label: `Sources (${sourceEnabledCount})` },
+                  { key: "result", label: output ? actionButtons.find((item) => item.key === activeAction)?.label || "Result" : "AI Output" }
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setWorkspaceTab(item.key as "home" | "sources" | "result")}
+                    className={`rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
+                      workspaceTab === item.key
+                        ? "bg-[rgba(255,255,255,0.16)] text-[var(--fg)]"
+                        : "text-[var(--muted)] hover:bg-white/8 hover:text-[var(--fg)]"
                     }`}
                   >
-                    {message.role === "user" ? (
-                      <p className="whitespace-pre-wrap text-[15px] leading-8 md:text-base">{message.content}</p>
-                    ) : !message.content.trim() ? (
-                      <div className="space-y-2 text-sm">
-                        <p className="font-semibold">Your tutor is shaping the reply...</p>
-                        <div className="flex gap-2">
-                          {[0, 1, 2].map((item) => (
-                            <motion.span
-                              key={item}
-                              className="h-2 w-2 rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
-                              animate={{ opacity: [0.2, 1, 0.2], y: [0, -3, 0] }}
-                              transition={{ duration: 0.9, delay: item * 0.12, repeat: Infinity }}
-                            />
-                          ))}
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="hide-scrollbar min-h-[38rem] max-h-[72vh] overflow-auto p-5">
+                {workspaceTab === "home" ? (
+                  <div className="space-y-5">
+                    <div className="rounded-[30px] bg-[radial-gradient(circle_at_18%_20%,rgba(255,143,107,0.24),transparent_32%),radial-gradient(circle_at_86%_20%,rgba(107,221,255,0.2),transparent_30%),rgba(255,255,255,0.08)] p-6">
+                      <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[var(--accent-coral)]">
+                        Personal AI tutor studio
+                      </p>
+                      <h2 className="mt-3 text-3xl font-semibold md:text-4xl">
+                        Turn sources into guided learning, not just outputs.
+                      </h2>
+                      <p className="muted mt-3 max-w-2xl text-sm leading-7">
+                        Upload sources, open AI Notes for long textbook-style learning, then practise with quizzes, flashcards, exams, and tutor chat that stays grounded in this studio.
+                      </p>
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        <Button onClick={() => openTool("notes")} disabled={toolsLocked}>
+                          <BookOpen className="h-4 w-4" />
+                          Generate AI Notes
+                        </Button>
+                        <Button onClick={() => openTool("quiz")} variant="secondary" disabled={toolsLocked}>
+                          Build Quiz
+                        </Button>
+                        <Button onClick={() => openSourceModal("Add sources to start the rebuilt Studio.", "upload")} variant="ghost">
+                          Add Sources
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {[
+                        ["1", "Source-grounded", `${sourceEnabledCount} active source(s) shape every answer.`],
+                        ["2", "AI Notes", "Long editorial notes, formulas, practice, diagrams, and science labs."],
+                        ["3", "Tutor loop", "Ask, generate tools, practise, review, and continue in the same studio."]
+                      ].map(([number, title, copy]) => (
+                        <div key={title} className="rounded-[24px] bg-white/10 p-4">
+                          <div className="grid h-9 w-9 place-items-center rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-sm font-bold text-slate-950">
+                            {number}
+                          </div>
+                          <p className="mt-3 font-semibold">{title}</p>
+                          <p className="muted mt-2 text-xs leading-5">{copy}</p>
                         </div>
+                      ))}
+                    </div>
+
+                    <div className="rounded-[26px] bg-white/8 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="font-semibold">Recent outputs</p>
+                        <button type="button" onClick={() => setWorkspaceTab("result")} className="muted text-xs hover:text-[var(--fg)]">
+                          Open result tab
+                        </button>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {currentToolHistory.length ? (
+                          currentToolHistory.slice(0, 4).map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                openSavedToolResult(item);
+                                setWorkspaceTab("result");
+                              }}
+                              className="rounded-[22px] bg-white/10 p-4 text-left transition hover:bg-white/16"
+                            >
+                              <p className="text-sm font-semibold">{item.title}</p>
+                              <p className="muted mt-2 line-clamp-2 text-xs">{item.preview}</p>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="rounded-[22px] bg-white/10 p-4 text-sm md:col-span-2">
+                            Generate AI Notes, a quiz, or flashcards and the output boxes will appear here.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {workspaceTab === "sources" ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">Source tabs</p>
+                        <p className="muted text-xs">Open a source preview, or exclude files from the AI when they should not count.</p>
+                      </div>
+                      <Button onClick={() => openSourceModal("Add more files or search verified sources.", "web")} size="sm">
+                        <Plus className="h-4 w-4" />
+                        Add source
+                      </Button>
+                    </div>
+                    {currentFiles.length ? (
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {currentFiles.map((file) => (
+                          <button
+                            key={`workspace-source-${file.id}`}
+                            type="button"
+                            onClick={() => openFilePreview(file)}
+                            className="rounded-[24px] bg-white/10 p-4 text-left transition hover:bg-white/16"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <p className="text-sm font-semibold">
+                                <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
+                                {file.file_name}
+                              </p>
+                              <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                                file.source_enabled === false ? "bg-white/10 text-white/60" : "bg-[rgba(121,247,199,0.14)] text-[var(--accent-mint)]"
+                              }`}>
+                                {file.source_enabled === false ? "Excluded" : "Enabled"}
+                              </span>
+                            </div>
+                            <p className="muted mt-3 line-clamp-4 text-xs">{file.extracted_text}</p>
+                          </button>
+                        ))}
                       </div>
                     ) : (
-                      <RichStudyText
-                        content={sanitizeDisplayText(
-                          message.content,
-                          "Something went wrong generating that reply. Please try again."
-                        )}
-                      />
+                      <div className="rounded-[24px] border border-dashed border-white/16 bg-white/8 p-8 text-center text-sm">
+                        Upload files or import web sources to fill this tab.
+                      </div>
                     )}
-                  </motion.div>
-                ))
-              )}
-              {chatLoading ? (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="max-w-[22rem] rounded-[28px] bg-white/16 px-5 py-4 text-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                    <p className="font-semibold">Your tutor is building a guided answer...</p>
                   </div>
-                  <div className="mt-4 space-y-2 text-xs">
-                    <p className="rounded-[16px] bg-white/8 px-3 py-2">1. Reading the strongest source evidence</p>
-                    <p className="rounded-[16px] bg-white/8 px-3 py-2">2. Turning it into a clear step-by-step guide</p>
-                    <p className="rounded-[16px] bg-white/8 px-3 py-2">3. Adding a quick check-yourself next step</p>
-                  </div>
-                  <div className="mt-3 flex gap-2">
-                    {[0, 1, 2].map((item) => (
-                      <motion.span
-                        key={item}
-                        className="h-2 w-2 rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
-                        animate={{ opacity: [0.2, 1, 0.2], y: [0, -3, 0] }}
-                        transition={{ duration: 0.9, delay: item * 0.12, repeat: Infinity }}
-                      />
-                    ))}
-                  </div>
-                </motion.div>
-              ) : null}
-            </div>
+                ) : null}
 
-            <div className="mt-4 flex gap-2">
-              <input
-                value={chat}
-                onChange={(event) => setChat(event.target.value)}
-                onKeyDown={onChatKeyDown}
-                placeholder={sourceEnabledCount ? "Ask your tutor about these notes..." : "Upload files to unlock AI tutor"}
-                disabled={!sourceEnabledCount}
-                className="w-full rounded-[22px] border border-white/20 bg-white/20 px-4 py-3 outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
-              />
-              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading || !sourceEnabledCount}>
-                {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
-              </Button>
+                {workspaceTab === "result" ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">
+                          {output ? actionButtons.find((item) => item.key === activeAction)?.label || "Generated result" : "AI Output"}
+                        </p>
+                        <p className="muted text-xs">Generated tools open here in the rebuilt workspace.</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm" disabled={!output}>
+                          Export JSON
+                        </Button>
+                        <Button onClick={exportCurrentResultAsPdf} variant="ghost" size="sm" disabled={!output}>
+                          Export PDF
+                        </Button>
+                      </div>
+                    </div>
+                    {loading ? (
+                      <div className="rounded-[26px] bg-white/10 p-6">
+                        <LoaderCircle className="h-5 w-5 animate-spin text-[var(--accent-sky)]" />
+                        <p className="mt-3 font-semibold">Generating inside the Studio workspace...</p>
+                        <p className="muted mt-2 text-sm">The result will appear in this tab and be saved under Study Tools.</p>
+                      </div>
+                    ) : (
+                      renderToolResults()
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </section>
@@ -3580,6 +3647,86 @@ export function StudyWorkspace({
         ) : null}
 
         <aside className={`min-w-0 ${tab !== "tools" ? "hidden lg:block" : "block"}`}>
+          <div className="space-y-4">
+          <div className="panel panel-border rounded-[30px] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold">AI Tutor</p>
+                <p className="muted text-xs">Step-by-step help grounded to enabled sources and your study profile.</p>
+              </div>
+              <div className="glass rounded-full px-4 py-2 text-xs font-medium">
+                {sourceEnabledCount ? "Ready" : "Upload required"}
+              </div>
+            </div>
+
+            <div
+              ref={chatViewportRef}
+              className="hide-scrollbar mt-4 max-h-[23rem] min-h-[18rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4"
+            >
+              {!sourceEnabledCount ? (
+                <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
+                  <p className="font-semibold">Upload sources or files to continue</p>
+                  <p className="muted mt-2">
+                    Tutor chat and tools unlock after this studio has at least one source-enabled file.
+                  </p>
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="rounded-[24px] bg-white/16 p-4 text-sm">
+                  <p className="font-semibold">Ask your tutor</p>
+                  <p className="muted mt-2">
+                    Try: “teach this step by step”, “make AI Notes”, or “quiz me on the hardest part”.
+                  </p>
+                </div>
+              ) : (
+                messages.map((message, index) => (
+                  <motion.div
+                    key={`${message.role}-${index}`}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`rounded-[24px] px-4 py-3 ${
+                      message.role === "user"
+                        ? "ml-auto max-w-[88%] bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
+                        : "max-w-[95%] bg-white/16"
+                    }`}
+                  >
+                    {message.role === "user" ? (
+                      <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+                    ) : !message.content.trim() ? (
+                      <div className="flex items-center gap-2 text-sm">
+                        <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
+                        <p className="font-semibold">Thinking through the sources...</p>
+                      </div>
+                    ) : (
+                      <RichStudyText content={sanitizeDisplayText(message.content, "Unable to generate that reply.")} />
+                    )}
+                  </motion.div>
+                ))
+              )}
+              {chatLoading ? (
+                <div className="rounded-[24px] bg-white/16 px-4 py-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
+                    <p className="font-semibold">Building a guided answer...</p>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 flex gap-2">
+              <input
+                value={chat}
+                onChange={(event) => setChat(event.target.value)}
+                onKeyDown={onChatKeyDown}
+                placeholder={sourceEnabledCount ? "Ask your tutor..." : "Upload files to unlock tutor"}
+                disabled={!sourceEnabledCount}
+                className="w-full rounded-[20px] border border-white/20 bg-white/20 px-4 py-3 text-sm outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
+              />
+              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading || !sourceEnabledCount}>
+                {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -3772,6 +3919,7 @@ export function StudyWorkspace({
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </aside>
       </div>
