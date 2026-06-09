@@ -46,18 +46,27 @@ type StructuredNotes = {
   workedExamples?: Array<{ title: string; steps: string[]; answer?: string }>;
   practiceQuestions?: PracticeQuestion[];
   diagrams?: Array<{ title: string; description: string; mermaid?: string }>;
+  scienceSimulation?: SimulationSpec | null;
   simulationSpec?: SimulationSpec | null;
   sourceNotes?: string[];
 };
 
 function parseNotes(raw: string): StructuredNotes | null {
   try {
-    return JSON.parse(raw) as StructuredNotes;
+    const parsed = JSON.parse(raw) as StructuredNotes;
+    return {
+      ...parsed,
+      simulationSpec: parsed.simulationSpec ?? parsed.scienceSimulation ?? null
+    };
   } catch {
     const match = raw.match(/```json\s*([\s\S]*?)```/i) || raw.match(/(\{[\s\S]*\})/);
     if (!match) return null;
     try {
-      return JSON.parse(match[1]) as StructuredNotes;
+      const parsed = JSON.parse(match[1]) as StructuredNotes;
+      return {
+        ...parsed,
+        simulationSpec: parsed.simulationSpec ?? parsed.scienceSimulation ?? null
+      };
     } catch {
       return null;
     }

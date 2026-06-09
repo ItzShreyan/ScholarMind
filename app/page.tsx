@@ -58,7 +58,7 @@ const studyModes = [
   {
     title: "What comes out",
     copy: "A revision workspace with grounded chat, online practice, visual outputs, and an exam-day plan.",
-    bullets: ["Summaries, quizzes, flashcards, and concept maps", "Interactive mock exams plus PDF and JSON export", "Revision schedules, study reports, and performance insights"]
+    bullets: ["Quick summaries, long AI Notes, quizzes, and flashcards", "Interactive mock exams plus PDF and JSON export", "A separate revision schedule workspace for exam prep"]
   }
 ];
 

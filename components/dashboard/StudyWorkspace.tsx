@@ -17,9 +17,15 @@ import {
   FileText,
   FolderOpen,
   Globe2,
+  Highlighter,
   LoaderCircle,
   Lock,
+  Maximize2,
+  MousePointer2,
+  Music,
   Pencil,
+  PenLine,
+  Play,
   Plus,
   Search,
   SendHorizonal,
@@ -165,6 +171,11 @@ const desktopRightPanelMax = 620;
 const desktopCenterPanelMin = 460;
 const desktopResizeHandleWidth = 14;
 const sourceClipboardStorageKey = "scholarmind_source_clipboard";
+const focusTracks = [
+  { title: "Soft Focus", artist: "ScholarMind", mood: "Lo-fi", color: "from-cyan-300 to-emerald-300" },
+  { title: "Deep Revision", artist: "ScholarMind", mood: "Ambient", color: "from-orange-300 to-yellow-200" },
+  { title: "Exam Sprint", artist: "ScholarMind", mood: "Low beat", color: "from-rose-300 to-sky-300" }
+];
 
 const sourceEngineOptions: Array<{
   key: SourceSearchEngine;
@@ -193,11 +204,7 @@ const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "notes", label: "AI Notes", copy: "Build long textbook-style notes with formulas, examples, questions, and science labs." },
   { key: "flashcards", label: "Flashcards", copy: "Turn the notes into quick active-recall prompts." },
   { key: "quiz", label: "Quiz", copy: "Generate multiple-choice questions from the uploaded sources." },
-  { key: "exam", label: "Exam Generator", copy: "Build a full GCSE, A-Level, or custom mock paper from the source stack." },
-  { key: "insights", label: "Insights", copy: "Spot weak areas and decide what to review next." },
-  { key: "hard_mode", label: "Exam Trap Radar", copy: "Surface likely mistakes, hidden traps, and the corrections that matter." },
-  { key: "study_plan", label: "Study Plan", copy: "Split the uploaded notes into a practical review sequence." },
-  { key: "concepts", label: "Concept Map", copy: "Pull out the ideas, links, tables, or diagrams that anchor the session." }
+  { key: "exam", label: "Exam Generator", copy: "Build a full GCSE, A-Level, or custom mock paper from the source stack." }
 ];
 
 const toolTones: Record<AIAction, string> = {
@@ -329,12 +336,8 @@ function detectChatToolRequest(text: string): AIAction | null {
   if (!/\b(make|build|create|generate|turn|give me)\b/.test(normalized)) return null;
   if (/\bflashcards?\b/.test(normalized)) return "flashcards";
   if (/\bquiz\b|\bmcq\b|\bmultiple[- ]choice\b/.test(normalized)) return "quiz";
-  if (/\bstudy plan\b|\brevision plan\b|\bschedule\b/.test(normalized)) return "study_plan";
-  if (/\bconcept map\b|\bmind map\b|\bmap\b/.test(normalized)) return "concepts";
   if (/\bexam\b|\bmock paper\b|\btest paper\b/.test(normalized)) return "exam";
   if (/\b(ai notes|long notes|textbook notes|study notes|detailed notes)\b/.test(normalized)) return "notes";
-  if (/\binsights?\b|\breport\b/.test(normalized)) return "insights";
-  if (/\btrap\b|\bhard mode\b/.test(normalized)) return "hard_mode";
   if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
   return null;
 }
@@ -557,13 +560,13 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
 
   switch (draft.action) {
     case "quiz":
-      return `${preface} Generate ${count} multiple-choice questions. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Base each question on a real fact, concept, method, or formula from the uploaded material. Avoid generic options like "source", "definition", or "example". Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
+      return `${preface} Generate ${count} high-quality multiple-choice questions like a real study platform. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Every question must test a specific fact, method, formula, misconception, source detail, or exam skill from the uploaded material. Avoid generic options like "source", "definition", "examples", or "types". Make distractors plausible, not silly. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief but useful. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
     case "flashcards":
-      return `${preface} Generate ${count} flashcards. Each front should be a real term, question, formula, or recall cue from the sources, not a generic word. Keep each front under 12 words and each back under 35 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
+      return `${preface} Generate ${count} strong active-recall flashcards. Each front must be a real term, question, formula, process, date, quote, rule, or recall cue from the sources, not a generic word. The back should be concise, accurate, and phrased like a student-friendly memory answer. Keep each front under 14 words and each back under 45 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
     case "exam":
-      return `${preface} Generate a long full ${focus} mock exam in markdown with around ${Math.max(30, count + 16)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the length of a real school exam paper, not a short worksheet. Keep it realistic for GCSE, A-Level, or the level named in the focus. If the material is mathematical, include method-based questions, multi-step problems, diagrams or tables when helpful, and require working.`;
+      return `${preface} Generate a long full ${focus} mock exam in markdown with around ${Math.max(32, count + 18)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the feel of a real GCSE, A-Level, school, or university mock paper rather than a short worksheet. Use source-specific wording, not generic filler. If the material is mathematical, include method-based questions, multi-step problems, formulas, diagrams or tables when helpful, and require working.`;
     case "notes":
-      return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, and much more detailed than a summary. Include sections with clear paragraphs, callouts, formulaBlocks where relevant, workedExamples, practiceQuestions with hints and answers, diagrams when useful, and sourceNotes. If the material is science (biology, chemistry, physics, combined science, cells, particles, waves, circuits, forces, energy, rates, osmosis, diffusion), include one safe simulationSpec with type particles, waves, circuits, forces, energy, reaction_rate, or diffusion. Do not include simulationSpec for non-science.`;
+      return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, curriculum-aware, and much more detailed than a summary. Teach the topic like a patient tutor: clear chapter sections, short paragraphs, definitions, formulas, worked examples, common mistakes, callouts, diagrams/tables where useful, and practice questions with hints and answers. Include enough depth that a student can revise from it without needing the original source open. Include formulaBlocks only when formulas genuinely matter. Include scienceSimulation only when the source is clearly science/STEM and an interactive simulation would actually help understanding, such as particles, waves, circuits, forces, energy transfer, rates of reaction, diffusion, osmosis, or cells. Do not include any simulation for non-science or where a simulation would feel forced. Return JSON with title, subject, level, estimatedTime, sections, callouts, formulaBlocks, workedExamples, practiceQuestions, diagrams, scienceSimulation or simulationSpec, and sourceNotes.`;
     case "summary":
       return `${preface} Return a full revision summary in markdown. Use these sections in order: ## What this topic is about, ## Key points to remember, ## Step-by-step explanation, ## What to memorise, ## Quick self-check. Keep it concise but complete, use short paragraphs or bullets where helpful, and use a table only when the source naturally contains comparisons, formulas, or dates.`;
     case "insights":
@@ -773,6 +776,14 @@ export function StudyWorkspace({
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
   const [workspaceTab, setWorkspaceTab] = useState<"home" | "result" | "sources">("home");
+  const [timerMinutes, setTimerMinutes] = useState(60);
+  const [breakEveryMinutes, setBreakEveryMinutes] = useState(20);
+  const [breakMinutes, setBreakMinutes] = useState(5);
+  const [timerRemaining, setTimerRemaining] = useState(0);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerPhase, setTimerPhase] = useState<"focus" | "break" | "done">("focus");
+  const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
+  const [musicPlaying, setMusicPlaying] = useState(false);
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
   const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
@@ -993,7 +1004,10 @@ export function StudyWorkspace({
   const sourceEnabledCount = sourceEnabledFiles.length;
   const hasCurrentFiles = activeSessionId ? activeSessionId in filesBySession : false;
   const currentSession = sessionList.find((session) => session.id === activeSessionId) ?? null;
-  const currentToolHistory = activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : [];
+  const currentToolHistory = useMemo(
+    () => (activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : []),
+    [activeSessionId, toolHistoryBySession]
+  );
   const currentMetrics = activeSessionId ? metricsBySession[activeSessionId] ?? createEmptyMetrics() : createEmptyMetrics();
   const currentFilesLabel = useMemo(() => {
     if (!sourceEnabledFiles.length) return "No source-enabled files yet";
@@ -1095,6 +1109,12 @@ export function StudyWorkspace({
         : undefined,
     [desktopLayoutEnabled, desktopPanelWidths.left, desktopPanelWidths.right]
   );
+  const timerDisplay = useMemo(() => {
+    const minutes = Math.floor(timerRemaining / 60);
+    const seconds = timerRemaining % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }, [timerRemaining]);
+  const selectedTrack = focusTracks[selectedTrackIndex] ?? focusTracks[0];
 
   const updateMetrics = useCallback(
     (updater: (current: StudyMetrics) => StudyMetrics) => {
@@ -1268,6 +1288,102 @@ export function StudyWorkspace({
     setStatusNote("PDF export opened in a print window.");
   }, [activeAction, currentSession?.title, examAnswers, output, parsedExamQuestions, quizResultRows, sourceEnabledCount]);
 
+  const openCanvasPayload = useCallback(
+    (payload: {
+      title: string;
+      kind: "text" | "markdown" | "pdf" | "image" | "notes";
+      content?: string;
+      url?: string | null;
+      sourceId?: string;
+    }) => {
+      try {
+        const canvasId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        sessionStorage.setItem(
+          `scholarmind_canvas_${canvasId}`,
+          JSON.stringify({
+            ...payload,
+            studio: currentSession?.title || "Studio",
+            savedAt: Date.now()
+          })
+        );
+        window.open(`/studio/canvas?canvas=${encodeURIComponent(canvasId)}`, "_blank", "noopener,noreferrer");
+      } catch {
+        setStatusNote("Canvas mode could not open. Try allowing popups for this site.");
+      }
+    },
+    [currentSession?.title]
+  );
+
+  const openCurrentResultInCanvas = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate or reopen an output before opening canvas mode.");
+      return;
+    }
+
+    openCanvasPayload({
+      title: actionButtons.find((item) => item.key === activeAction)?.label || "AI Output",
+      kind: activeAction === "notes" ? "notes" : "markdown",
+      content: output
+    });
+  }, [activeAction, openCanvasPayload, output]);
+
+  const openFileInCanvas = useCallback(
+    async (file: FileItem) => {
+      try {
+        const response = await fetch(`/api/files/preview?fileId=${file.id}`);
+        const json = await readJsonResponse(response);
+        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
+        openCanvasPayload({
+          title: file.file_name,
+          kind: kind === "table" ? "text" : kind,
+          content: json.text || file.extracted_text || "",
+          url: json.url || null,
+          sourceId: file.id
+        });
+      } catch {
+        openCanvasPayload({
+          title: file.file_name,
+          kind: "text",
+          content: file.extracted_text || "Preview text is not available for this file.",
+          sourceId: file.id
+        });
+      }
+    },
+    [openCanvasPayload]
+  );
+
+  const buildScreenContext = useCallback(() => {
+    const openResultLabel = output
+      ? `${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}: ${clipText(
+          cleanGeneratedText(output).replace(/\s+/g, " "),
+          900
+        )}`
+      : "No generated output open.";
+    const previewContext = preview.open
+      ? `Open source preview: ${preview.file?.file_name || "source"} (${preview.kind}). ${clipText(
+          preview.text.replace(/\s+/g, " "),
+          700
+        )}`
+      : "No source preview modal open.";
+
+    return [
+      `Workspace tab: ${workspaceTab}.`,
+      currentSession?.title ? `Current studio: ${currentSession.title}.` : "",
+      `Source-enabled files in view: ${currentFilesLabel}.`,
+      `Selected tool: ${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}.`,
+      openResultLabel,
+      previewContext,
+      currentToolHistory.length
+        ? `Recent generated outputs: ${currentToolHistory
+            .slice(0, 4)
+            .map((item) => `${item.label}: ${item.title}`)
+            .join(" | ")}.`
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }, [activeAction, currentFilesLabel, currentSession?.title, currentToolHistory, output, preview.file?.file_name, preview.kind, preview.open, preview.text, workspaceTab]);
+
   useEffect(() => {
     setRevealedQuiz({});
     setSelectedQuizOption({});
@@ -1396,6 +1512,75 @@ export function StudyWorkspace({
       behavior: messages.length > 1 ? "smooth" : "auto"
     });
   }, [chatLoading, messages]);
+
+  const playSoftPing = useCallback((kind: "break" | "focus" | "done" = "focus") => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const audio = new AudioContextClass();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = kind === "done" ? 740 : kind === "break" ? 520 : 620;
+      gain.gain.setValueAtTime(0.001, audio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.13, audio.currentTime + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + (kind === "done" ? 0.45 : 0.22));
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      oscillator.start();
+      oscillator.stop(audio.currentTime + (kind === "done" ? 0.5 : 0.25));
+      window.setTimeout(() => audio.close(), 650);
+    } catch {
+      // Browser audio can be blocked; the visual timer still works.
+    }
+  }, []);
+
+  const startStudyTimer = useCallback(
+    (minutes = timerMinutes) => {
+      const safeMinutes = Math.max(1, Math.min(240, minutes));
+      setTimerMinutes(safeMinutes);
+      setTimerRemaining(safeMinutes * 60);
+      setTimerPhase("focus");
+      setTimerRunning(true);
+      setStatusNote(`Study timer started for ${safeMinutes} minute(s).`);
+    },
+    [timerMinutes]
+  );
+
+  useEffect(() => {
+    if (!timerRunning || timerRemaining <= 0) return;
+
+    const intervalId = window.setInterval(() => {
+      setTimerRemaining((current) => {
+        if (current <= 1) {
+          setTimerRunning(false);
+          setTimerPhase("done");
+          playSoftPing("done");
+          setStatusNote("Study timer complete.");
+          return 0;
+        }
+
+        const next = current - 1;
+        const elapsed = timerMinutes * 60 - next;
+        const focusBlock = Math.max(1, breakEveryMinutes) * 60;
+        const breakBlock = Math.max(1, breakMinutes) * 60;
+        const cycle = focusBlock + breakBlock;
+        const cyclePosition = elapsed % cycle;
+        const nextPhase = cyclePosition >= focusBlock ? "break" : "focus";
+
+        setTimerPhase((currentPhase) => {
+          if (currentPhase !== nextPhase) {
+            playSoftPing(nextPhase === "break" ? "break" : "focus");
+          }
+          return nextPhase;
+        });
+
+        return next;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [breakEveryMinutes, breakMinutes, playSoftPing, timerMinutes, timerRemaining, timerRunning]);
 
   useEffect(() => {
     const syncDesktopLayout = () => {
@@ -2233,6 +2418,44 @@ export function StudyWorkspace({
     if (!question || loading || chatLoading) return false;
     const smallTalk = isTutorSmallTalk(question);
     const requestedTool = detectChatToolRequest(question);
+    const lowerQuestion = question.toLowerCase();
+    const timerCommand =
+      /\b(start|set|begin|run)\b.*\b(timer|pomodoro|focus session|study session)\b/.test(lowerQuestion) ||
+      /\b(timer|pomodoro)\b.*\b(start|set|begin|run)\b/.test(lowerQuestion);
+    const playMusicCommand = /\b(play|start|put on)\b.*\b(music|lofi|lo-fi|focus track|playlist)\b/.test(lowerQuestion);
+    const pauseMusicCommand = /\b(pause|stop)\b.*\b(music|song|track|playlist)\b/.test(lowerQuestion);
+
+    if (timerCommand) {
+      const minuteMatch = question.match(/(\d{1,3})\s*(?:min|mins|minute|minutes|m)\b/i);
+      const nextMinutes = minuteMatch ? Number(minuteMatch[1]) : timerMinutes;
+      startStudyTimer(nextMinutes);
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: question },
+        {
+          role: "ai",
+          content: `Timer started for ${Math.max(1, Math.min(240, nextMinutes))} minute(s). I’ll ping softly for breaks and when the full session is done.`
+        }
+      ]);
+      setTab("tools");
+      return true;
+    }
+
+    if (playMusicCommand || pauseMusicCommand) {
+      setMusicPlaying(playMusicCommand);
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: question },
+        {
+          role: "ai",
+          content: playMusicCommand
+            ? `Focus music is on: ${focusTracks[selectedTrackIndex].title}. You can switch tracks or connect Spotify/Apple Music in the Studio panel.`
+            : "Focus music is paused."
+        }
+      ]);
+      setTab("tools");
+      return true;
+    }
 
     if (!sourceEnabledCount && !smallTalk) {
       const message = "Upload sources or files to continue. AI answers stay locked to uploaded material in this workspace.";
@@ -2302,7 +2525,7 @@ export function StudyWorkspace({
           "",
           `Latest user question: ${question}`,
           "",
-          "Answer the latest user question directly and only add extra study help after the answer."
+          "Answer the latest user question directly and only add extra study help after the answer. If this is quiz/exam/practice-question help, guide with hints and method first without revealing the final answer unless the user explicitly asks for the final answer. If the user asks to be quizzed in chat, ask one mini question and wait."
         ]
           .filter(Boolean)
           .join("\n")
@@ -2313,7 +2536,7 @@ export function StudyWorkspace({
           `Latest user question: ${question}`,
           smallTalk
             ? "Reply warmly in 1-2 short sentences, then invite the student to share what they are revising."
-            : "Answer the question directly, use only the uploaded sources, and finish with one small next step."
+            : "Answer the question directly, use only the uploaded sources, and finish with one small next step. If this is quiz/exam/practice-question help, guide with hints and method first without revealing the final answer unless the user explicitly asks for the final answer. If the user asks to be quizzed in chat, ask one mini question and wait."
         ]
           .filter(Boolean)
           .join("\n\n");
@@ -2339,6 +2562,7 @@ export function StudyWorkspace({
             message: enrichedPrompt,
             history: providerHistory,
             context: chatContext,
+            screenContext: buildScreenContext(),
             mode: "chat",
             sessionId: activeSessionId ?? undefined
           }
@@ -2361,12 +2585,18 @@ export function StudyWorkspace({
 
       const decoder = new TextDecoder();
       let accumulated = "";
+      let streamBuffer = "";
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        accumulated += parseSSEChunk(chunk);
+        streamBuffer += decoder.decode(value, { stream: true });
+        const parts = streamBuffer.split(/\n\n/);
+        streamBuffer = parts.pop() || "";
+
+        for (const part of parts) {
+          accumulated += parseSSEChunk(part);
+        }
 
         const safeAccumulated = sanitizeDisplayText(accumulated, "");
         setMessages((current) => {
@@ -2377,6 +2607,10 @@ export function StudyWorkspace({
           }
           return next;
         });
+      }
+
+      if (streamBuffer) {
+        accumulated += parseSSEChunk(streamBuffer);
       }
 
       setStatusNote("");
@@ -2397,7 +2631,7 @@ export function StudyWorkspace({
       setChatLoading(false);
     }
     return true;
-  }, [activeSessionId, chatLoading, currentMetrics, currentSession?.title, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles]);
+  }, [activeSessionId, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, loading, messages, onboarding, runAI, selectedTrackIndex, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -3169,6 +3403,149 @@ export function StudyWorkspace({
               </div>
             </div>
 
+            <div className="mt-4 grid gap-3">
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-[24px] bg-white/10 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="inline-flex items-center gap-2 text-sm font-semibold">
+                      <Timer className="h-4 w-4 text-[var(--accent-sky)]" />
+                      Study timer
+                    </p>
+                    <p className="muted mt-1 text-xs">
+                      {timerPhase === "break" ? "Break time" : timerPhase === "done" ? "Complete" : "Focus block"}
+                    </p>
+                  </div>
+                  <div className="rounded-full bg-white/12 px-3 py-2 text-sm font-semibold tabular-nums">
+                    {timerRemaining ? timerDisplay : `${timerMinutes}m`}
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Total
+                    <input
+                      value={timerMinutes}
+                      onChange={(event) => setTimerMinutes(Math.max(1, Math.min(240, Number(event.target.value) || 1)))}
+                      className="mt-1 w-full rounded-[14px] border border-white/10 bg-white/10 px-2 py-2 text-xs text-[var(--fg)] outline-none"
+                      type="number"
+                      min={1}
+                      max={240}
+                    />
+                  </label>
+                  <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Break at
+                    <input
+                      value={breakEveryMinutes}
+                      onChange={(event) => setBreakEveryMinutes(Math.max(1, Math.min(120, Number(event.target.value) || 1)))}
+                      className="mt-1 w-full rounded-[14px] border border-white/10 bg-white/10 px-2 py-2 text-xs text-[var(--fg)] outline-none"
+                      type="number"
+                      min={1}
+                      max={120}
+                    />
+                  </label>
+                  <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                    Break
+                    <input
+                      value={breakMinutes}
+                      onChange={(event) => setBreakMinutes(Math.max(1, Math.min(60, Number(event.target.value) || 1)))}
+                      className="mt-1 w-full rounded-[14px] border border-white/10 bg-white/10 px-2 py-2 text-xs text-[var(--fg)] outline-none"
+                      type="number"
+                      min={1}
+                      max={60}
+                    />
+                  </label>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button onClick={() => startStudyTimer(timerMinutes)} size="sm" className="flex-1 justify-center">
+                    <Play className="h-4 w-4" />
+                    Start
+                  </Button>
+                  <Button onClick={() => setTimerRunning((current) => !current)} variant="secondary" size="sm" className="flex-1 justify-center">
+                    {timerRunning ? "Pause" : "Resume"}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setTimerRunning(false);
+                      setTimerRemaining(0);
+                      setTimerPhase("focus");
+                    }}
+                    variant="ghost"
+                    size="sm"
+                    className="px-3"
+                  >
+                    Reset
+                  </Button>
+                </div>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.05 }}
+                className="rounded-[24px] bg-white/10 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="inline-flex items-center gap-2 text-sm font-semibold">
+                      <Music className="h-4 w-4 text-[var(--accent-gold)]" />
+                      Focus music
+                    </p>
+                    <p className="muted mt-1 text-xs">Connect accounts or use a quiet focus queue.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setMusicPlaying((current) => !current)}
+                    className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                      musicPlaying ? "bg-[rgba(121,247,199,0.18)] text-[var(--accent-mint)]" : "bg-white/12 text-[var(--muted)]"
+                    }`}
+                  >
+                    {musicPlaying ? "Playing" : "Paused"}
+                  </button>
+                </div>
+                <div className={`mt-3 rounded-[20px] bg-gradient-to-r ${selectedTrack.color} p-[1px]`}>
+                  <div className="rounded-[19px] bg-[rgba(8,14,28,0.72)] px-3 py-3">
+                    <p className="text-sm font-semibold">{selectedTrack.title}</p>
+                    <p className="muted mt-1 text-xs">{selectedTrack.artist} • {selectedTrack.mood}</p>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  {focusTracks.map((track, index) => (
+                    <button
+                      key={track.title}
+                      type="button"
+                      onClick={() => setSelectedTrackIndex(index)}
+                      className={`rounded-[16px] px-2 py-2 text-[11px] font-medium transition ${
+                        selectedTrackIndex === index ? "bg-white/18 text-[var(--fg)]" : "bg-white/8 text-[var(--muted)] hover:bg-white/12"
+                      }`}
+                    >
+                      {track.mood}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <a
+                    href="https://open.spotify.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 rounded-[16px] bg-white/10 px-3 py-2 text-center text-xs font-medium transition hover:bg-white/16"
+                  >
+                    Spotify
+                  </a>
+                  <a
+                    href="https://music.apple.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 rounded-[16px] bg-white/10 px-3 py-2 text-center text-xs font-medium transition hover:bg-white/16"
+                  >
+                    Apple Music
+                  </a>
+                </div>
+              </motion.div>
+            </div>
+
             <div className="mt-4 grid gap-2">
               <Button onClick={() => createStudio()} variant="secondary" size="sm" className="w-full justify-center">
                 <Plus className="h-4 w-4" />
@@ -3504,6 +3881,18 @@ export function StudyWorkspace({
                           Add Sources
                         </Button>
                       </div>
+                      <div className="mt-5 flex flex-wrap gap-2 text-xs">
+                        {[
+                          { label: "Select text", icon: MousePointer2 },
+                          { label: "Annotate", icon: PenLine },
+                          { label: "Highlight", icon: Highlighter }
+                        ].map((item) => (
+                          <span key={item.label} className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[var(--muted)]">
+                            <item.icon className="h-3.5 w-3.5 text-[var(--accent-sky)]" />
+                            {item.label} in Canvas
+                          </span>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="grid gap-3 md:grid-cols-3">
@@ -3570,25 +3959,35 @@ export function StudyWorkspace({
                     {currentFiles.length ? (
                       <div className="grid gap-3 md:grid-cols-2">
                         {currentFiles.map((file) => (
-                          <button
+                          <div
                             key={`workspace-source-${file.id}`}
-                            type="button"
-                            onClick={() => openFilePreview(file)}
-                            className="rounded-[24px] bg-white/10 p-4 text-left transition hover:bg-white/16"
+                            className="rounded-[24px] bg-white/10 p-4 transition hover:bg-white/16"
                           >
-                            <div className="flex items-start justify-between gap-3">
-                              <p className="text-sm font-semibold">
+                            <button type="button" onClick={() => openFilePreview(file)} className="w-full text-left">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-sm font-semibold">
                                 <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
                                 {file.file_name}
-                              </p>
-                              <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
+                                </p>
+                                <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
                                 file.source_enabled === false ? "bg-white/10 text-white/60" : "bg-[rgba(121,247,199,0.14)] text-[var(--accent-mint)]"
                               }`}>
-                                {file.source_enabled === false ? "Excluded" : "Enabled"}
-                              </span>
+                                  {file.source_enabled === false ? "Excluded" : "Enabled"}
+                                </span>
+                              </div>
+                              <p className="muted mt-3 line-clamp-4 text-xs">{file.extracted_text}</p>
+                            </button>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button onClick={() => openFilePreview(file)} variant="ghost" size="sm">
+                                <Eye className="h-3.5 w-3.5" />
+                                Preview
+                              </Button>
+                              <Button onClick={() => openFileInCanvas(file)} variant="secondary" size="sm">
+                                <Maximize2 className="h-3.5 w-3.5" />
+                                Canvas
+                              </Button>
                             </div>
-                            <p className="muted mt-3 line-clamp-4 text-xs">{file.extracted_text}</p>
-                          </button>
+                          </div>
                         ))}
                       </div>
                     ) : (
@@ -3609,6 +4008,10 @@ export function StudyWorkspace({
                         <p className="muted text-xs">Generated tools open here in the rebuilt workspace.</p>
                       </div>
                       <div className="flex gap-2">
+                        <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm" disabled={!output}>
+                          <Maximize2 className="h-4 w-4" />
+                          Canvas
+                        </Button>
                         <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm" disabled={!output}>
                           Export JSON
                         </Button>
@@ -3717,11 +4120,10 @@ export function StudyWorkspace({
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
                 onKeyDown={onChatKeyDown}
-                placeholder={sourceEnabledCount ? "Ask your tutor..." : "Upload files to unlock tutor"}
-                disabled={!sourceEnabledCount}
+                placeholder={sourceEnabledCount ? "Ask your tutor..." : "Say hi, or upload files for source-grounded tutoring"}
                 className="w-full rounded-[20px] border border-white/20 bg-white/20 px-4 py-3 text-sm outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
               />
-              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading || !sourceEnabledCount}>
+              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading}>
                 {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
               </Button>
             </div>
@@ -3896,10 +4298,6 @@ export function StudyWorkspace({
                   </div>
                 )}
               </div>
-            </div>
-
-            <div className="hide-scrollbar mt-4 max-h-[28rem] space-y-3 overflow-auto pr-1">
-              {renderToolResults()}
             </div>
 
             <div className="playful-bob mt-4 rounded-[24px] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
@@ -4219,6 +4617,10 @@ export function StudyWorkspace({
                       <p className="muted mt-1 text-xs">The result below is tied to your current uploaded sources.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
+                      <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm">
+                        <Maximize2 className="h-4 w-4" />
+                        Canvas
+                      </Button>
                       <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm">
                         Export JSON
                       </Button>

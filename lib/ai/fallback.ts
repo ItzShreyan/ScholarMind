@@ -127,18 +127,20 @@ export async function generateWithFallback(rawInput: AIRequest) {
   }
 
   // 🔁 FALLBACK CHAIN
+  const openrouterConfigured = Boolean(process.env.OPENROUTER_API_KEY?.trim());
+  const openrouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat"]);
   const fallbackOrder =
-    input.action === "notes"
+    openrouterConfigured && openrouterFirstActions.has(String(input.action))
       ? [providers.openrouter_v2, providers.local]
       : [
-    providers.groq_v2,
-    providers.groq,
-    providers.gemini,
-    providers.openrouter_v2,
-    providers.together,
-    providers.huggingface,
-    providers.local
-  ];
+          providers.groq_v2,
+          providers.groq,
+          providers.gemini,
+          providers.openrouter_v2,
+          providers.together,
+          providers.huggingface,
+          providers.local
+        ];
 
   for (const provider of fallbackOrder) {
     if (!provider) continue;
