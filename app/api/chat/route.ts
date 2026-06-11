@@ -41,14 +41,35 @@ function buildSystemPrompt(context: string, screenContext: string) {
     .join("\n\n");
 }
 
+function makeSseResponse(text: string) {
+  const encoder = new TextEncoder();
+  const payload = JSON.stringify({
+    choices: [{ delta: { content: text } }]
+  });
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    }
+  });
+
+  return new Response(body, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-store, must-revalidate"
+    }
+  });
+}
+
 export async function POST(req: Request) {
   try {
     const { input } = await req.json();
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Missing OPENROUTER_API_KEY. Add it to .env.local, then restart npm run dev." },
+        { error: "Missing OPENROUTER_API_KEY. Add it to .env.local, then restart npm run dev. On Netlify, add the same key in Site settings > Environment variables." },
         { status: 400 }
       );
     }
@@ -83,24 +104,28 @@ export async function POST(req: Request) {
         messages,
         temperature: 0.35,
         max_tokens: 1200,
-        stream: true
+        reasoning: { exclude: true },
+        include_reasoning: false,
+        stream: false
       })
     });
 
     clearTimeout(timeoutId);
 
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
       const detail = normalizeErrorMessage(await response.text(), `OpenRouter failed with status ${response.status}.`);
       return NextResponse.json({ error: detail }, { status: response.status || 400 });
     }
 
-    return new Response(response.body, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Connection: "keep-alive"
-      }
-    });
+    const data = await response.json() as {
+      choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }>;
+    };
+    const text = normalizeAIText(data.choices?.[0]?.message?.content);
+    if (!text) {
+      return NextResponse.json({ error: "OpenRouter returned an empty chat message." }, { status: 400 });
+    }
+
+    return makeSseResponse(text);
   } catch (error) {
     return NextResponse.json(
       { error: normalizeErrorMessage(error, "Unable to contact the AI tutor.") },

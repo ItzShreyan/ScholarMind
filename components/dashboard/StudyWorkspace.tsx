@@ -23,6 +23,7 @@ import {
   Maximize2,
   MousePointer2,
   Music,
+  Pause,
   Pencil,
   PenLine,
   Play,
@@ -121,6 +122,19 @@ type ToolHistoryItem = {
   createdAt: number;
 };
 
+type WorkspaceDynamicTab = {
+  id: string;
+  label: string;
+  kind: "source" | "canvas-source" | "output" | "canvas-output";
+  closable: true;
+  action?: AIAction;
+  output?: string;
+  file?: FileItem;
+  previewKind?: "text" | "table" | "pdf" | "image";
+  text?: string;
+  url?: string | null;
+};
+
 type PreviewState = {
   open: boolean;
   loading: boolean;
@@ -163,11 +177,11 @@ type CopiedSourceClipboard = {
 };
 
 const desktopLeftPanelDefault = 360;
-const desktopRightPanelDefault = 440;
+const desktopRightPanelDefault = 520;
 const desktopLeftPanelMin = 300;
 const desktopLeftPanelMax = 520;
-const desktopRightPanelMin = 340;
-const desktopRightPanelMax = 620;
+const desktopRightPanelMin = 420;
+const desktopRightPanelMax = 760;
 const desktopCenterPanelMin = 460;
 const desktopResizeHandleWidth = 14;
 const sourceClipboardStorageKey = "scholarmind_source_clipboard";
@@ -175,6 +189,20 @@ const focusTracks = [
   { title: "Soft Focus", artist: "ScholarMind", mood: "Lo-fi", color: "from-cyan-300 to-emerald-300" },
   { title: "Deep Revision", artist: "ScholarMind", mood: "Ambient", color: "from-orange-300 to-yellow-200" },
   { title: "Exam Sprint", artist: "ScholarMind", mood: "Low beat", color: "from-rose-300 to-sky-300" }
+];
+
+const musicProviders = [
+  { key: "spotify", name: "Spotify", logo: "S", href: "https://developer.spotify.com/dashboard" },
+  { key: "apple", name: "Apple Music", logo: "A", href: "https://developer.apple.com/account/resources/authkeys/list" },
+  { key: "amazon", name: "Amazon Music", logo: "AM", href: "https://developer.amazon.com/" },
+  { key: "youtube", name: "YouTube Music", logo: "YT", href: "https://console.cloud.google.com/apis/library/youtube.googleapis.com" }
+];
+
+const musicLibrary = [
+  { title: "Rainy Revision", artist: "Focus queue", type: "Playlist", provider: "Spotify", mood: "Lo-fi" },
+  { title: "Deep Work Piano", artist: "Study instrumentals", type: "Album", provider: "Apple Music", mood: "Calm" },
+  { title: "Exam Sprint Beats", artist: "ScholarMind mix", type: "Playlist", provider: "YouTube Music", mood: "Low beat" },
+  { title: "Quiet Library", artist: "Ambient study", type: "Album", provider: "Amazon Music", mood: "Ambient" }
 ];
 
 const sourceEngineOptions: Array<{
@@ -775,7 +803,9 @@ export function StudyWorkspace({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
-  const [workspaceTab, setWorkspaceTab] = useState<"home" | "result" | "sources">("home");
+  const [workspaceTab, setWorkspaceTab] = useState("home");
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
+  const [showTimerPopover, setShowTimerPopover] = useState(false);
   const [timerMinutes, setTimerMinutes] = useState(60);
   const [breakEveryMinutes, setBreakEveryMinutes] = useState(20);
   const [breakMinutes, setBreakMinutes] = useState(5);
@@ -784,6 +814,8 @@ export function StudyWorkspace({
   const [timerPhase, setTimerPhase] = useState<"focus" | "break" | "done">("focus");
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
+  const [musicPanelOpen, setMusicPanelOpen] = useState(false);
+  const [musicSearch, setMusicSearch] = useState("");
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
   const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
@@ -1104,10 +1136,10 @@ export function StudyWorkspace({
     () =>
       desktopLayoutEnabled
         ? {
-            gridTemplateColumns: `${desktopPanelWidths.left}px ${desktopResizeHandleWidth}px minmax(0,1fr) ${desktopResizeHandleWidth}px ${desktopPanelWidths.right}px`
+            gridTemplateColumns: `minmax(0,1fr) ${desktopResizeHandleWidth}px ${desktopPanelWidths.right}px`
           }
         : undefined,
-    [desktopLayoutEnabled, desktopPanelWidths.left, desktopPanelWidths.right]
+    [desktopLayoutEnabled, desktopPanelWidths.right]
   );
   const timerDisplay = useMemo(() => {
     const minutes = Math.floor(timerRemaining / 60);
@@ -1115,6 +1147,19 @@ export function StudyWorkspace({
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }, [timerRemaining]);
   const selectedTrack = focusTracks[selectedTrackIndex] ?? focusTracks[0];
+  const activeWorkspaceDynamicTab = useMemo(
+    () => workspaceTabs.find((item) => item.id === workspaceTab) ?? null,
+    [workspaceTab, workspaceTabs]
+  );
+  const filteredMusicLibrary = useMemo(() => {
+    const query = musicSearch.trim().toLowerCase();
+    if (!query) return musicLibrary;
+    return musicLibrary.filter((item) =>
+      [item.title, item.artist, item.type, item.provider, item.mood].some((value) =>
+        value.toLowerCase().includes(query)
+      )
+    );
+  }, [musicSearch]);
 
   const updateMetrics = useCallback(
     (updater: (current: StudyMetrics) => StudyMetrics) => {
@@ -1288,31 +1333,24 @@ export function StudyWorkspace({
     setStatusNote("PDF export opened in a print window.");
   }, [activeAction, currentSession?.title, examAnswers, output, parsedExamQuestions, quizResultRows, sourceEnabledCount]);
 
-  const openCanvasPayload = useCallback(
-    (payload: {
-      title: string;
-      kind: "text" | "markdown" | "pdf" | "image" | "notes";
-      content?: string;
-      url?: string | null;
-      sourceId?: string;
-    }) => {
-      try {
-        const canvasId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        sessionStorage.setItem(
-          `scholarmind_canvas_${canvasId}`,
-          JSON.stringify({
-            ...payload,
-            studio: currentSession?.title || "Studio",
-            savedAt: Date.now()
-          })
-        );
-        window.open(`/studio/canvas?canvas=${encodeURIComponent(canvasId)}`, "_blank", "noopener,noreferrer");
-      } catch {
-        setStatusNote("Canvas mode could not open. Try allowing popups for this site.");
+  const upsertWorkspaceTab = useCallback((nextTab: WorkspaceDynamicTab) => {
+    setWorkspaceTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === nextTab.id);
+      if (existingIndex >= 0) {
+        const next = [...current];
+        next[existingIndex] = nextTab;
+        return next;
       }
-    },
-    [currentSession?.title]
-  );
+      return [...current, nextTab].slice(-8);
+    });
+    setWorkspaceTab(nextTab.id);
+    setTab("chat");
+  }, []);
+
+  const closeWorkspaceTab = useCallback((tabId: string) => {
+    setWorkspaceTabs((current) => current.filter((item) => item.id !== tabId));
+    setWorkspaceTab((current) => (current === tabId ? "home" : current));
+  }, []);
 
   const openCurrentResultInCanvas = useCallback(() => {
     if (!output) {
@@ -1320,12 +1358,33 @@ export function StudyWorkspace({
       return;
     }
 
-    openCanvasPayload({
-      title: actionButtons.find((item) => item.key === activeAction)?.label || "AI Output",
-      kind: activeAction === "notes" ? "notes" : "markdown",
-      content: output
+    const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
+    upsertWorkspaceTab({
+      id: `canvas-output-${activeAction}`,
+      label: `${label} Canvas`,
+      kind: "canvas-output",
+      action: activeAction,
+      output,
+      closable: true
     });
-  }, [activeAction, openCanvasPayload, output]);
+  }, [activeAction, output, upsertWorkspaceTab]);
+
+  const openCurrentResultInWorkspaceTab = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate or reopen an output before opening a workspace tab.");
+      return;
+    }
+
+    const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
+    upsertWorkspaceTab({
+      id: `output-${activeAction}`,
+      label,
+      kind: "output",
+      action: activeAction,
+      output,
+      closable: true
+    });
+  }, [activeAction, output, upsertWorkspaceTab]);
 
   const openFileInCanvas = useCallback(
     async (file: FileItem) => {
@@ -1333,23 +1392,62 @@ export function StudyWorkspace({
         const response = await fetch(`/api/files/preview?fileId=${file.id}`);
         const json = await readJsonResponse(response);
         const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
-        openCanvasPayload({
-          title: file.file_name,
-          kind: kind === "table" ? "text" : kind,
-          content: json.text || file.extracted_text || "",
+        upsertWorkspaceTab({
+          id: `canvas-source-${file.id}`,
+          label: `${clipText(file.file_name, 24)} Canvas`,
+          kind: "canvas-source",
+          file,
+          previewKind: kind,
+          text: json.text || file.extracted_text || "",
           url: json.url || null,
-          sourceId: file.id
+          closable: true
         });
       } catch {
-        openCanvasPayload({
-          title: file.file_name,
-          kind: "text",
-          content: file.extracted_text || "Preview text is not available for this file.",
-          sourceId: file.id
+        upsertWorkspaceTab({
+          id: `canvas-source-${file.id}`,
+          label: `${clipText(file.file_name, 24)} Canvas`,
+          kind: "canvas-source",
+          file,
+          previewKind: "text",
+          text: file.extracted_text || "Preview text is not available for this file.",
+          url: null,
+          closable: true
         });
       }
     },
-    [openCanvasPayload]
+    [upsertWorkspaceTab]
+  );
+
+  const openFileInWorkspaceTab = useCallback(
+    async (file: FileItem) => {
+      try {
+        const response = await fetch(`/api/files/preview?fileId=${file.id}`);
+        const json = await readJsonResponse(response);
+        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
+        upsertWorkspaceTab({
+          id: `source-${file.id}`,
+          label: clipText(file.file_name, 28),
+          kind: "source",
+          file,
+          previewKind: kind,
+          text: json.text || file.extracted_text || "",
+          url: json.url || null,
+          closable: true
+        });
+      } catch {
+        upsertWorkspaceTab({
+          id: `source-${file.id}`,
+          label: clipText(file.file_name, 28),
+          kind: "source",
+          file,
+          previewKind: "text",
+          text: file.extracted_text || "Preview text is not available for this file.",
+          url: null,
+          closable: true
+        });
+      }
+    },
+    [upsertWorkspaceTab]
   );
 
   const buildScreenContext = useCallback(() => {
@@ -1590,31 +1688,22 @@ export function StudyWorkspace({
       const container = workspaceGridRef.current;
       if (!enabled || !container) return;
 
-      const availableWidth = container.getBoundingClientRect().width - desktopResizeHandleWidth * 2;
+      const availableWidth = container.getBoundingClientRect().width - desktopResizeHandleWidth;
       if (availableWidth <= desktopCenterPanelMin) return;
 
       setDesktopPanelWidths((current) => {
-        const maxLeft = Math.min(
-          desktopLeftPanelMax,
-          availableWidth - desktopRightPanelMin - desktopCenterPanelMin
-        );
-        const nextLeft = Math.min(
-          Math.max(current.left, desktopLeftPanelMin),
-          Math.max(desktopLeftPanelMin, maxLeft)
-        );
-
         const maxRight = Math.min(
           desktopRightPanelMax,
-          availableWidth - nextLeft - desktopCenterPanelMin
+          availableWidth - desktopCenterPanelMin
         );
         const nextRight = Math.min(
           Math.max(current.right, desktopRightPanelMin),
           Math.max(desktopRightPanelMin, maxRight)
         );
 
-        return current.left === nextLeft && current.right === nextRight
+        return current.right === nextRight
           ? current
-          : { left: nextLeft, right: nextRight };
+          : { ...current, right: nextRight };
       });
     };
 
@@ -1631,7 +1720,7 @@ export function StudyWorkspace({
       if (!container) return;
 
       const rect = container.getBoundingClientRect();
-      const availableWidth = rect.width - desktopResizeHandleWidth * 2;
+      const availableWidth = rect.width - desktopResizeHandleWidth;
       if (availableWidth <= desktopCenterPanelMin) return;
 
       setDesktopPanelWidths((current) => {
@@ -1654,7 +1743,7 @@ export function StudyWorkspace({
         const distanceFromRight = rect.right - event.clientX;
         const maxRight = Math.min(
           desktopRightPanelMax,
-          availableWidth - current.left - desktopCenterPanelMin
+          availableWidth - desktopCenterPanelMin
         );
         const nextRight = Math.min(
           Math.max(distanceFromRight, desktopRightPanelMin),
@@ -1730,11 +1819,16 @@ export function StudyWorkspace({
     setToolDraft(createToolDraft(result.action));
     setOutput(result.output);
     setToolCardIndex(0);
-    setToolModalView("result");
-    setToolModalOpen(true);
     setTab("tools");
-    setWorkspaceTab("result");
-  }, []);
+    upsertWorkspaceTab({
+      id: `saved-output-${result.id}`,
+      label: result.label,
+      kind: "output",
+      action: result.action,
+      output: result.output,
+      closable: true
+    });
+  }, [upsertWorkspaceTab]);
 
   const toolResultCount =
     activeAction === "quiz"
@@ -2821,6 +2915,111 @@ export function StudyWorkspace({
     router.push(`/schedule${params.toString() ? `?${params.toString()}` : ""}`);
   };
 
+  const renderWorkspaceDynamicTab = (workspaceItem: WorkspaceDynamicTab) => {
+    const isCanvas = workspaceItem.kind === "canvas-source" || workspaceItem.kind === "canvas-output";
+    const isOutput = workspaceItem.kind === "output" || workspaceItem.kind === "canvas-output";
+
+    return (
+      <motion.div
+        key={workspaceItem.id}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={`${isCanvas ? "min-h-[66vh]" : ""} space-y-4`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] bg-white/8 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
+              {isCanvas ? "Canvas mode" : isOutput ? "Generated output" : "Source preview"}
+            </p>
+            <h3 className="mt-1 truncate text-lg font-semibold">{workspaceItem.label}</h3>
+            <p className="muted mt-1 text-xs">
+              {isCanvas
+                ? "Select, read, and annotate inside the Studio Workspace."
+                : "Opened as an internal Studio tab, not a browser tab."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {workspaceItem.file && workspaceItem.kind === "source" ? (
+              <Button onClick={() => openFileInCanvas(workspaceItem.file as FileItem)} variant="secondary" size="sm">
+                <Maximize2 className="h-4 w-4" />
+                Canvas
+              </Button>
+            ) : null}
+            {isOutput && workspaceItem.kind === "output" ? (
+              <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm">
+                <Maximize2 className="h-4 w-4" />
+                Canvas
+              </Button>
+            ) : null}
+            <Button onClick={() => closeWorkspaceTab(workspaceItem.id)} variant="ghost" size="sm">
+              <X className="h-4 w-4" />
+              Close
+            </Button>
+          </div>
+        </div>
+
+        {isCanvas ? (
+          <div className="flex flex-wrap gap-2 rounded-[22px] bg-white/8 px-4 py-3 text-xs">
+            {[
+              { label: "Mouse", icon: MousePointer2 },
+              { label: "Text note", icon: PenLine },
+              { label: "Highlight", icon: Highlighter }
+            ].map((item) => (
+              <span key={item.label} className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[var(--muted)]">
+                <item.icon className="h-3.5 w-3.5 text-[var(--accent-sky)]" />
+                {item.label}
+              </span>
+            ))}
+            <span className="inline-flex items-center rounded-full bg-[rgba(121,247,199,0.12)] px-3 py-2 text-[var(--accent-mint)]">
+              AI can use selected text + visible source context
+            </span>
+          </div>
+        ) : null}
+
+        {isOutput ? (
+          workspaceItem.action === "notes" ? (
+            <AINotesConsole content={workspaceItem.output || ""} />
+          ) : (
+            <article className={`${isCanvas ? "min-h-[58vh]" : ""} rounded-[28px] bg-white/8 p-5`}>
+              <RichStudyText content={workspaceItem.output || "No output found for this tab."} />
+            </article>
+          )
+        ) : workspaceItem.previewKind === "pdf" && workspaceItem.url ? (
+          <iframe
+            src={workspaceItem.url}
+            title={workspaceItem.file?.file_name || workspaceItem.label}
+            className={`${isCanvas ? "h-[68vh]" : "h-[58vh]"} w-full rounded-[24px] border border-white/10 bg-white`}
+          />
+        ) : workspaceItem.previewKind === "image" && workspaceItem.url ? (
+          <div className={`${isCanvas ? "min-h-[68vh]" : "min-h-[42vh]"} grid place-items-center rounded-[24px] bg-black/20 p-4`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={workspaceItem.url} alt={workspaceItem.label} className="max-h-[68vh] rounded-[20px] object-contain" />
+          </div>
+        ) : workspaceItem.previewKind === "table" ? (
+          <div className="overflow-auto rounded-[24px] border border-white/10 bg-white/8">
+            <table className="min-w-full text-left text-sm">
+              <tbody>
+                {parseTablePreview(workspaceItem.text || "").map((row, rowIndex) => (
+                  <tr key={`${workspaceItem.id}-${rowIndex}`} className="border-b border-white/8">
+                    {row.map((cell, cellIndex) => (
+                      <td key={`${rowIndex}-${cellIndex}`} className="px-4 py-3 align-top text-xs md:text-sm">
+                        {cell || "—"}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <pre className={`${isCanvas ? "min-h-[58vh]" : ""} whitespace-pre-wrap rounded-[24px] bg-white/10 p-5 text-sm leading-7`}>
+            {workspaceItem.text || "Preview text is not available for this source."}
+          </pre>
+        )}
+      </motion.div>
+    );
+  };
+
   const renderToolResults = () => {
     const renderDeckHeader = ({
       total,
@@ -3318,9 +3517,90 @@ export function StudyWorkspace({
                 Keep one studio loaded and move between files, chat, and practice tools without breaking context.
               </p>
             </div>
-            <div className="glass rounded-[24px] px-4 py-3 text-sm">
-              <p className="muted text-xs">Current context</p>
-              <p className="mt-2 font-semibold">{currentFiles.length} files in view</p>
+            <div className="relative flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowTimerPopover((current) => !current)}
+                className="glass inline-flex items-center gap-2 rounded-[24px] px-4 py-3 text-sm transition hover:-translate-y-0.5"
+              >
+                <Timer className="h-4 w-4 text-[var(--accent-sky)]" />
+                <span className="font-semibold">{timerRemaining ? timerDisplay : "Study timer"}</span>
+              </button>
+              <div className="glass rounded-[24px] px-4 py-3 text-sm">
+                <p className="muted text-xs">Current context</p>
+                <p className="mt-2 font-semibold">{currentFiles.length} files in view</p>
+              </div>
+              {showTimerPopover ? (
+                <div className="panel panel-border absolute right-0 top-[calc(100%+0.7rem)] z-30 w-[min(24rem,calc(100vw-2rem))] rounded-[26px] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">Study timer</p>
+                      <p className="muted mt-1 text-xs">
+                        {timerPhase === "break" ? "Break time" : timerPhase === "done" ? "Session complete" : "Focus block"}
+                      </p>
+                    </div>
+                    <div className="rounded-full bg-white/12 px-3 py-2 text-sm font-semibold tabular-nums">
+                      {timerRemaining ? timerDisplay : `${timerMinutes}m`}
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Total
+                      <input
+                        value={timerMinutes}
+                        onChange={(event) => setTimerMinutes(Math.max(1, Math.min(240, Number(event.target.value) || 1)))}
+                        className="mt-1 w-full rounded-[14px] border border-white/10 bg-white/10 px-2 py-2 text-xs text-[var(--fg)] outline-none"
+                        type="number"
+                        min={1}
+                        max={240}
+                      />
+                    </label>
+                    <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Break at
+                      <input
+                        value={breakEveryMinutes}
+                        onChange={(event) => setBreakEveryMinutes(Math.max(1, Math.min(120, Number(event.target.value) || 1)))}
+                        className="mt-1 w-full rounded-[14px] border border-white/10 bg-white/10 px-2 py-2 text-xs text-[var(--fg)] outline-none"
+                        type="number"
+                        min={1}
+                        max={120}
+                      />
+                    </label>
+                    <label className="text-[10px] uppercase tracking-[0.16em] text-[var(--muted)]">
+                      Break
+                      <input
+                        value={breakMinutes}
+                        onChange={(event) => setBreakMinutes(Math.max(1, Math.min(60, Number(event.target.value) || 1)))}
+                        className="mt-1 w-full rounded-[14px] border border-white/10 bg-white/10 px-2 py-2 text-xs text-[var(--fg)] outline-none"
+                        type="number"
+                        min={1}
+                        max={60}
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-3 flex gap-2">
+                    <Button onClick={() => startStudyTimer(timerMinutes)} size="sm" className="flex-1 justify-center">
+                      <Play className="h-4 w-4" />
+                      Start
+                    </Button>
+                    <Button onClick={() => setTimerRunning((current) => !current)} variant="secondary" size="sm" className="flex-1 justify-center">
+                      {timerRunning ? "Pause" : "Resume"}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setTimerRunning(false);
+                        setTimerRemaining(0);
+                        setTimerPhase("focus");
+                      }}
+                      variant="ghost"
+                      size="sm"
+                      className="px-3"
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -3333,7 +3613,7 @@ export function StudyWorkspace({
       </section>
 
       <div className="mt-4 flex gap-2 lg:hidden">
-        {(["files", "chat", "tools"] as const).map((item) => (
+        {(["chat", "tools"] as const).map((item) => (
           <button
             key={item}
             type="button"
@@ -3342,7 +3622,7 @@ export function StudyWorkspace({
               tab === item ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-white/15"
             }`}
           >
-            {item === "chat" ? "Workspace" : item === "tools" ? "Tutor + Tools" : "Sources"}
+            {item === "chat" ? "Studio Workspace" : "AI Chat"}
           </button>
         ))}
       </div>
@@ -3352,7 +3632,7 @@ export function StudyWorkspace({
         className="mt-4 grid gap-4 lg:items-start"
         style={desktopGridStyle}
       >
-        <aside className={`min-w-0 ${tab !== "files" ? "hidden lg:block" : "block"}`}>
+        <aside className="hidden">
           <div className="panel panel-border rounded-[30px] p-4">
             <div className="mb-4 flex items-center justify-between">
               <div>
@@ -3809,7 +4089,7 @@ export function StudyWorkspace({
           </div>
         </aside>
 
-        {desktopLayoutEnabled ? (
+        {false && desktopLayoutEnabled ? (
           <div className="hidden lg:flex lg:items-stretch">
             <button
               type="button"
@@ -3839,19 +4119,47 @@ export function StudyWorkspace({
                 {[
                   { key: "home", label: "Home" },
                   { key: "sources", label: `Sources (${sourceEnabledCount})` },
-                  { key: "result", label: output ? actionButtons.find((item) => item.key === activeAction)?.label || "Result" : "AI Output" }
+                  { key: "result", label: output ? actionButtons.find((item) => item.key === activeAction)?.label || "Result" : "AI Output" },
+                  ...workspaceTabs.map((item) => ({ key: item.id, label: item.label, dynamic: item }))
                 ].map((item) => (
                   <button
                     key={item.key}
                     type="button"
-                    onClick={() => setWorkspaceTab(item.key as "home" | "sources" | "result")}
-                    className={`rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
+                    onClick={() => {
+                      setWorkspaceTab(item.key);
+                      if ("dynamic" in item && item.dynamic?.kind.includes("output") && item.dynamic.output) {
+                        setActiveAction(item.dynamic.action ?? "summary");
+                        setOutput(item.dynamic.output);
+                      }
+                    }}
+                    className={`group inline-flex items-center gap-2 rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
                       workspaceTab === item.key
                         ? "bg-[rgba(255,255,255,0.16)] text-[var(--fg)]"
                         : "text-[var(--muted)] hover:bg-white/8 hover:text-[var(--fg)]"
                     }`}
                   >
                     {item.label}
+                    {"dynamic" in item && item.dynamic ? (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeWorkspaceTab(item.key);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeWorkspaceTab(item.key);
+                          }
+                        }}
+                        className="rounded-full p-0.5 opacity-60 transition hover:bg-white/12 hover:opacity-100"
+                        aria-label={`Close ${item.label}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -3912,6 +4220,36 @@ export function StudyWorkspace({
                     </div>
 
                     <div className="rounded-[26px] bg-white/8 p-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="font-semibold">Study tools</p>
+                          <p className="muted mt-1 text-xs">Generate from enabled sources, then open results as Studio tabs.</p>
+                        </div>
+                        <Button onClick={() => openSourceModal("Add more files or search verified sources.", "web")} variant="ghost" size="sm">
+                          <Plus className="h-4 w-4" />
+                          Add source
+                        </Button>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                        {actionButtons.map((action) => (
+                          <button
+                            key={`workspace-tool-${action.key}`}
+                            type="button"
+                            onClick={() => openTool(action.key)}
+                            className={`rounded-[20px] px-3 py-3 text-left transition ${
+                              activeAction === action.key
+                                ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.22),rgba(57,208,255,0.2))]"
+                                : "bg-white/10 hover:bg-white/16"
+                            }`}
+                          >
+                            <p className="text-sm font-semibold">{action.label}</p>
+                            <p className="muted mt-1 line-clamp-2 text-xs">{action.copy}</p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[26px] bg-white/8 p-4">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <p className="font-semibold">Recent outputs</p>
                         <button type="button" onClick={() => setWorkspaceTab("result")} className="muted text-xs hover:text-[var(--fg)]">
@@ -3963,7 +4301,7 @@ export function StudyWorkspace({
                             key={`workspace-source-${file.id}`}
                             className="rounded-[24px] bg-white/10 p-4 transition hover:bg-white/16"
                           >
-                            <button type="button" onClick={() => openFilePreview(file)} className="w-full text-left">
+                            <button type="button" onClick={() => openFileInWorkspaceTab(file)} className="w-full text-left">
                               <div className="flex items-start justify-between gap-3">
                                 <p className="text-sm font-semibold">
                                 <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
@@ -3978,9 +4316,9 @@ export function StudyWorkspace({
                               <p className="muted mt-3 line-clamp-4 text-xs">{file.extracted_text}</p>
                             </button>
                             <div className="mt-3 flex flex-wrap gap-2">
-                              <Button onClick={() => openFilePreview(file)} variant="ghost" size="sm">
+                              <Button onClick={() => openFileInWorkspaceTab(file)} variant="ghost" size="sm">
                                 <Eye className="h-3.5 w-3.5" />
-                                Preview
+                                Open tab
                               </Button>
                               <Button onClick={() => openFileInCanvas(file)} variant="secondary" size="sm">
                                 <Maximize2 className="h-3.5 w-3.5" />
@@ -4008,6 +4346,9 @@ export function StudyWorkspace({
                         <p className="muted text-xs">Generated tools open here in the rebuilt workspace.</p>
                       </div>
                       <div className="flex gap-2">
+                        <Button onClick={openCurrentResultInWorkspaceTab} variant="ghost" size="sm" disabled={!output}>
+                          Open tab
+                        </Button>
                         <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm" disabled={!output}>
                           <Maximize2 className="h-4 w-4" />
                           Canvas
@@ -4031,6 +4372,8 @@ export function StudyWorkspace({
                     )}
                   </div>
                 ) : null}
+
+                {activeWorkspaceDynamicTab ? renderWorkspaceDynamicTab(activeWorkspaceDynamicTab) : null}
               </div>
             </div>
           </div>
@@ -4064,7 +4407,7 @@ export function StudyWorkspace({
 
             <div
               ref={chatViewportRef}
-              className="hide-scrollbar mt-4 max-h-[23rem] min-h-[18rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4"
+              className="hide-scrollbar mt-4 min-h-[34rem] space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4 lg:max-h-[calc(100vh-18rem)]"
             >
               {!sourceEnabledCount ? (
                 <div className="rounded-[24px] border border-[rgba(255,125,89,0.2)] bg-[linear-gradient(135deg,rgba(255,125,89,0.16),rgba(57,208,255,0.14))] p-4 text-sm">
@@ -4129,7 +4472,7 @@ export function StudyWorkspace({
             </div>
           </div>
 
-          <div className="panel panel-border rounded-[30px] p-4">
+          <div className="hidden">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">Study Tools</p>
@@ -4320,6 +4663,135 @@ export function StudyWorkspace({
           </div>
           </div>
         </aside>
+      </div>
+
+      <div className="fixed bottom-3 left-3 right-3 z-30 mx-auto max-w-[1800px]">
+        {musicPanelOpen ? (
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="panel panel-border mb-3 ml-auto max-h-[min(34rem,calc(100vh-8rem))] w-full max-w-[32rem] overflow-hidden rounded-[28px] shadow-[0_22px_70px_rgba(2,6,23,0.36)]"
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
+                  Focus music
+                </p>
+                <h3 className="mt-1 text-lg font-semibold">Browse playlists and connect accounts</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMusicPanelOpen(false)}
+                className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
+                aria-label="Close music panel"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="hide-scrollbar max-h-[28rem] overflow-auto p-4">
+              <div className="grid grid-cols-2 gap-2">
+                {musicProviders.map((provider) => (
+                  <a
+                    key={provider.key}
+                    href={provider.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-[20px] bg-white/10 p-3 transition hover:bg-white/16"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="grid h-9 w-9 place-items-center rounded-[14px] bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-xs font-black text-slate-950">
+                        {provider.logo}
+                      </span>
+                      <span className="text-sm font-semibold">{provider.name}</span>
+                    </div>
+                    <p className="muted mt-2 text-xs">Connect app credentials</p>
+                  </a>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
+                <div className="flex items-center gap-2">
+                  <Search className="h-4 w-4 text-[var(--accent-sky)]" />
+                  <input
+                    value={musicSearch}
+                    onChange={(event) => setMusicSearch(event.target.value)}
+                    placeholder="Search playlists, albums, moods..."
+                    className="w-full bg-transparent text-sm outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 space-y-2">
+                {filteredMusicLibrary.map((item, index) => (
+                  <button
+                    key={`${item.provider}-${item.title}`}
+                    type="button"
+                    onClick={() => {
+                      const matchingTrack = focusTracks.findIndex((track) => track.mood.toLowerCase() === item.mood.toLowerCase());
+                      setSelectedTrackIndex(matchingTrack >= 0 ? matchingTrack : index % focusTracks.length);
+                      setMusicPlaying(true);
+                    }}
+                    className="w-full rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{item.title}</p>
+                        <p className="muted mt-1 truncate text-xs">
+                          {item.artist} • {item.type} • {item.provider}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
+                        Play
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+
+        <div className="panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] px-3 py-2 shadow-[0_18px_50px_rgba(2,6,23,0.28)]">
+          <button
+            type="button"
+            onClick={() => setMusicPlaying((current) => !current)}
+            className={`grid h-10 w-10 place-items-center rounded-full transition ${
+              musicPlaying
+                ? "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-slate-950"
+                : "bg-white/10 text-[var(--fg)]"
+            }`}
+            aria-label={musicPlaying ? "Pause focus music" : "Play focus music"}
+          >
+            {musicPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+          </button>
+          <div className={`h-9 w-9 rounded-[14px] bg-gradient-to-br ${selectedTrack.color}`} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold">{selectedTrack.title}</p>
+            <p className="muted truncate text-xs">{selectedTrack.mood} focus queue • Spotify, Apple, Amazon, YouTube</p>
+          </div>
+          <div className="hidden flex-wrap gap-2 md:flex">
+            {focusTracks.map((track, index) => (
+              <button
+                key={`bottom-track-${track.title}`}
+                type="button"
+                onClick={() => setSelectedTrackIndex(index)}
+                className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                  selectedTrackIndex === index ? "bg-white/18 text-[var(--fg)]" : "bg-white/8 text-[var(--muted)] hover:bg-white/12"
+                }`}
+              >
+                {track.mood}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setMusicPanelOpen((current) => !current)}
+            className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
+            aria-label="Open music browser"
+          >
+            {musicPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+          </button>
+        </div>
       </div>
 
       {sourceModalOpen ? (

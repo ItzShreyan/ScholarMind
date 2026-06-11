@@ -5,7 +5,7 @@ import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
 export const openRouterProvider: AIProvider = {
   name: "openrouter",
   async generate(input) {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY;
     if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
 
     const run = async () => {

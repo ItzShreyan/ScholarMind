@@ -127,7 +127,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
   }
 
   // 🔁 FALLBACK CHAIN
-  const openrouterConfigured = Boolean(process.env.OPENROUTER_API_KEY?.trim());
+  const openrouterConfigured = Boolean((process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY)?.trim());
   const openrouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat"]);
   const fallbackOrder =
     openrouterConfigured && openrouterFirstActions.has(String(input.action))
