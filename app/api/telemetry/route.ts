@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { checkLocalRateLimit } from "@/lib/security/mind-security";
 
 const schema = z.object({
   eventType: z.enum(["page_view", "feature_use", "source_search", "source_import"]),
@@ -12,6 +13,19 @@ const schema = z.object({
 
 export async function POST(req: Request) {
   try {
+    const limit = checkLocalRateLimit(req, {
+      scope: "telemetry",
+      max: 60,
+      windowMs: 60_000
+    });
+
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { ok: false, error: "Too many telemetry events." },
+        { status: 429 }
+      );
+    }
+
     const body = schema.parse(await req.json());
     const supabase = await createClient();
     const {

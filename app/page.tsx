@@ -15,6 +15,7 @@ import { motion, useScroll, useTransform } from "framer-motion";
 import { ScrollShowcase } from "@/components/landing/ScrollShowcase";
 import { ThreeHero } from "@/components/landing/ThreeHero";
 import { BrandLink } from "@/components/common/BrandLink";
+import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Badge } from "@/components/ui/Badge";
 import { buttonVariants } from "@/components/ui/Button";
@@ -245,6 +246,34 @@ export default function LandingPage() {
         </motion.section>
       </Container>
 
+      <Container className="pb-6 sm:pb-10">
+        <Card className="overflow-hidden">
+          <CardHeader className="grid gap-6 p-5 sm:p-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+            <div className="space-y-4">
+              <SecurityBadge />
+              <h2 className="text-2xl font-semibold sm:text-3xl md:text-4xl">
+                Built to protect student accounts, study files, and shared AI usage.
+              </h2>
+              <p className="muted text-sm md:text-base">
+                ScholarMind uses the Mind Security Engine with Supabase-backed account rules and optional Arcjet protection to reduce bot traffic, suspicious requests, upload abuse, and attempts to bypass protected routes.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {[
+                ["Account safe", "Saved studios, uploads, chat history, limits, and settings are tied to the signed-in user."],
+                ["Upload checks", "Files are size-limited, ownership-checked, and verified before they become study sources."],
+                ["Abuse defense", "Suspicious requests can be challenged or blocked before they reach sensitive app routes."]
+              ].map(([title, copy]) => (
+                <div key={title} className="rounded-[24px] border border-white/12 bg-white/15 p-4">
+                  <p className="text-sm font-semibold">{title}</p>
+                  <p className="muted mt-2 text-xs">{copy}</p>
+                </div>
+              ))}
+            </div>
+          </CardHeader>
+        </Card>
+      </Container>
+
       <Container className="pb-6 sm:pb-8">
         <section className="grid gap-4 lg:grid-cols-2">
           <Card className="overflow-hidden">
@@ -390,13 +419,21 @@ export default function LandingPage() {
       <footer className="border-t border-white/10 py-8">
         <Container className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-2xl bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))]" />
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[radial-gradient(circle_at_30%_20%,#fff7d6,transparent_28%),linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))] text-base font-black text-slate-950 shadow-[0_14px_40px_rgba(57,208,255,0.22)]">
+              S
+            </div>
             <div>
               <p className="text-sm font-semibold">ScholarMind</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--accent-coral)]">by Mind</p>
               <p className="muted text-xs">Scholar-first sources in. Clearer revision, diagrams, and mock exams out.</p>
             </div>
           </div>
-          <div className="muted text-xs">© {new Date().getFullYear()} ScholarMind</div>
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            <SecurityBadge compact />
+            <Link href="/privacy" className="muted transition hover:text-[var(--fg)]">Privacy</Link>
+            <Link href="/terms" className="muted transition hover:text-[var(--fg)]">Terms</Link>
+            <span className="muted">© {new Date().getFullYear()} ScholarMind</span>
+          </div>
         </Container>
       </footer>
     </main>

@@ -10,6 +10,7 @@ import {
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
 import { StudioShelf } from "@/components/dashboard/StudioShelf";
+import { FocusMusicDock } from "@/components/dashboard/FocusMusicDock";
 
 type Session = { id: string; title: string; created_at?: string };
 
@@ -105,6 +106,8 @@ export function DashboardOverview({
               </div>
             </CardHeader>
           </Card>
+
+          <FocusMusicDock />
         </div>
       </section>
 

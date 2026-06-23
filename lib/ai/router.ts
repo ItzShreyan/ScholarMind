@@ -1,11 +1,8 @@
 import { AIRequest } from "@/types";
+import { hasOpenRouterKey } from "@/lib/ai/openrouter-keys";
 
 function hasKey(value?: string | null) {
   return typeof value === "string" && value.trim().length > 0;
-}
-
-function hasOpenRouterKey() {
-  return hasKey(process.env.OPENROUTER_API_KEY) || hasKey(process.env.OPEN_ROUTER_API_KEY);
 }
 
 export function normalizeAIRequest(input: AIRequest): AIRequest {
@@ -20,7 +17,11 @@ export function normalizeAIRequest(input: AIRequest): AIRequest {
 }
 
 export function selectProvider(_input: AIRequest): string {
-  if (_input.action === "notes" && hasOpenRouterKey()) return "openrouter_v2";
+  const openRouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat"]);
+  if (openRouterFirstActions.has(String(_input.action || _input.mode || "")) && hasOpenRouterKey()) {
+    return "openrouter_v2";
+  }
+
   const preferred = (process.env.AI_PRIMARY_PROVIDER || "").toLowerCase();
   const providers = ["openrouter_v2", "groq_v2", "groq", "gemini", "huggingface", "together", "local"];
 

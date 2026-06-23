@@ -1,8 +1,8 @@
 export const onboardingOptions = {
   discovery: ["TikTok", "Google", "Friend", "Teacher", "Reddit", "YouTube", "Other"],
-  levels: ["GCSE / High school", "A-Level / Sixth form", "University", "Adult learner", "Other"],
+  levels: ["GCSE / High school", "A-Level / Sixth form", "University", "Adult learner", "Adult / non-school testing", "Other"],
   countries: ["United Kingdom", "United States", "India", "Canada", "Australia", "Other"],
-  stages: ["GCSE", "A-Level", "IB", "SAT / AP", "University course", "Other"],
+  stages: ["GCSE", "A-Level", "IB", "SAT / AP", "University course", "Independent / non-school", "Other"],
   examBoards: {
     "United Kingdom": {
       GCSE: ["AQA", "Edexcel", "OCR", "WJEC / Eduqas", "CCEA", "SQA"],

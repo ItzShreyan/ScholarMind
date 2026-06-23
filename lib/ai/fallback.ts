@@ -10,6 +10,7 @@ import { openrouterProviderV2 } from "@/lib/ai/providers/openrouter_v2";
 import { togetherProvider } from "@/lib/ai/providers/together";
 import { selectProvider } from "@/lib/ai/router";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
+import { hasOpenRouterKey } from "@/lib/ai/openrouter-keys";
 
 const providers: Record<string, AIProvider> = {
   gemini: geminiProvider,
@@ -20,6 +21,32 @@ const providers: Record<string, AIProvider> = {
   openrouter_v2: openrouterProviderV2,
   together: togetherProvider
 };
+
+const remoteOnlyToolActions = new Set([
+  "summary",
+  "flashcards",
+  "quiz",
+  "notes",
+  "exam",
+  "concepts",
+  "hard_mode",
+  "study_plan",
+  "insights"
+]);
+
+function hasRemoteProviderConfigured() {
+  return (
+    hasOpenRouterKey() ||
+    Boolean(process.env.GROQ_API_KEY?.trim()) ||
+    Boolean(process.env.GEMINI_API_KEY?.trim()) ||
+    Boolean(process.env.TOGETHER_API_KEY?.trim()) ||
+    Boolean(process.env.HUGGINGFACE_API_KEY?.trim())
+  );
+}
+
+function requiresRemoteAI(input: AIRequest) {
+  return remoteOnlyToolActions.has(String(input.action || input.mode || ""));
+}
 
 function normalizeInput(input: AIRequest): AIRequest {
   const message = input.message || input.prompt || input.content || "";
@@ -102,9 +129,16 @@ function isBadResponse(text: string, input: AIRequest): boolean {
 
 export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
-  const cacheKey = JSON.stringify({ v: 6, mode: input.mode, message: input.message });
+  const strictRemote = requiresRemoteAI(input);
+  const cacheKey = JSON.stringify({ v: 7, mode: input.mode, message: input.message });
   const cached = getCached(cacheKey);
   if (cached) return { text: normalizeAIText(cached), provider: "cache" };
+
+  if (strictRemote && !hasRemoteProviderConfigured()) {
+    throw new Error(
+      "Study tools require a configured AI provider. Add OPENROUTER_API_KEY in .env.local or Netlify environment variables, then restart the app."
+    );
+  }
 
   // ✅ SMART ROUTING (THIS IS THE MAIN UPGRADE)
   const selected = selectProvider(input);
@@ -113,7 +147,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const failures: string[] = [];
 
   try {
-    if (primary) {
+    if (primary && !(strictRemote && primary.name === "local")) {
       const result = await primary.generate(input);
       const normalizedText = normalizeAIText(result.text);
       if (normalizedText && !isBadResponse(normalizedText, input)) {
@@ -127,10 +161,19 @@ export async function generateWithFallback(rawInput: AIRequest) {
   }
 
   // 🔁 FALLBACK CHAIN
-  const openrouterConfigured = Boolean((process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY)?.trim());
+  const openrouterConfigured = hasOpenRouterKey();
   const openrouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat"]);
   const fallbackOrder =
-    openrouterConfigured && openrouterFirstActions.has(String(input.action))
+    strictRemote
+      ? [
+          providers.openrouter_v2,
+          providers.groq_v2,
+          providers.groq,
+          providers.gemini,
+          providers.together,
+          providers.huggingface
+        ]
+      : openrouterConfigured && openrouterFirstActions.has(String(input.action))
       ? [providers.openrouter_v2, providers.local]
       : [
           providers.groq_v2,
@@ -144,6 +187,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
 
   for (const provider of fallbackOrder) {
     if (!provider) continue;
+    if (strictRemote && provider.name === "local") continue;
 
     try {
       const result = await provider.generate(input);
@@ -158,5 +202,9 @@ export async function generateWithFallback(rawInput: AIRequest) {
     }
   }
 
-  throw new Error(`All AI providers failed. ${failures.join(" | ")}`);
+  throw new Error(
+    strictRemote
+      ? `Study tools require a live AI response, and every configured AI provider failed. ${failures.join(" | ")}`
+      : `All AI providers failed. ${failures.join(" | ")}`
+  );
 }

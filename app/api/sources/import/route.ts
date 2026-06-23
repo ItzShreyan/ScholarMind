@@ -41,6 +41,13 @@ export async function POST(req: Request) {
     }
 
     const extractedText = await extractWebSourceText(body);
+    if (
+      extractedText.length < 120 ||
+      /could not be fully parsed|import a clearer article/i.test(extractedText)
+    ) {
+      throw new Error("This web source did not provide enough readable study text. Try a clearer article, PDF, or uploaded source.");
+    }
+
     const sourceName = body.source ? `${body.title} (${body.source})` : body.title;
 
     const { data: insertedFile, error: insertError } = await supabase

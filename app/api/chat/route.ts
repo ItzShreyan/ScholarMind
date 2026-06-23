@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
+import { getOpenRouterKeys, isOpenRouterKeyLimitError } from "@/lib/ai/openrouter-keys";
+import { createClient } from "@/lib/supabase/server";
 
 type ProviderMessage = {
   role: "system" | "user" | "assistant";
@@ -64,10 +66,19 @@ function makeSseResponse(text: string) {
 
 export async function POST(req: Request) {
   try {
-    const { input } = await req.json();
-    const apiKey = process.env.OPENROUTER_API_KEY || process.env.OPEN_ROUTER_API_KEY;
+    const supabase = await createClient();
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
 
-    if (!apiKey) {
+    if (!user) {
+      return NextResponse.json({ error: "Sign in to use the AI tutor." }, { status: 401 });
+    }
+
+    const { input } = await req.json();
+    const apiKeys = getOpenRouterKeys();
+
+    if (!apiKeys.length) {
       return NextResponse.json(
         { error: "Missing OPENROUTER_API_KEY. Add it to .env.local, then restart npm run dev. On Netlify, add the same key in Site settings > Environment variables." },
         { status: 400 }
@@ -87,39 +98,52 @@ export async function POST(req: Request) {
       { role: "user", content: message }
     ];
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    let data: { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }> } | null = null;
+    const failures: string[] = [];
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
-        "X-Title": "ScholarMind"
-      },
-      body: JSON.stringify({
-        model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
-        messages,
-        temperature: 0.35,
-        max_tokens: 1200,
-        reasoning: { exclude: true },
-        include_reasoning: false,
-        stream: false
-      })
-    });
+    for (const [index, apiKey] of apiKeys.entries()) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    clearTimeout(timeoutId);
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
+          "X-Title": "ScholarMind"
+        },
+        body: JSON.stringify({
+          model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
+          messages,
+          temperature: 0.35,
+          max_tokens: 1200,
+          reasoning: { exclude: true },
+          include_reasoning: false,
+          stream: false
+        })
+      });
 
-    if (!response.ok) {
-      const detail = normalizeErrorMessage(await response.text(), `OpenRouter failed with status ${response.status}.`);
-      return NextResponse.json({ error: detail }, { status: response.status || 400 });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const detail = normalizeErrorMessage(await response.text(), `OpenRouter failed with status ${response.status}.`);
+        failures.push(`key ${index + 1}: ${detail}`);
+        if (index < apiKeys.length - 1 && isOpenRouterKeyLimitError(response.status, detail)) {
+          continue;
+        }
+        return NextResponse.json({ error: detail }, { status: response.status || 400 });
+      }
+
+      data = await response.json();
+      break;
     }
 
-    const data = await response.json() as {
-      choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }>;
-    };
+    if (!data) {
+      return NextResponse.json({ error: `All OpenRouter keys failed. ${failures.join(" | ")}` }, { status: 400 });
+    }
+
     const text = normalizeAIText(data.choices?.[0]?.message?.content);
     if (!text) {
       return NextResponse.json({ error: "OpenRouter returned an empty chat message." }, { status: 400 });

@@ -59,6 +59,10 @@ function stripHtml(text: string) {
   return text
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<pre[\s\S]*?<\/pre>/gi, " ")
+    .replace(/<code[\s\S]*?<\/code>/gi, " ")
+    .replace(/<(nav|header|footer|aside|form|button)[\s\S]*?<\/\1>/gi, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
@@ -181,7 +185,16 @@ function flattenDuckTopics(items: unknown[]): Array<{ Text?: string; FirstURL?: 
 }
 
 function cleanReadableText(text: string) {
-  return normalizeWhitespace(cleanStudySourceText(text));
+  const articleOnly = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`[^`\n]{1,160}`/g, " ")
+    .replace(/\[([^\]]{1,160})\]\((?:https?:\/\/|www\.)[^)]+\)/gi, "$1")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/\bwww\.\S+/gi, " ")
+    .replace(/\b(?:cookie policy|privacy policy|terms of use|subscribe|sign in|log in|advertisement|share this|follow us)\b/gi, " ")
+    .replace(/\b(?:javascript|function|const|let|var|document\.|window\.|import\s+|export\s+)\b[^\n.]{0,220}/gi, " ");
+
+  return normalizeWhitespace(cleanStudySourceText(articleOnly));
 }
 
 async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 15000) {

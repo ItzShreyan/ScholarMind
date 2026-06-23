@@ -6,27 +6,14 @@ import {
   LogOut,
   Palette,
   Sparkles,
-  Stars,
-  WandSparkles
+  Stars
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
-import { defaultUserPreferences, type PreferenceTool, type UserPreferences } from "@/lib/preferences/defaults";
+import { defaultUserPreferences, type UserPreferences } from "@/lib/preferences/defaults";
 import { normalizeErrorMessage } from "@/lib/ai/util";
 import type { OnboardingRecord } from "@/lib/onboarding-profile";
 import { onboardingOptions } from "@/lib/onboarding-options";
-
-const defaultToolOptions = [
-  { value: "summary", label: "Summary" },
-  { value: "quiz", label: "Quiz" },
-  { value: "flashcards", label: "Flashcards" },
-  { value: "notes", label: "AI Notes" },
-  { value: "study_plan", label: "Study plan" },
-  { value: "exam", label: "Exam" },
-  { value: "insights", label: "Insights" },
-  { value: "hard_mode", label: "Trap radar" },
-  { value: "concepts", label: "Concept map" }
-] as const;
 
 export function SettingsPanel({
   email,
@@ -40,7 +27,6 @@ export function SettingsPanel({
   const [theme, setTheme] = useState<"dark" | "light">(initialPreferences.theme);
   const [playfulMotion, setPlayfulMotion] = useState(initialPreferences.playfulMotion);
   const [rememberLastStudio, setRememberLastStudio] = useState(initialPreferences.rememberLastStudio);
-  const [defaultTool, setDefaultTool] = useState<PreferenceTool>(initialPreferences.defaultTool);
   const [examBoards, setExamBoards] = useState<Record<string, string>>(initialOnboarding?.exam_boards ?? {});
   const [subjectTiers, setSubjectTiers] = useState<Record<string, string>>(initialOnboarding?.subject_tiers ?? {});
   const [mounted, setMounted] = useState(false);
@@ -54,7 +40,6 @@ export function SettingsPanel({
     setTheme(initialPreferences.theme);
     setPlayfulMotion(initialPreferences.playfulMotion);
     setRememberLastStudio(initialPreferences.rememberLastStudio);
-    setDefaultTool(initialPreferences.defaultTool);
   }, [initialPreferences]);
 
   useEffect(() => {
@@ -104,12 +89,6 @@ export function SettingsPanel({
       localStorage.removeItem("scholarmind_last_studio");
     }
     void patchPreferences(enabled ? { rememberLastStudio: true } : { rememberLastStudio: false, lastStudioId: null });
-  };
-
-  const updateDefaultTool = (value: PreferenceTool) => {
-    setDefaultTool(value);
-    localStorage.setItem("scholarmind_default_tool", value);
-    void patchPreferences({ defaultTool: value });
   };
 
   const patchOnboarding = async (nextExamBoards = examBoards, nextSubjectTiers = subjectTiers) => {
@@ -222,6 +201,12 @@ export function SettingsPanel({
                 </p>
                 <p className="muted mt-2 text-xs">{(initialOnboarding.subjects ?? []).join(", ") || "No subjects saved yet."}</p>
               </div>
+              <a
+                href="/onboarding?redo=1"
+                className="inline-flex w-full items-center justify-center rounded-[18px] bg-white/12 px-4 py-3 text-sm font-semibold transition hover:bg-white/18"
+              >
+                Redo personalisation quiz
+              </a>
               <div className="grid gap-3 md:grid-cols-2">
                 {(initialOnboarding.subjects ?? []).map((subject) => {
                   const examBoardOptions =
@@ -323,32 +308,6 @@ export function SettingsPanel({
             >
               {rememberLastStudio ? "Remember last studio" : "Do not remember"}
             </button>
-          </CardContent>
-        </Card>
-
-        <Card className="md:col-span-2">
-          <CardHeader className="space-y-2">
-            <WandSparkles className="h-5 w-5 text-[var(--accent-gold)]" />
-            <p className="text-sm font-semibold">Default tool</p>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <p className="muted">Choose which generator should be ready first when you open the studio tools panel.</p>
-            <div className="grid gap-2 sm:grid-cols-4">
-              {defaultToolOptions.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => updateDefaultTool(option.value)}
-                  className={`rounded-[18px] px-4 py-3 text-sm font-medium transition ${
-                    defaultTool === option.value
-                      ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.2),rgba(57,208,255,0.18))]"
-                      : "bg-white/12"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
           </CardContent>
         </Card>
 

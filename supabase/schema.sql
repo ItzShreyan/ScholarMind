@@ -32,6 +32,15 @@ create table if not exists public.study_reminders (
   created_at timestamptz default now()
 );
 
+create table if not exists public.study_chat_messages (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id uuid not null references public.study_sessions(id) on delete cascade,
+  role text not null check (role in ('user', 'ai')),
+  content text not null,
+  created_at timestamptz default now()
+);
+
 create table if not exists public.study_ai_usage (
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -146,6 +155,7 @@ create table if not exists public.study_site_settings (
 alter table public.study_sessions enable row level security;
 alter table public.study_files enable row level security;
 alter table public.study_reminders enable row level security;
+alter table public.study_chat_messages enable row level security;
 alter table public.study_ai_usage enable row level security;
 alter table public.study_user_preferences enable row level security;
 alter table public.study_user_onboarding enable row level security;
@@ -157,10 +167,12 @@ alter table public.study_site_settings enable row level security;
 drop policy if exists "sessions owner read/write" on public.study_sessions;
 drop policy if exists "files owner read/write" on public.study_files;
 drop policy if exists "reminders owner read/write" on public.study_reminders;
+drop policy if exists "chat messages owner read/write" on public.study_chat_messages;
 drop policy if exists "ai usage owner read/write" on public.study_ai_usage;
 drop policy if exists "preferences owner read/write" on public.study_user_preferences;
 drop policy if exists "onboarding owner read/write" on public.study_user_onboarding;
 drop policy if exists "onboarding host read" on public.study_user_onboarding;
+drop policy if exists "subscriptions owner read" on public.study_user_subscriptions;
 drop policy if exists "revision plans owner read/write" on public.study_revision_plans;
 drop policy if exists "subscriptions host read/write" on public.study_user_subscriptions;
 drop policy if exists "site events public insert" on public.study_site_events;
@@ -182,6 +194,12 @@ with check (auth.uid() = user_id);
 
 create policy "reminders owner read/write"
 on public.study_reminders for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "chat messages owner read/write"
+on public.study_chat_messages for all
 to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
@@ -215,6 +233,11 @@ to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 
+create policy "subscriptions owner read"
+on public.study_user_subscriptions for select
+to authenticated
+using (auth.uid() = user_id);
+
 create policy "subscriptions host read/write"
 on public.study_user_subscriptions for all
 to authenticated
@@ -244,6 +267,9 @@ with check (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com');
 
 create index if not exists study_ai_usage_user_scope_created_at_idx
 on public.study_ai_usage (user_id, scope, created_at desc);
+
+create index if not exists study_chat_messages_session_created_at_idx
+on public.study_chat_messages (user_id, session_id, created_at);
 
 create index if not exists study_revision_plans_user_created_at_idx
 on public.study_revision_plans (user_id, created_at desc);
