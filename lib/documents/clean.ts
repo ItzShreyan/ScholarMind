@@ -125,7 +125,7 @@ export function cleanStudySourceText(text: string) {
     text
       .replace(/(\w)-\n(\w)/g, "$1$2")
       .replace(/\t/g, " ")
-      .replace(/\b[\w-]+\.(pdf|docx|txt|png|jpe?g|xlsx?|csv|md)\b/gi, " ")
+      .replace(/\b[\w-]+\.(pdf|docx|pptx?|odp|txt|png|jpe?g|xlsx?|ods|csv|md)\b/gi, " ")
   );
 
   if (!normalized) return "";

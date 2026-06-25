@@ -38,7 +38,7 @@ const blockedExtensions = new Set([
 ]);
 
 const textExtensions = new Set(["txt", "md", "markdown", "json", "yaml", "yml", "xml", "html", "htm", "rtf", "csv", "tsv"]);
-const zipDocumentExtensions = new Set(["docx", "xlsx", "pptx", "ods"]);
+const zipDocumentExtensions = new Set(["docx", "xlsx", "pptx", "ods", "odp"]);
 const legacyOfficeExtensions = new Set(["doc", "xls", "ppt"]);
 
 function startsWithBytes(bytes: Uint8Array, signature: number[]) {
@@ -96,7 +96,7 @@ async function validateFileSignature(file: File) {
     return "";
   }
 
-  return "Unsupported file type. Upload a PDF, image, DOCX, spreadsheet, CSV, markdown, or plain text source.";
+  return "Unsupported file type. Upload a PDF, image, DOCX, PPTX, ODP, spreadsheet, CSV, markdown, or plain text source.";
 }
 
 export async function POST(req: Request) {

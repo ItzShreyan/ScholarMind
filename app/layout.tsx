@@ -17,6 +17,11 @@ export const metadata: Metadata = {
   description:
     "Upload notes, PDFs, and screenshots, then turn them into grounded chat, quizzes, flashcards, mock exams, and revision plans with ScholarMind.",
   applicationName: "ScholarMind",
+  icons: {
+    icon: [{ url: "/scholarmind-icon.svg", type: "image/svg+xml" }],
+    shortcut: "/scholarmind-icon.svg",
+    apple: [{ url: "/scholarmind-icon.svg", type: "image/svg+xml" }]
+  },
   keywords: [
     "AI study companion",
     "revision app",

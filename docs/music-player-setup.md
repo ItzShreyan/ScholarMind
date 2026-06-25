@@ -23,7 +23,7 @@ Restart `npm run dev` after editing `.env.local`.
    `https://YOUR_DOMAIN/api/music/spotify/callback`
 3. Paste the Client ID into `NEXT_PUBLIC_SPOTIFY_CLIENT_ID`.
 4. Paste the Client Secret into `SPOTIFY_CLIENT_SECRET`.
-5. For real in-browser playback, Spotify requires their Web Playback SDK and a Spotify Premium account for the signed-in listener.
+5. For real in-browser playback, Spotify requires their Web Playback SDK. Spotify free accounts can connect, but playback control/streaming is limited and may fail; full in-site playback generally requires a Spotify Premium account for the signed-in listener.
 
 Official docs:
 - https://developer.spotify.com/documentation/web-api

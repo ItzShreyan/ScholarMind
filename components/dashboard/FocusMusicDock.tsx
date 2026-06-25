@@ -5,17 +5,12 @@ import { ChevronUp, Music, Pause, Play, Search, X } from "lucide-react";
 
 const focusMusicStateStorageKey = "scholarmind_focus_music_state";
 
-const tracks = [
-  { title: "Rainy Revision", artist: "Focus queue", mood: "Lo-fi", color: "from-[#ff9a72] via-[#ffd166] to-[#67e8f9]" },
-  { title: "Exam Sprint Beats", artist: "ScholarMind mix", mood: "Low beat", color: "from-[#79f7c7] via-[#67e8f9] to-[#ff9a72]" },
-  { title: "Quiet Library", artist: "Ambient study", mood: "Ambient", color: "from-[#67e8f9] via-[#79f7c7] to-[#fff7d6]" },
-  { title: "Deep Work Piano", artist: "Study instrumentals", mood: "Calm", color: "from-[#ffd166] via-[#ff9a72] to-[#67e8f9]" }
-];
+const tracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
 
 const providerStatus = [
-  { name: "Spotify", status: "Connect available" },
-  { name: "YouTube Music", status: "Needs a YouTube Data API key" },
-  { name: "SoundCloud", status: "Account link unavailable" }
+  { name: "Spotify", status: "Connect available • free accounts limited", href: "/api/music/spotify/login", disabled: false },
+  { name: "YouTube Music", status: "Unavailable in preview", href: null, disabled: true },
+  { name: "SoundCloud", status: "Account link unavailable", href: null, disabled: true }
 ];
 
 export function FocusMusicDock() {
@@ -24,7 +19,7 @@ export function FocusMusicDock() {
   const [trackIndex, setTrackIndex] = useState(0);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const selectedTrack = tracks[trackIndex] ?? tracks[0];
+  const selectedTrack = tracks[trackIndex] ?? null;
 
   useEffect(() => {
     const restore = (value?: unknown) => {
@@ -34,7 +29,7 @@ export function FocusMusicDock() {
             ? (value as { playing?: boolean; trackIndex?: number })
             : JSON.parse(localStorage.getItem(focusMusicStateStorageKey) || "{}");
         if (typeof parsed.playing === "boolean") setPlaying(parsed.playing);
-        if (typeof parsed.trackIndex === "number") {
+        if (typeof parsed.trackIndex === "number" && tracks.length) {
           setTrackIndex(Math.max(0, Math.min(tracks.length - 1, parsed.trackIndex)));
         }
       } catch {
@@ -85,7 +80,13 @@ export function FocusMusicDock() {
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
         <button
           type="button"
-          onClick={() => setPlaying((current) => !current)}
+          onClick={() => {
+            if (!selectedTrack) {
+              setOpen(true);
+              return;
+            }
+            setPlaying((current) => !current);
+          }}
           className={`grid h-10 w-10 place-items-center rounded-full transition ${
             playing
               ? "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-slate-950"
@@ -95,11 +96,11 @@ export function FocusMusicDock() {
         >
           {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
         </button>
-        <div className={`h-9 w-9 rounded-[14px] bg-gradient-to-br ${selectedTrack.color}`} />
+        <div className={`h-9 w-9 rounded-[14px] ${selectedTrack ? `bg-gradient-to-br ${selectedTrack.color}` : "bg-white/10"}`} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{selectedTrack.title}</p>
+          <p className="truncate text-sm font-semibold">{selectedTrack?.title || "No music playing"}</p>
           <p className="muted truncate text-xs">
-            {selectedTrack.mood} focus queue persists between Dashboard and Studio
+            {selectedTrack ? `${selectedTrack.mood} focus queue persists between Dashboard and Studio` : "Connect Spotify to browse account music. Free accounts may have limited playback."}
           </p>
         </div>
         <button
@@ -127,7 +128,7 @@ export function FocusMusicDock() {
           </div>
 
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {filteredTracks.map((track, index) => {
+            {filteredTracks.length ? filteredTracks.map((track, index) => {
               const realIndex = tracks.findIndex((item) => item.title === track.title);
               return (
                 <button
@@ -143,19 +144,35 @@ export function FocusMusicDock() {
                   <p className="muted mt-1 text-xs">{track.artist} • {track.mood}</p>
                 </button>
               );
-            })}
+            }) : (
+              <div className="rounded-[20px] border border-dashed border-white/14 bg-white/6 p-4 text-sm sm:col-span-2">
+                <p className="font-semibold">No music playing</p>
+                <p className="muted mt-1 text-xs">Connect Spotify to browse account music. Free Spotify accounts may have limited playback; YouTube Music and SoundCloud are unavailable here.</p>
+              </div>
+            )}
           </div>
 
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            {providerStatus.map((provider) => (
-              <div key={provider.name} className="rounded-[18px] bg-white/8 px-3 py-3">
+            {providerStatus.map((provider) => {
+              const contents = (
+                <>
                 <p className="inline-flex items-center gap-2 text-xs font-semibold">
                   <Music className="h-3.5 w-3.5 text-[var(--accent-gold)]" />
                   {provider.name}
                 </p>
                 <p className="muted mt-1 text-[11px]">{provider.status}</p>
-              </div>
-            ))}
+                </>
+              );
+              return provider.href && !provider.disabled ? (
+                <a key={provider.name} href={provider.href} className="rounded-[18px] bg-white/8 px-3 py-3 transition hover:bg-white/14">
+                  {contents}
+                </a>
+              ) : (
+                <button key={provider.name} type="button" disabled className="cursor-not-allowed rounded-[18px] bg-white/6 px-3 py-3 text-left opacity-70">
+                  {contents}
+                </button>
+              );
+            })}
           </div>
         </div>
       ) : null}

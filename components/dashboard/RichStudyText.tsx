@@ -1,8 +1,28 @@
 "use client";
 
-import { useEffect, useId, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+const superscriptMap: Record<string, string> = {
+  "0": "⁰",
+  "1": "¹",
+  "2": "²",
+  "3": "³",
+  "4": "⁴",
+  "5": "⁵",
+  "6": "⁶",
+  "7": "⁷",
+  "8": "⁸",
+  "9": "⁹",
+  "+": "⁺",
+  "-": "⁻",
+  "=": "⁼",
+  "(": "⁽",
+  ")": "⁾",
+  n: "ⁿ",
+  i: "ⁱ"
+};
 
 function normalizeStudyContent(content: string) {
   const normalized = content.replace(/^Local fallback response\s*/i, "").trim();
@@ -12,6 +32,53 @@ function normalizeStudyContent(content: string) {
   }
 
   return normalized;
+}
+
+function toUnicodeSuperscript(value: string) {
+  const clean = value.replace(/^\{|\}$/g, "").replace(/^\(|\)$/g, "");
+  return clean
+    .split("")
+    .map((character) => superscriptMap[character] ?? character)
+    .join("");
+}
+
+function renderMathAwareText(children: React.ReactNode) {
+  return React.Children.map(children, (child) => {
+    if (typeof child !== "string") return child;
+    const parts: React.ReactNode[] = [];
+    const pattern = /(\$[^$]+\$)|([A-Za-z0-9)\]}]+)\^(\{[^}]+\}|\([^)]+\)|[-+]?\d+|[A-Za-z])/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(child))) {
+      if (match.index > lastIndex) {
+        parts.push(child.slice(lastIndex, match.index));
+      }
+
+      if (match[1]) {
+        parts.push(
+          <span key={`${match.index}-formula`} className="rounded-lg bg-white/10 px-1.5 py-0.5 font-mono text-[0.95em] text-[var(--accent-mint)]">
+            {match[1].slice(1, -1)}
+          </span>
+        );
+      } else {
+        parts.push(match[2]);
+        parts.push(
+          <sup key={`${match.index}-sup`} className="font-mono text-[0.75em] leading-none">
+            {toUnicodeSuperscript(match[3])}
+          </sup>
+        );
+      }
+
+      lastIndex = pattern.lastIndex;
+    }
+
+    if (lastIndex < child.length) {
+      parts.push(child.slice(lastIndex));
+    }
+
+    return parts.length ? parts : child;
+  });
 }
 
 function MermaidBlock({ chart }: { chart: string }) {
@@ -88,7 +155,7 @@ export function RichStudyText({
         const inline = !className;
         if (inline) {
           return (
-            <code {...props} className="rounded bg-black/20 px-1.5 py-0.5 text-[0.95em]">
+            <code {...props} className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-[0.95em] text-[var(--accent-gold)]">
               {children}
             </code>
           );
@@ -99,13 +166,27 @@ export function RichStudyText({
         }
 
         return (
-          <pre className="overflow-x-auto rounded-[20px] bg-black/20 p-4 text-sm leading-7">
-            <code {...props} className={className}>
-              {children}
-            </code>
-          </pre>
+          <div className="my-4 overflow-hidden rounded-[22px] border border-white/10 bg-[#111827] shadow-[0_20px_80px_rgba(0,0,0,0.22)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/6 px-4 py-2">
+              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--accent-sky)]">
+                Code
+              </span>
+              <span className="rounded-full bg-[rgba(255,178,105,0.16)] px-2 py-1 text-[10px] font-semibold text-[var(--accent-gold)]">
+                AI Code Output May Make Mistakes.
+              </span>
+            </div>
+            <pre className="overflow-x-auto p-4 text-sm leading-7 text-slate-100">
+              <code {...props} className={`${className || ""} font-mono`}>
+                {children}
+              </code>
+            </pre>
+          </div>
         );
-      }
+      },
+      p: ({ children, ...props }) => <p {...props}>{renderMathAwareText(children)}</p>,
+      li: ({ children, ...props }) => <li {...props}>{renderMathAwareText(children)}</li>,
+      td: ({ children, ...props }) => <td {...props}>{renderMathAwareText(children)}</td>,
+      th: ({ children, ...props }) => <th {...props}>{renderMathAwareText(children)}</th>
     }),
     []
   );

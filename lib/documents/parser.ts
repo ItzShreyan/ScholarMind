@@ -2,6 +2,7 @@ import {
   isDocxDocument,
   isImageDocument,
   isPdfDocument,
+  isPresentationDocument,
   isSpreadsheetDocument,
   isTextLikeDocument
 } from "@/lib/documents/formats";
@@ -119,6 +120,43 @@ async function extractDocxDocument(buffer: Buffer) {
   return result.value || "";
 }
 
+function stripXmlToReadableText(xml: string) {
+  return decodeBasicHtmlEntities(
+    xml
+      .replace(/<a:br\s*\/>/gi, "\n")
+      .replace(/<\/(?:a:t|text:p|text:h|text:span)>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+  );
+}
+
+async function extractPresentationDocument(buffer: Buffer, fileName: string) {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(buffer);
+  const isOdp = /\.odp$/i.test(fileName);
+
+  if (isOdp) {
+    const contentFile = zip.file("content.xml");
+    if (!contentFile) return "";
+    return normalizeWhitespace(stripXmlToReadableText(await contentFile.async("text")));
+  }
+
+  const slideFiles = Object.values(zip.files)
+    .filter((file) => !file.dir && /^ppt\/slides\/slide\d+\.xml$/i.test(file.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+    .slice(0, 80);
+
+  const slideTexts = await Promise.all(
+    slideFiles.map(async (file, index) => {
+      const text = normalizeWhitespace(stripXmlToReadableText(await file.async("text")));
+      return text ? `Slide ${index + 1}\n${text}` : "";
+    })
+  );
+
+  return slideTexts.filter(Boolean).join("\n\n");
+}
+
 async function extractSpreadsheetDocument(buffer: Buffer) {
   const xlsx = await import("xlsx");
   const workbook = xlsx.read(buffer, { type: "buffer", cellText: true, cellDates: true });
@@ -200,12 +238,14 @@ async function extractFromBuffer({
       text = await extractSpreadsheetDocument(buffer);
     } else if (isDocxDocument(fileName, fileType)) {
       text = await extractDocxDocument(buffer);
+    } else if (isPresentationDocument(fileName, fileType)) {
+      text = await extractPresentationDocument(buffer, fileName);
     } else if (isPdfDocument(fileName, fileType)) {
       text = await extractPdfDocument(buffer);
     } else if (isImageDocument(fileName, fileType)) {
       text = await recognizeImage(buffer);
     } else {
-      return unreadable("This file type is not supported yet. Reupload it as PDF, image, text, Word, or spreadsheet.");
+      return unreadable("This file type is not supported yet. Reupload it as PDF, image, text, Word, spreadsheet, or presentation slides.");
     }
 
     const normalized = clipText(cleanStudySourceText(text));

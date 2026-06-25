@@ -13,6 +13,7 @@ const textExtensions = [
 
 const spreadsheetExtensions = ["csv", "tsv", "xlsx", "xls", "ods"];
 const docExtensions = ["docx"];
+const presentationExtensions = ["pptx", "odp"];
 const pdfExtensions = ["pdf"];
 const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif"];
 
@@ -39,6 +40,10 @@ const spreadsheetMimeSubstrings = [
 
 const docMimeSubstrings = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+];
+const presentationMimeSubstrings = [
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.presentation"
 ];
 
 const imageMimeSubstrings = ["image/"];
@@ -67,6 +72,10 @@ export function isSpreadsheetDocument(fileName: string, fileType?: string) {
 
 export function isDocxDocument(fileName: string, fileType?: string) {
   return docExtensions.includes(getFileExtension(fileName)) || hasMimeMatch(fileType, docMimeSubstrings);
+}
+
+export function isPresentationDocument(fileName: string, fileType?: string) {
+  return presentationExtensions.includes(getFileExtension(fileName)) || hasMimeMatch(fileType, presentationMimeSubstrings);
 }
 
 export function isPdfDocument(fileName: string, fileType?: string) {
@@ -110,6 +119,8 @@ export const uploadAcceptAttribute = [
   ".xls",
   ".ods",
   ".docx",
+  ".pptx",
+  ".odp",
   ".pdf",
   ".png",
   ".jpg",
@@ -131,6 +142,8 @@ export const uploadAcceptAttribute = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.oasis.opendocument.spreadsheet",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.oasis.opendocument.presentation",
   "application/pdf",
   "image/png",
   "image/jpeg",

@@ -1,6 +1,6 @@
 "use client";
 
-import { DragEvent as ReactDragEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DragEvent as ReactDragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Brain,
@@ -63,6 +63,12 @@ type FileItem = {
   source_enabled?: boolean;
 };
 type ChatMessage = { role: "user" | "ai"; content: string };
+type ChatThread = {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  updatedAt: number;
+};
 type AIAction =
   | "summary"
   | "flashcards"
@@ -178,6 +184,24 @@ type CopiedSourceClipboard = {
   sourceStudioTitle: string;
   copiedAt: number;
 };
+type CanvasTool = "mouse" | "text" | "highlight" | "draw";
+type CanvasAnnotation = {
+  id: string;
+  tabId: string;
+  tool: Exclude<CanvasTool, "mouse">;
+  text: string;
+  createdAt: number;
+};
+type CanvasPoint = { x: number; y: number; pressure: number };
+type CanvasStroke = {
+  id: string;
+  tabId: string;
+  tool: "highlight" | "draw";
+  color: string;
+  width: number;
+  points: CanvasPoint[];
+  createdAt: number;
+};
 
 const desktopLeftPanelDefault = 360;
 const desktopRightPanelDefault = 520;
@@ -189,58 +213,30 @@ const desktopCenterPanelMin = 460;
 const desktopResizeHandleWidth = 14;
 const sourceClipboardStorageKey = "scholarmind_source_clipboard";
 const focusMusicStateStorageKey = "scholarmind_focus_music_state";
-const focusTracks = [
-  { title: "Soft Focus", artist: "ScholarMind", mood: "Lo-fi", color: "from-cyan-300 to-emerald-300" },
-  { title: "Deep Revision", artist: "ScholarMind", mood: "Ambient", color: "from-orange-300 to-yellow-200" },
-  { title: "Exam Sprint", artist: "ScholarMind", mood: "Low beat", color: "from-rose-300 to-sky-300" }
-];
+const chatThreadsStoragePrefix = "scholarmind_chat_threads:";
+const focusTracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
 
 const musicProviders = [
-  { key: "spotify", name: "Spotify", logo: "S", href: "https://developer.spotify.com/dashboard", note: "Connect available" },
+  { key: "spotify", name: "Spotify", logo: "S", href: "/api/music/spotify/login", note: "Connect account • Free accounts have limited playback", unavailable: false },
   {
     key: "youtube",
     name: "YouTube Music",
     logo: "YT",
-    href: "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
-    note: "Needs a YouTube Data API key"
+    href: null,
+    note: "Unavailable in preview",
+    unavailable: true
   },
   {
     key: "soundcloud",
     name: "SoundCloud",
     logo: "SC",
-    href: "https://developers.soundcloud.com/",
-    note: "Account linking unavailable"
+    href: null,
+    note: "Account linking unavailable",
+    unavailable: true
   }
 ];
 
-const musicLibrary = [
-  { title: "Rainy Revision", artist: "Focus queue", type: "Playlist", provider: "Spotify", mood: "Lo-fi" },
-  { title: "Exam Sprint Beats", artist: "ScholarMind mix", type: "Playlist", provider: "YouTube Music", mood: "Low beat" },
-  { title: "Quiet Library", artist: "Ambient study", type: "Album", provider: "SoundCloud", mood: "Ambient" },
-  { title: "Deep Work Piano", artist: "Study instrumentals", type: "Album", provider: "Spotify", mood: "Calm" }
-];
-
-const sourceEngineOptions: Array<{
-  key: SourceSearchEngine;
-  label: string;
-  copy: string;
-}> = [
-  {
-    key: "scholar",
-    label: "Scholar",
-    copy: "Academic papers and trusted learning sources first."
-  },
-  {
-    key: "google",
-    label: "Google",
-    copy: "Broader web search with a source-quality warning."
-  },
-  {
-    key: "duckduckgo",
-    label: "DuckDuckGo",
-    copy: "Open-web search for quick explainers and references."
-  }
-];
+const musicLibrary: Array<{ title: string; artist: string; type: string; provider: string; mood: string }> = [];
 
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
@@ -600,18 +596,18 @@ function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
   const sourceList = files.map((file) => file.file_name).join(", ");
   const focus = draft.focus.trim() || "the most important ideas across all uploaded files";
   const difficulty = draft.difficulty === "exam" ? "exam-level" : "foundation-level";
-  const preface = `Use only the uploaded study sources. Base the output on these files: ${sourceList}. Focus on ${focus}. Keep the output ${difficulty}.`;
+  const preface = `Use only the uploaded study sources. Base the output on these files: ${sourceList}. Focus on ${focus}. Keep the output ${difficulty}. Do not paste source metadata, filenames, URLs, AI context, or prompt instructions unless the user needs a citation. Do not output placeholders. Produce the final student-facing study material only.`;
 
   switch (draft.action) {
     case "quiz":
-      return `${preface} Generate ${count} high-quality multiple-choice questions like a real study platform. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Every question must test a specific fact, method, formula, misconception, source detail, or exam skill from the uploaded material. Avoid generic options like "source", "definition", "examples", or "types". Make distractors plausible, not silly. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief but useful. Return only JSON with this exact shape: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
+      return `${preface} Generate ${count} high-quality multiple-choice questions like a real study platform. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Every question must test a specific fact, method, formula, misconception, source detail, or exam skill from the uploaded material. Avoid generic options like "source", "definition", "examples", or "types". Make distractors plausible, not silly. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief but useful. Return only a JSON array with this exact shape and no markdown: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
     case "flashcards":
       return `${preface} Generate ${count} strong active-recall flashcards. Each front must be a real term, question, formula, process, date, quote, rule, or recall cue from the sources, not a generic word. The back should be concise, accurate, and phrased like a student-friendly memory answer. Keep each front under 14 words and each back under 45 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
     case "exam":
       if (draft.examMode === "practice") {
-        return `${preface} Generate ${Math.max(4, Math.min(12, count))} exam-style practice questions in markdown, not a full exam. Include mark allocations, space for working, and a compact mark scheme at the end. Questions must be source-specific, realistic, and useful for quick revision. If the material is mathematical, include method-based questions and formulas where helpful.`;
+        return `${preface} Generate ${Math.max(4, Math.min(12, count))} original exam-style practice questions in markdown, not a full exam. Include mark allocations, space for working, and a compact mark scheme at the end. Questions must be source-specific, realistic, and useful for quick revision. If the material is mathematical, include method-based questions and formulas where helpful. Do not copy real past-paper questions.`;
       }
-      return `${preface} Generate a long full ${focus} mock exam in markdown with around ${Math.max(32, count + 18)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the feel of a real GCSE, A-Level, school, or university mock paper rather than a short worksheet. Use source-specific wording, not generic filler. If the material is mathematical, include method-based questions, multi-step problems, formulas, diagrams or tables when helpful, and require working.`;
+      return `${preface} Generate a long original ${focus} mock exam in markdown with around ${Math.max(36, count + 22)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the feel of a real GCSE, A-Level, school, university, or international mock paper rather than a short worksheet, while creating new questions instead of copying past papers. Use source-specific wording, not generic filler. If the material is mathematical, include method-based questions, multi-step problems, formulas, diagrams or tables when helpful, and require working.`;
     case "notes":
       return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, curriculum-aware, and much more detailed than a summary. Teach the topic like a patient tutor: clear chapter sections, short paragraphs, definitions, formulas, worked examples, common mistakes, callouts, diagrams/tables where useful, and practice questions with hints and answers. Include enough depth that a student can revise from it without needing the original source open. Include formulaBlocks only when formulas genuinely matter. Include scienceSimulation only when the source is clearly science/STEM and an interactive simulation would actually help understanding, such as particles, waves, circuits, forces, energy transfer, rates of reaction, diffusion, osmosis, or cells. Do not include any simulation for non-science or where a simulation would feel forced. Return JSON with title, subject, level, estimatedTime, sections, callouts, formulaBlocks, workedExamples, practiceQuestions, diagrams, scienceSimulation or simulationSpec, and sourceNotes.`;
     case "summary":
@@ -821,6 +817,8 @@ export function StudyWorkspace({
   const [activeAction, setActiveAction] = useState<AIAction>("summary");
   const [toolDraft, setToolDraft] = useState<ToolDraft>(createToolDraft("summary"));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
+  const [showChatThreads, setShowChatThreads] = useState(false);
   const [chatHistoryReadySession, setChatHistoryReadySession] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
@@ -836,12 +834,20 @@ export function StudyWorkspace({
   const [timerPhase, setTimerPhase] = useState<"focus" | "break" | "done">("focus");
   const [breakPopupOpen, setBreakPopupOpen] = useState(false);
   const [chatFullscreen, setChatFullscreen] = useState(false);
+  const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
   const [screenAwarePulse, setScreenAwarePulse] = useState(false);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
   const [workspaceSearchLoading, setWorkspaceSearchLoading] = useState(false);
   const [workspaceSearchError, setWorkspaceSearchError] = useState("");
   const [splitWorkspaceTabId, setSplitWorkspaceTabId] = useState<string | null>(null);
+  const [splitPickerOpen, setSplitPickerOpen] = useState(false);
   const [splitRatio, setSplitRatio] = useState(50);
+  const [splitDragTabId, setSplitDragTabId] = useState<string | null>(null);
+  const [splitDropSide, setSplitDropSide] = useState<"left" | "right" | null>(null);
+  const [canvasTool, setCanvasTool] = useState<CanvasTool>("mouse");
+  const [canvasAnnotations, setCanvasAnnotations] = useState<CanvasAnnotation[]>([]);
+  const [canvasStrokes, setCanvasStrokes] = useState<CanvasStroke[]>([]);
+  const [activeCanvasStroke, setActiveCanvasStroke] = useState<CanvasStroke | null>(null);
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicPanelOpen, setMusicPanelOpen] = useState(false);
@@ -900,15 +906,55 @@ export function StudyWorkspace({
   });
   const [, setDragDepth] = useState(0);
 
+  const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
+    try {
+      localStorage.setItem(`${chatThreadsStoragePrefix}${sessionId}`, JSON.stringify(threads.slice(0, 12)));
+    } catch {
+      // Recent chat snapshots are helpful but should never block the tutor.
+    }
+  }, []);
+
+  const snapshotCurrentChat = useCallback(() => {
+    if (!activeSessionId || messages.length < 2) return;
+    const title =
+      messages.find((message) => message.role === "user")?.content.replace(/\s+/g, " ").trim().slice(0, 56) ||
+      "Recent tutor chat";
+    const thread: ChatThread = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      title,
+      messages: messages.slice(-80),
+      updatedAt: Date.now()
+    };
+    setChatThreads((current) => {
+      const next = [thread, ...current.filter((item) => item.title !== title)].slice(0, 12);
+      persistChatThreads(activeSessionId, next);
+      return next;
+    });
+  }, [activeSessionId, messages, persistChatThreads]);
+
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
+      setChatThreads([]);
       setChatHistoryReadySession(null);
       return;
     }
 
     let ignore = false;
     setChatHistoryReadySession(null);
+    try {
+      const rawThreads = localStorage.getItem(`${chatThreadsStoragePrefix}${activeSessionId}`);
+      const parsedThreads = rawThreads ? (JSON.parse(rawThreads) as ChatThread[]) : [];
+      setChatThreads(
+        Array.isArray(parsedThreads)
+          ? parsedThreads
+              .filter((thread) => thread?.id && Array.isArray(thread.messages))
+              .slice(0, 12)
+          : []
+      );
+    } catch {
+      setChatThreads([]);
+    }
 
     const loadChatHistory = async () => {
       try {
@@ -1141,14 +1187,17 @@ export function StudyWorkspace({
     setSourceModalOpen(false);
     setSourceModalError("");
     setSourceSearchWarning("");
+    setSourceModalQuery("");
+    setSourceSearchEngine("scholar");
   };
 
   const openSourceModal = (
-    reason = "Add a file or a verified web source to unlock chat and tools.",
-    mode: "upload" | "web" = "upload"
+    reason = "Add notes to unlock chat and tools.",
+    _mode: "upload" | "web" = "upload"
   ) => {
+    void _mode;
     setSourceModalReason(reason);
-    setSourceModalMode(mode);
+    setSourceModalMode("upload");
     setSourceModalError("");
     setVisibleSourceResults(12);
     setSourceResultFilter("all");
@@ -1235,14 +1284,14 @@ export function StudyWorkspace({
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
   }, [timerRemaining]);
   const timerHasStarted = timerRemaining > 0 || timerPhase === "done";
-  const selectedTrack = focusTracks[selectedTrackIndex] ?? focusTracks[0];
+  const selectedTrack = focusTracks[selectedTrackIndex] ?? null;
   useEffect(() => {
     try {
       const raw = localStorage.getItem(focusMusicStateStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw) as { playing?: boolean; trackIndex?: number };
         if (typeof parsed.playing === "boolean") setMusicPlaying(parsed.playing);
-        if (typeof parsed.trackIndex === "number") {
+        if (typeof parsed.trackIndex === "number" && focusTracks.length) {
           setSelectedTrackIndex(Math.max(0, Math.min(focusTracks.length - 1, parsed.trackIndex)));
         }
       }
@@ -1466,7 +1515,7 @@ export function StudyWorkspace({
         next[existingIndex] = nextTab;
         return next;
       }
-      return [...current, nextTab].slice(-8);
+      return [...current, nextTab].slice(-16);
     });
     setWorkspaceTab(nextTab.id);
     setTab("chat");
@@ -1477,6 +1526,64 @@ export function StudyWorkspace({
     setWorkspaceTab((current) => (current === tabId ? "home" : current));
     setSplitWorkspaceTabId((current) => (current === tabId ? null : current));
   }, []);
+
+  const openDraggedWorkspaceSplit = useCallback(
+    (draggedTabId: string, side: "left" | "right") => {
+      const draggedTab = workspaceTabs.find((item) => item.id === draggedTabId);
+      if (!draggedTab) return;
+
+      const currentDynamicTab = workspaceTabs.find((item) => item.id === workspaceTab && item.id !== draggedTabId);
+      const fallbackPartner = workspaceTabs.find((item) => item.id !== draggedTabId);
+      const partnerTab = currentDynamicTab ?? fallbackPartner;
+
+      if (!partnerTab) {
+        setWorkspaceTab(draggedTabId);
+        setSplitWorkspaceTabId(null);
+        setStatusNote("Open another note, search result, or AI output before using split view.");
+        return;
+      }
+
+      if (side === "left") {
+        setWorkspaceTab(draggedTabId);
+        setSplitWorkspaceTabId(partnerTab.id);
+      } else {
+        setWorkspaceTab(partnerTab.id);
+        setSplitWorkspaceTabId(draggedTabId);
+      }
+
+      setSplitPickerOpen(false);
+      setSplitDragTabId(null);
+      setSplitDropSide(null);
+      setStatusNote(`${draggedTab.label} opened in split view. Drag another tab to either side to rearrange.`);
+    },
+    [workspaceTab, workspaceTabs]
+  );
+
+  const restoreChatThread = useCallback((thread: ChatThread) => {
+    snapshotCurrentChat();
+    setMessages(thread.messages);
+    setChat("");
+    setShowChatThreads(false);
+    setTab("tools");
+    setStatusNote(`Restored chat: ${thread.title}`);
+  }, [snapshotCurrentChat]);
+
+  const deleteChatThread = useCallback((threadId: string) => {
+    if (!activeSessionId) return;
+    setChatThreads((current) => {
+      const next = current.filter((thread) => thread.id !== threadId);
+      persistChatThreads(activeSessionId, next);
+      return next;
+    });
+  }, [activeSessionId, persistChatThreads]);
+
+  const startNewChat = useCallback(() => {
+    snapshotCurrentChat();
+    setMessages([]);
+    setChat("");
+    setShowChatThreads(false);
+    setStatusNote("Started a new tutor chat. Recent chats are saved in this studio.");
+  }, [snapshotCurrentChat]);
 
   const openCurrentResultInCanvas = useCallback(() => {
     if (!output) {
@@ -1519,7 +1626,7 @@ export function StudyWorkspace({
       upsertWorkspaceTab({
         id: `output-${action}-${Date.now()}`,
         label: focusLabel ? `${label}: ${clipText(focusLabel, 24)}` : label,
-        kind: "output",
+        kind: "canvas-output",
         action,
         output: generatedOutput,
         closable: true
@@ -1592,6 +1699,96 @@ export function StudyWorkspace({
     [upsertWorkspaceTab]
   );
 
+  const addCanvasAnnotation = useCallback((tabId: string, tool: Exclude<CanvasTool, "mouse">) => {
+    const defaultText =
+      tool === "highlight"
+        ? "Highlighted for review"
+        : tool === "draw"
+          ? "Drawing note"
+          : "Annotation";
+    const text = window.prompt(
+      tool === "highlight"
+        ? "What should this highlight remind you?"
+        : tool === "draw"
+          ? "Describe the drawing or working you want to attach."
+          : "Add a note to this canvas.",
+      defaultText
+    );
+    if (!text?.trim()) return;
+    setCanvasAnnotations((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        tabId,
+        tool,
+        text: text.trim(),
+        createdAt: Date.now()
+      },
+      ...current
+    ]);
+    setStatusNote("Canvas annotation added. The tutor can use visible canvas notes as study context.");
+  }, []);
+
+  const getCanvasPointerPoint = useCallback((event: ReactPointerEvent<HTMLDivElement>): CanvasPoint => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      pressure: event.pressure && event.pressure > 0 ? event.pressure : 0.5
+    };
+  }, []);
+
+  const beginCanvasStroke = useCallback(
+    (tabId: string, event: ReactPointerEvent<HTMLDivElement>) => {
+      if (canvasTool !== "draw" && canvasTool !== "highlight") return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const point = getCanvasPointerPoint(event);
+      setActiveCanvasStroke({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        tabId,
+        tool: canvasTool,
+        color: canvasTool === "highlight" ? "rgba(255, 226, 105, 0.42)" : "rgba(105, 232, 238, 0.95)",
+        width: canvasTool === "highlight" ? 18 : 4,
+        points: [point],
+        createdAt: Date.now()
+      });
+    },
+    [canvasTool, getCanvasPointerPoint]
+  );
+
+  const moveCanvasStroke = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!activeCanvasStroke) return;
+      event.preventDefault();
+      const point = getCanvasPointerPoint(event);
+      setActiveCanvasStroke((current) =>
+        current
+          ? {
+              ...current,
+              points: [...current.points, point]
+            }
+          : current
+      );
+    },
+    [activeCanvasStroke, getCanvasPointerPoint]
+  );
+
+  const finishCanvasStroke = useCallback(() => {
+    setActiveCanvasStroke((current) => {
+      if (!current || current.points.length < 2) return null;
+      setCanvasStrokes((strokes) => [current, ...strokes].slice(0, 120));
+      setStatusNote("Canvas drawing saved. Stylus, Apple Pencil, and S-Pen strokes are visible to your study context.");
+      return null;
+    });
+  }, []);
+
+  const strokePath = useCallback((points: CanvasPoint[]) => {
+    if (!points.length) return "";
+    return points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+      .join(" ");
+  }, []);
+
   const buildScreenContext = useCallback(() => {
     const openResultLabel = output
       ? `${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}: ${clipText(
@@ -1605,6 +1802,16 @@ export function StudyWorkspace({
           700
         )}`
       : "No source preview modal open.";
+    const visibleAnnotations = canvasAnnotations
+      .filter((annotation) => annotation.tabId === workspaceTab)
+      .slice(0, 8)
+      .map((annotation) => `${annotation.tool}: ${annotation.text}`)
+      .join(" | ");
+    const visibleStrokes = canvasStrokes
+      .filter((stroke) => stroke.tabId === workspaceTab)
+      .slice(0, 8)
+      .map((stroke) => `${stroke.tool} stroke with ${stroke.points.length} points`)
+      .join(" | ");
 
     return [
       `Workspace tab: ${workspaceTab}.`,
@@ -1613,6 +1820,8 @@ export function StudyWorkspace({
       `Selected tool: ${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}.`,
       openResultLabel,
       previewContext,
+      visibleAnnotations ? `Visible canvas annotations: ${visibleAnnotations}.` : "",
+      visibleStrokes ? `Visible canvas drawings: ${visibleStrokes}.` : "",
       currentToolHistory.length
         ? `Recent generated outputs: ${currentToolHistory
             .slice(0, 4)
@@ -1622,7 +1831,7 @@ export function StudyWorkspace({
     ]
       .filter(Boolean)
       .join("\n");
-  }, [activeAction, currentFilesLabel, currentSession?.title, currentToolHistory, output, preview.file?.file_name, preview.kind, preview.open, preview.text, workspaceTab]);
+  }, [activeAction, canvasAnnotations, canvasStrokes, currentFilesLabel, currentSession?.title, currentToolHistory, output, preview.file?.file_name, preview.kind, preview.open, preview.text, workspaceTab]);
 
   useEffect(() => {
     setRevealedQuiz({});
@@ -2371,6 +2580,8 @@ export function StudyWorkspace({
     }
   };
 
+  void searchWebSources;
+
   const removeFile = async (file: FileItem) => {
     setDeletingFileId(file.id);
     setStatusNote("");
@@ -2646,7 +2857,6 @@ export function StudyWorkspace({
     setLoading(true);
     setOutput("");
     setTab("tools");
-    setWorkspaceTab("result");
     setStatusNote("");
 
     const context = buildContextForPrompt(prompt, action);
@@ -2736,7 +2946,7 @@ export function StudyWorkspace({
         {
           role: "ai",
           content: playMusicCommand
-            ? `Focus music is on: ${focusTracks[selectedTrackIndex].title}. You can switch tracks or connect Spotify, YouTube Music, or SoundCloud in the music panel.`
+            ? `Open the music panel to connect Spotify. YouTube Music and SoundCloud account linking are unavailable in this preview.`
             : "Focus music is paused."
         }
       ]);
@@ -2920,7 +3130,7 @@ export function StudyWorkspace({
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, loading, messages, onboarding, runAI, selectedTrackIndex, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -3114,13 +3324,17 @@ export function StudyWorkspace({
     const isCanvas = workspaceItem.kind === "canvas-source" || workspaceItem.kind === "canvas-output";
     const isOutput = workspaceItem.kind === "output" || workspaceItem.kind === "canvas-output";
     const isSearch = workspaceItem.kind === "search";
+    const tabAnnotations = canvasAnnotations.filter((annotation) => annotation.tabId === workspaceItem.id);
+    const tabStrokes = canvasStrokes.filter((stroke) => stroke.tabId === workspaceItem.id);
+    const drawableStrokes = activeCanvasStroke?.tabId === workspaceItem.id ? [activeCanvasStroke, ...tabStrokes] : tabStrokes;
+    const canvasCanDraw = isCanvas && (canvasTool === "draw" || canvasTool === "highlight");
 
     return (
       <motion.div
         key={workspaceItem.id}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        className={`${isCanvas ? "min-h-[66vh]" : ""} space-y-4`}
+        className={`${isCanvas ? "min-h-[66vh]" : ""} relative space-y-4`}
       >
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] bg-white/8 px-4 py-3">
           <div className="min-w-0">
@@ -3157,20 +3371,97 @@ export function StudyWorkspace({
         </div>
 
         {isCanvas ? (
-          <div className="flex flex-wrap gap-2 rounded-[22px] bg-white/8 px-4 py-3 text-xs">
+          <div className="space-y-3 rounded-[22px] bg-white/8 px-4 py-3 text-xs">
+            <div className="flex flex-wrap gap-2">
             {[
-              { label: "Mouse", icon: MousePointer2 },
-              { label: "Text note", icon: PenLine },
-              { label: "Highlight", icon: Highlighter }
+              { key: "mouse", label: "Mouse", icon: MousePointer2 },
+              { key: "text", label: "Text box", icon: PenLine },
+              { key: "highlight", label: "Highlight", icon: Highlighter },
+              { key: "draw", label: "Draw / working", icon: Pencil }
             ].map((item) => (
-              <span key={item.label} className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[var(--muted)]">
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => {
+                  setCanvasTool(item.key as CanvasTool);
+                  if (item.key === "text") {
+                    addCanvasAnnotation(workspaceItem.id, item.key as Exclude<CanvasTool, "mouse">);
+                  }
+                }}
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-2 transition ${
+                  canvasTool === item.key
+                    ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))] text-[var(--fg)]"
+                    : "bg-white/10 text-[var(--muted)] hover:bg-white/16"
+                }`}
+              >
                 <item.icon className="h-3.5 w-3.5 text-[var(--accent-sky)]" />
                 {item.label}
-              </span>
+              </button>
             ))}
             <span className="inline-flex items-center rounded-full bg-[rgba(121,247,199,0.12)] px-3 py-2 text-[var(--accent-mint)]">
-              AI can use selected text + visible source context
+              Pencil and S-Pen ready
             </span>
+            {tabStrokes.length ? (
+              <button
+                type="button"
+                onClick={() => setCanvasStrokes((current) => current.filter((stroke) => stroke.tabId !== workspaceItem.id))}
+                className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[var(--muted)] transition hover:bg-white/16"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-[var(--accent-coral)]" />
+                Clear drawings
+              </button>
+            ) : null}
+            </div>
+            {tabAnnotations.length ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {tabAnnotations.map((annotation) => (
+                  <div key={annotation.id} className="rounded-[18px] border border-white/10 bg-black/10 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--accent-gold)]">
+                        {annotation.tool}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setCanvasAnnotations((current) => current.filter((item) => item.id !== annotation.id))}
+                        className="rounded-full bg-white/10 p-1 transition hover:bg-white/16"
+                        aria-label="Remove annotation"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs leading-5">{annotation.text}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {isCanvas ? (
+          <div
+            className={`absolute inset-x-0 bottom-0 top-[10.5rem] z-20 rounded-[24px] ${
+              canvasCanDraw ? "cursor-crosshair touch-none" : "pointer-events-none"
+            }`}
+            onPointerDown={(event) => beginCanvasStroke(workspaceItem.id, event)}
+            onPointerMove={moveCanvasStroke}
+            onPointerUp={finishCanvasStroke}
+            onPointerCancel={finishCanvasStroke}
+          >
+            <svg className="h-full w-full overflow-visible" aria-hidden="true">
+              {drawableStrokes.map((stroke) => (
+                <path
+                  key={stroke.id}
+                  d={strokePath(stroke.points)}
+                  fill="none"
+                  stroke={stroke.color}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={stroke.width}
+                  opacity={stroke.tool === "highlight" ? 0.72 : 0.95}
+                  style={{ filter: stroke.tool === "draw" ? "drop-shadow(0 0 8px rgba(105,232,238,0.28))" : undefined }}
+                />
+              ))}
+            </svg>
           </div>
         ) : null}
 
@@ -4079,43 +4370,26 @@ export function StudyWorkspace({
                     {musicPlaying ? "Playing" : "Paused"}
                   </button>
                 </div>
-                <div className={`mt-3 rounded-[20px] bg-gradient-to-r ${selectedTrack.color} p-[1px]`}>
-                  <div className="rounded-[19px] bg-[rgba(8,14,28,0.72)] px-3 py-3">
-                    <p className="text-sm font-semibold">{selectedTrack.title}</p>
-                    <p className="muted mt-1 text-xs">{selectedTrack.artist} • {selectedTrack.mood}</p>
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  {focusTracks.map((track, index) => (
-                    <button
-                      key={track.title}
-                      type="button"
-                      onClick={() => setSelectedTrackIndex(index)}
-                      className={`rounded-[16px] px-2 py-2 text-[11px] font-medium transition ${
-                        selectedTrackIndex === index ? "bg-white/18 text-[var(--fg)]" : "bg-white/8 text-[var(--muted)] hover:bg-white/12"
-                      }`}
-                    >
-                      {track.mood}
-                    </button>
-                  ))}
+                <div className="mt-3 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
+                  <p className="text-sm font-semibold">{selectedTrack?.title || "No music playing"}</p>
+                  <p className="muted mt-1 text-xs">
+            {selectedTrack ? `${selectedTrack.artist} • ${selectedTrack.mood}` : "Connect Spotify from the music panel. Free Spotify accounts may have limited playback."}
+                  </p>
                 </div>
                 <div className="mt-3 flex gap-2">
                   <a
-                    href="https://open.spotify.com/"
-                    target="_blank"
-                    rel="noreferrer"
+                    href="/api/music/spotify/login"
                     className="flex-1 rounded-[16px] bg-white/10 px-3 py-2 text-center text-xs font-medium transition hover:bg-white/16"
                   >
                     Spotify
                   </a>
-                  <a
-                    href="https://music.youtube.com/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex-1 rounded-[16px] bg-white/10 px-3 py-2 text-center text-xs font-medium transition hover:bg-white/16"
+                  <button
+                    type="button"
+                    disabled
+                    className="flex-1 cursor-not-allowed rounded-[16px] bg-white/6 px-3 py-2 text-center text-xs font-medium text-white/45"
                   >
-                    YouTube Music
-                  </a>
+                    YT Music unavailable
+                  </button>
                 </div>
               </motion.div>
             </div>
@@ -4233,7 +4507,7 @@ export function StudyWorkspace({
                 className="w-full justify-center"
               >
                 <Upload className="h-4 w-4" />
-                Add sources
+                Add notes
               </Button>
             </div>
 
@@ -4396,60 +4670,108 @@ export function StudyWorkspace({
           </div>
         ) : null}
 
-        <section className={`min-w-0 ${tab !== "chat" ? "hidden lg:block" : "block"}`}>
+        <section
+          className={`min-w-0 ${
+            workspaceFullscreen
+              ? "fixed inset-3 z-40 block lg:inset-5"
+              : tab !== "chat"
+                ? "hidden lg:block"
+                : "block"
+          }`}
+        >
           <div
-            className={`panel panel-border rounded-[30px] p-4 transition ${
+            className={`panel panel-border relative overflow-hidden rounded-[30px] p-4 transition ${
               screenAwarePulse ? "shadow-[0_0_0_2px_rgba(57,208,255,0.38),0_0_55px_rgba(255,125,89,0.22)]" : ""
             }`}
           >
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            {screenAwarePulse ? (
+              <motion.div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 rounded-[30px] opacity-80"
+                animate={{
+                  background: [
+                    "radial-gradient(circle at 12% 20%, rgba(255,125,89,0.22), transparent 28%), radial-gradient(circle at 88% 18%, rgba(57,208,255,0.24), transparent 30%)",
+                    "radial-gradient(circle at 82% 30%, rgba(121,247,199,0.22), transparent 30%), radial-gradient(circle at 20% 80%, rgba(255,209,102,0.18), transparent 28%)",
+                    "radial-gradient(circle at 12% 20%, rgba(255,125,89,0.22), transparent 28%), radial-gradient(circle at 88% 18%, rgba(57,208,255,0.24), transparent 30%)"
+                  ]
+                }}
+                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+              />
+            ) : null}
+            <div className="relative z-10 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">Studio Workspace</p>
                 <p className="muted text-xs">Open sources, notes, practice, and saved study results without losing your place.</p>
               </div>
-              <Button onClick={() => setChatFullscreen(true)} variant="ghost" size="sm">
-                <Maximize2 className="h-4 w-4" />
-                Tutor focus
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => setWorkspaceFullscreen((current) => !current)} variant="ghost" size="sm">
+                  {workspaceFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                  {workspaceFullscreen ? "Exit workspace" : "Fullscreen"}
+                </Button>
+                <Button
+                  onClick={() => setSplitPickerOpen((current) => !current)}
+                  variant="ghost"
+                  size="sm"
+                  disabled={!activeWorkspaceDynamicTab && workspaceTab !== "home" && workspaceTab !== "sources"}
+                >
+                  <Copy className="h-4 w-4" />
+                  Split view
+                </Button>
+                <Button onClick={() => setChatFullscreen(true)} variant="ghost" size="sm">
+                  <Maximize2 className="h-4 w-4" />
+                  Tutor focus
+                </Button>
+              </div>
             </div>
 
-            <div className="mt-4 overflow-hidden rounded-[26px] border border-white/10 bg-[rgba(5,10,22,0.18)]">
+            <div className="relative z-10 mt-4 overflow-hidden rounded-[26px] border border-white/10 bg-[rgba(5,10,22,0.18)]">
               <div className="flex gap-1 overflow-x-auto border-b border-white/10 bg-white/6 px-3 pt-3">
                 {[
                   { key: "home", label: "Home" },
-                  { key: "sources", label: `Sources (${sourceEnabledCount})` },
-                  { key: "result", label: output ? actionButtons.find((item) => item.key === activeAction)?.label || "Result" : "AI Output" },
+                  { key: "sources", label: `Notes (${sourceEnabledCount})` },
                   ...workspaceTabs.map((item) => ({ key: item.id, label: item.label, dynamic: item }))
                 ].map((item) => (
                   <button
                     key={item.key}
                     type="button"
-	                    onClick={() => {
-	                      setWorkspaceTab(item.key);
-	                      if ("dynamic" in item && item.dynamic?.kind.includes("output") && item.dynamic.output) {
-	                        setActiveAction(item.dynamic.action ?? "summary");
-	                        setOutput(item.dynamic.output);
-	                      }
-	                    }}
-	                    onContextMenu={(event) => {
-	                      if (!("dynamic" in item) || !item.dynamic) return;
-	                      event.preventDefault();
-	                      setSplitWorkspaceTabId((current) => (current === item.key ? null : item.key));
-	                      setStatusNote(
-	                        splitWorkspaceTabId === item.key
-	                          ? "Split view closed."
-	                          : `${item.label} pinned to split view. Open another tab to compare side by side.`
-	                      );
-	                    }}
-	                    className={`group inline-flex items-center gap-2 rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
-	                      workspaceTab === item.key
-	                        ? "bg-[rgba(255,255,255,0.16)] text-[var(--fg)]"
-	                        : splitWorkspaceTabId === item.key
-	                          ? "bg-[rgba(57,208,255,0.12)] text-[var(--accent-sky)]"
-	                          : "text-[var(--muted)] hover:bg-white/8 hover:text-[var(--fg)]"
-	                    }`}
-	                    title={"dynamic" in item && item.dynamic ? "Right-click to pin or unpin split view" : undefined}
-	                  >
+                    draggable={"dynamic" in item && !!item.dynamic}
+                    onDragStart={(event) => {
+                      if (!("dynamic" in item) || !item.dynamic) return;
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", item.key);
+                      setSplitDragTabId(item.key);
+                      setSplitDropSide(null);
+                    }}
+                    onDragEnd={() => {
+                      setSplitDragTabId(null);
+                      setSplitDropSide(null);
+                    }}
+                    onClick={() => {
+                      setWorkspaceTab(item.key);
+                      if ("dynamic" in item && item.dynamic?.kind.includes("output") && item.dynamic.output) {
+                        setActiveAction(item.dynamic.action ?? "summary");
+                        setOutput(item.dynamic.output);
+                      }
+                    }}
+                    onContextMenu={(event) => {
+                      if (!("dynamic" in item) || !item.dynamic) return;
+                      event.preventDefault();
+                      setSplitWorkspaceTabId((current) => (current === item.key ? null : item.key));
+                      setStatusNote(
+                        splitWorkspaceTabId === item.key
+                          ? "Split view closed."
+                          : `${item.label} pinned to split view. Open another tab to compare side by side.`
+                      );
+                    }}
+                    className={`group inline-flex items-center gap-2 rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
+                      workspaceTab === item.key
+                        ? "bg-[rgba(255,255,255,0.16)] text-[var(--fg)]"
+                        : splitWorkspaceTabId === item.key
+                          ? "bg-[rgba(57,208,255,0.12)] text-[var(--accent-sky)]"
+                          : "text-[var(--muted)] hover:bg-white/8 hover:text-[var(--fg)]"
+                    } ${"dynamic" in item && item.dynamic ? "cursor-grab active:cursor-grabbing" : ""}`}
+                    title={"dynamic" in item && item.dynamic ? "Drag left/right to split, or right-click to pin split view" : undefined}
+                  >
                     {item.label}
                     {"dynamic" in item && item.dynamic ? (
                       <span
@@ -4475,6 +4797,101 @@ export function StudyWorkspace({
                   </button>
                 ))}
               </div>
+              {splitPickerOpen ? (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="border-b border-white/10 bg-[rgba(8,14,28,0.78)] px-4 py-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold">Choose a tab to compare</p>
+                      <p className="muted mt-1 text-xs">Open a source, canvas, search, or output beside the current tab.</p>
+                    </div>
+                    <Button onClick={() => setSplitPickerOpen(false)} variant="ghost" size="sm">
+                      <X className="h-4 w-4" />
+                      Close
+                    </Button>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {workspaceTabs.length ? workspaceTabs.map((item) => (
+                      <button
+                        key={`split-${item.id}`}
+                        type="button"
+                        onClick={() => {
+                          setSplitWorkspaceTabId(item.id);
+                          setSplitPickerOpen(false);
+                          setStatusNote(`${item.label} opened in split view. Use the slider to adjust the workspace.`);
+                        }}
+                        disabled={item.id === workspaceTab}
+                        className={`rounded-full px-3 py-2 text-xs font-semibold transition ${
+                          item.id === workspaceTab
+                            ? "cursor-not-allowed bg-white/6 text-white/40"
+                            : "bg-white/10 hover:bg-white/16"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    )) : (
+                      <p className="muted text-sm">Open a note, search result, or AI output first, then split it beside another tab.</p>
+                    )}
+                  </div>
+                </motion.div>
+              ) : null}
+
+              {splitDragTabId ? (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-x-3 top-16 z-30 grid min-h-[20rem] grid-cols-2 gap-3 rounded-[28px] border border-white/10 bg-[rgba(4,9,20,0.72)] p-3 backdrop-blur-xl"
+                >
+                  {(["left", "right"] as const).map((side) => (
+                    <div
+                      key={`split-drop-${side}`}
+                      role="button"
+                      tabIndex={0}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = "move";
+                        setSplitDropSide(side);
+                      }}
+                      onDragLeave={() => setSplitDropSide((current) => (current === side ? null : current))}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const draggedId = event.dataTransfer.getData("text/plain") || splitDragTabId;
+                        openDraggedWorkspaceSplit(draggedId, side);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openDraggedWorkspaceSplit(splitDragTabId, side);
+                        }
+                      }}
+                      className={`grid place-items-center rounded-[24px] border border-dashed p-6 text-center transition ${
+                        splitDropSide === side
+                          ? "border-[var(--accent-sky)] bg-[rgba(57,208,255,0.18)] shadow-[0_0_45px_rgba(57,208,255,0.16)]"
+                          : "border-white/18 bg-white/8"
+                      }`}
+                    >
+                      <motion.div
+                        animate={{ y: splitDropSide === side ? -4 : 0, scale: splitDropSide === side ? 1.03 : 1 }}
+                        transition={{ type: "spring", stiffness: 260, damping: 22 }}
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--accent-coral)]">
+                          Split {side}
+                        </p>
+                        <p className="mt-2 text-lg font-semibold">
+                          Drop tab on the {side}
+                        </p>
+                        <p className="muted mt-2 max-w-xs text-sm">
+                          ScholarMind will keep another open workspace tab on the other side for comparison.
+                        </p>
+                      </motion.div>
+                    </div>
+                  ))}
+                </motion.div>
+              ) : null}
 
               <div className="hide-scrollbar min-h-[38rem] max-h-[72vh] overflow-auto p-5">
                 {workspaceTab === "home" ? (
@@ -4484,10 +4901,10 @@ export function StudyWorkspace({
                         Personal AI tutor studio
                       </p>
                       <h2 className="mt-3 text-3xl font-semibold md:text-4xl">
-                        Turn sources into guided learning, not just outputs.
+                        Turn notes into guided learning, not just outputs.
                       </h2>
                       <p className="muted mt-3 max-w-2xl text-sm leading-7">
-                        Upload sources, open AI Notes for long textbook-style learning, then practise with quizzes, flashcards, exams, and tutor chat that stays grounded in this studio.
+                        Upload notes, open AI Notes for long textbook-style learning, then practise with quizzes, flashcards, exams, and tutor chat that stays grounded in this studio.
                       </p>
                       <div className="mt-5 flex flex-wrap gap-2">
                         <Button onClick={() => openTool("notes")} disabled={toolsLocked}>
@@ -4497,8 +4914,8 @@ export function StudyWorkspace({
                         <Button onClick={() => openTool("quiz")} variant="secondary" disabled={toolsLocked}>
                           Build Quiz
                         </Button>
-                        <Button onClick={() => openSourceModal("Add sources to start the rebuilt Studio.", "upload")} variant="ghost">
-                          Add Sources
+                        <Button onClick={() => openSourceModal("Add notes to start this Studio.", "upload")} variant="ghost">
+                          Add Notes
                         </Button>
                       </div>
                       <div className="mt-5 flex flex-wrap gap-2 text-xs">
@@ -4554,9 +4971,9 @@ export function StudyWorkspace({
                           <p className="font-semibold">Study tools</p>
                           <p className="muted mt-1 text-xs">Generate from enabled sources, then open results as Studio tabs.</p>
                         </div>
-                        <Button onClick={() => openSourceModal("Add more files or search verified sources.", "web")} variant="ghost" size="sm">
+                        <Button onClick={() => openSourceModal("Add more notes.", "upload")} variant="ghost" size="sm">
                           <Plus className="h-4 w-4" />
-                          Add source
+                          Add note
                         </Button>
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
@@ -4581,8 +4998,8 @@ export function StudyWorkspace({
                     <div className="rounded-[26px] bg-white/8 p-4">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <p className="font-semibold">Recent outputs</p>
-                        <button type="button" onClick={() => setWorkspaceTab("result")} className="muted text-xs hover:text-[var(--fg)]">
-                          Open result tab
+                        <button type="button" onClick={openCurrentResultInWorkspaceTab} disabled={!output} className="muted text-xs hover:text-[var(--fg)] disabled:cursor-not-allowed disabled:opacity-50">
+                          Open latest
                         </button>
                       </div>
                       <div className="grid gap-3 md:grid-cols-2">
@@ -4593,7 +5010,6 @@ export function StudyWorkspace({
                               type="button"
                               onClick={() => {
                                 openSavedToolResult(item);
-                                setWorkspaceTab("result");
                               }}
                               className="rounded-[22px] bg-white/10 p-4 text-left transition hover:bg-white/16"
                             >
@@ -4615,12 +5031,12 @@ export function StudyWorkspace({
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm font-semibold">Source tabs</p>
-                        <p className="muted text-xs">Open a source preview, or exclude files from the AI when they should not count.</p>
+                        <p className="text-sm font-semibold">Note tabs</p>
+                        <p className="muted text-xs">Open a note preview, or exclude files from the AI when they should not count.</p>
                       </div>
-                      <Button onClick={() => openSourceModal("Add more files or search verified sources.", "web")} size="sm">
+                      <Button onClick={() => openSourceModal("Add more notes.", "upload")} size="sm">
                         <Plus className="h-4 w-4" />
-                        Add source
+                        Add note
                       </Button>
                     </div>
                     {currentFiles.length ? (
@@ -4773,14 +5189,19 @@ export function StudyWorkspace({
                 {sourceEnabledCount ? "Ready" : "Upload required"}
               </div>
               <Button
-                onClick={() => {
-                  setMessages([]);
-                  setChat("");
-                }}
+                onClick={startNewChat}
                 variant="ghost"
                 size="sm"
               >
                 New chat
+              </Button>
+              <Button
+                onClick={() => setShowChatThreads((current) => !current)}
+                variant="ghost"
+                size="sm"
+              >
+                <BookOpen className="h-4 w-4" />
+                Recent
               </Button>
               {chatFullscreen ? (
                 <Button onClick={() => setChatFullscreen(false)} variant="ghost" size="sm">
@@ -4794,6 +5215,46 @@ export function StudyWorkspace({
                 </Button>
               )}
             </div>
+
+            {showChatThreads ? (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-4 rounded-[24px] border border-white/10 bg-white/8 p-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Recent chats</p>
+                    <p className="muted mt-1 text-xs">Restore or delete saved tutor conversations for this studio.</p>
+                  </div>
+                  <span className="rounded-full bg-white/10 px-3 py-1 text-xs">{chatThreads.length} saved</span>
+                </div>
+                <div className="mt-3 grid gap-2">
+                  {chatThreads.length ? chatThreads.map((thread) => (
+                    <div key={thread.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[18px] bg-black/10 px-3 py-2">
+                      <button type="button" onClick={() => restoreChatThread(thread)} className="min-w-0 flex-1 text-left">
+                        <p className="truncate text-sm font-semibold">{thread.title}</p>
+                        <p className="muted mt-1 text-[11px]">
+                          {thread.messages.length} messages • {new Date(thread.updatedAt).toLocaleDateString()}
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteChatThread(thread.id)}
+                        className="rounded-full bg-[rgba(255,125,89,0.14)] p-2 text-[var(--accent-coral)] transition hover:bg-[rgba(255,125,89,0.22)]"
+                        aria-label={`Delete ${thread.title}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )) : (
+                    <div className="rounded-[18px] border border-dashed border-white/14 bg-white/6 p-4 text-sm">
+                      No saved chats yet. Start a new chat after a conversation and it will appear here.
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            ) : null}
 
             <div
               ref={chatViewportRef}
@@ -5102,14 +5563,9 @@ export function StudyWorkspace({
             </div>
             <div className="hide-scrollbar max-h-[28rem] overflow-auto p-4">
               <div className="grid grid-cols-2 gap-2">
-                {musicProviders.map((provider) => (
-                  <a
-                    key={provider.key}
-                    href={provider.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-[20px] bg-white/10 p-3 transition hover:bg-white/16"
-                  >
+                {musicProviders.map((provider) => {
+                  const providerCard = (
+                    <>
                     <div className="flex items-center gap-3">
                       <span className="grid h-9 w-9 place-items-center rounded-[14px] bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-xs font-black text-slate-950">
                         {provider.logo}
@@ -5117,8 +5573,27 @@ export function StudyWorkspace({
                       <span className="text-sm font-semibold">{provider.name}</span>
                     </div>
                     <p className="muted mt-2 text-xs">{provider.note}</p>
-                  </a>
-                ))}
+                    </>
+                  );
+                  return provider.href && !provider.unavailable ? (
+                    <a
+                      key={provider.key}
+                      href={provider.href}
+                      className="rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
+                    >
+                      {providerCard}
+                    </a>
+                  ) : (
+                    <button
+                      key={provider.key}
+                      type="button"
+                      disabled
+                      className="cursor-not-allowed rounded-[20px] bg-white/6 p-3 text-left opacity-70"
+                    >
+                      {providerCard}
+                    </button>
+                  );
+                })}
               </div>
 
               <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
@@ -5134,7 +5609,7 @@ export function StudyWorkspace({
               </div>
 
               <div className="mt-4 space-y-2">
-                {filteredMusicLibrary.map((item, index) => (
+                {filteredMusicLibrary.length ? filteredMusicLibrary.map((item, index) => (
                   <button
                     key={`${item.provider}-${item.title}`}
                     type="button"
@@ -5157,7 +5632,14 @@ export function StudyWorkspace({
                       </span>
                     </div>
                   </button>
-                ))}
+                )) : (
+                  <div className="rounded-[22px] border border-dashed border-white/14 bg-white/6 px-4 py-8 text-center">
+                    <p className="font-semibold">No music playing</p>
+                    <p className="muted mt-2 text-sm">
+                      Connect Spotify to browse your account music here. Free Spotify accounts may have limited playback. YouTube Music and SoundCloud account linking are unavailable in this preview.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>
@@ -5166,7 +5648,13 @@ export function StudyWorkspace({
         <div className="panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] px-3 py-2 shadow-[0_18px_50px_rgba(2,6,23,0.28)]">
           <button
             type="button"
-            onClick={() => setMusicPlaying((current) => !current)}
+            onClick={() => {
+              if (!selectedTrack) {
+                setMusicPanelOpen(true);
+                return;
+              }
+              setMusicPlaying((current) => !current);
+            }}
             className={`grid h-10 w-10 place-items-center rounded-full transition ${
               musicPlaying
                 ? "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-slate-950"
@@ -5176,12 +5664,14 @@ export function StudyWorkspace({
           >
             {musicPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
           </button>
-          <div className={`h-9 w-9 rounded-[14px] bg-gradient-to-br ${selectedTrack.color}`} />
+          <div className={`h-9 w-9 rounded-[14px] ${selectedTrack ? `bg-gradient-to-br ${selectedTrack.color}` : "bg-white/10"}`} />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{selectedTrack.title}</p>
-            <p className="muted truncate text-xs">{selectedTrack.mood} focus queue • Spotify, YouTube Music, SoundCloud</p>
+            <p className="truncate text-sm font-semibold">{selectedTrack?.title || "No music playing"}</p>
+            <p className="muted truncate text-xs">
+              {selectedTrack ? `${selectedTrack.mood} focus queue` : "Spotify connect available with limited free-account playback. YouTube Music and SoundCloud unavailable."}
+            </p>
           </div>
-          <div className="hidden flex-wrap gap-2 md:flex">
+          {focusTracks.length ? <div className="hidden flex-wrap gap-2 md:flex">
             {focusTracks.map((track, index) => (
               <button
                 key={`bottom-track-${track.title}`}
@@ -5194,7 +5684,7 @@ export function StudyWorkspace({
                 {track.mood}
               </button>
             ))}
-          </div>
+          </div> : null}
           <button
             type="button"
             onClick={() => setMusicPanelOpen((current) => !current)}
@@ -5212,9 +5702,9 @@ export function StudyWorkspace({
             <div className="flex items-start justify-between gap-4 border-b border-white/10 px-5 py-4">
               <div className="min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
-                  Add Sources
+                  Add Notes
                 </p>
-                <h3 className="mt-1 text-lg font-semibold">Upload files or pull in a web source</h3>
+                <h3 className="mt-1 text-lg font-semibold">Upload notes, PDFs, documents, or screenshots</h3>
                 <p className="muted mt-2 text-sm">{sourceModalReason}</p>
               </div>
               <button
@@ -5232,26 +5722,10 @@ export function StudyWorkspace({
                 <button
                   type="button"
                   onClick={() => setSourceModalMode("upload")}
-                  className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                    sourceModalMode === "upload"
-                      ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.22),rgba(57,208,255,0.18))]"
-                      : "bg-white/10"
-                  }`}
+                  className="rounded-full bg-[linear-gradient(135deg,rgba(255,125,89,0.22),rgba(57,208,255,0.18))] px-4 py-2 text-sm font-medium transition"
                 >
                   <Upload className="mr-2 inline h-4 w-4" />
-                  Upload files
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSourceModalMode("web")}
-                  className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                    sourceModalMode === "web"
-                      ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.22),rgba(57,208,255,0.18))]"
-                      : "bg-white/10"
-                  }`}
-                >
-                  <Globe2 className="mr-2 inline h-4 w-4" />
-                  Search the web
+                  Upload notes
                 </button>
               </div>
 
@@ -5260,61 +5734,15 @@ export function StudyWorkspace({
                   <button
                     type="button"
                     onClick={() => quickImportInputRef.current?.click()}
-                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-[20px] bg-white/12 px-4 py-4 text-sm font-medium transition hover:bg-white/18"
+                    className="inline-flex flex-1 items-center justify-center gap-2 rounded-[20px] bg-white/12 px-4 py-8 text-sm font-medium transition hover:bg-white/18"
                   >
                     <Upload className="h-4 w-4" />
                     Browse files
                   </button>
-                  <div className="flex-[1.4] rounded-[20px] border border-white/10 bg-black/10 p-4">
-                    <div className="mb-3 flex flex-wrap gap-2">
-                {sourceEngineOptions.map((option) => (
-                        <button
-                          key={option.key}
-                          type="button"
-                          onClick={() => {
-                            setSourceSearchEngine(option.key);
-                            setSourceSearchWarning("");
-                          }}
-                          className={`rounded-full px-3 py-2 text-xs font-medium transition ${
-                            sourceSearchEngine === option.key
-                              ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
-                              : "bg-white/10"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Search className="h-4 w-4 text-[var(--accent-sky)]" />
-                      <input
-                        value={sourceModalQuery}
-                        onChange={(event) => setSourceModalQuery(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            searchWebSources();
-                          }
-                        }}
-                        placeholder={
-                          sourceSearchEngine === "scholar"
-                            ? "Search scholar-style sources for a topic, paper, or chapter..."
-                            : `Search ${sourceSearchEngine === "google" ? "Google" : "DuckDuckGo"} for a topic or chapter...`
-                        }
-                        className="w-full bg-transparent text-sm outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={searchWebSources}
-                        disabled={sourceModalLoading}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-[var(--bg)] transition disabled:cursor-not-allowed disabled:opacity-60"
-                        aria-label="Search web sources"
-                      >
-                        {sourceModalLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                      </button>
-                    </div>
-                    <p className="muted mt-3 text-xs">
-                      {sourceEngineOptions.find((option) => option.key === sourceSearchEngine)?.copy}
+                  <div className="flex-[1.4] rounded-[20px] border border-dashed border-white/16 bg-black/10 p-4 text-sm">
+                    <p className="font-semibold">Supported study notes</p>
+                    <p className="muted mt-2">
+                      Upload PDFs, images, text files, and common documents here. Web research stays inside the Studio search tab so it does not mix with note uploads.
                     </p>
                   </div>
                 </div>
