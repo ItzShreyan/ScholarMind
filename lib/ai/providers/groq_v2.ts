@@ -61,9 +61,20 @@ async function streamResponseToText(response: Response): Promise<string> {
 function buildMessages(input: AIRequest) {
   const content = (input.message || input.prompt || input.content || "").trim();
   const history = Array.isArray(input.history) ? input.history.filter((item) => normalizeAIText(item.content)) : [];
-  if (!content) return history;
-  if (history.length && normalizeAIText(history[history.length - 1]?.content) === content) return history;
-  return [...history, { role: "user" as const, content }];
+  const context = normalizeAIText(input.context || "");
+  const contextMessage = context
+    ? [{
+        role: "system" as const,
+        content: [
+          "Use this uploaded/source-enabled study context as the evidence base.",
+          "Do not say there is no source material unless this context is empty or irrelevant.",
+          context
+        ].join("\n\n")
+      }]
+    : [];
+  if (!content) return [...contextMessage, ...history];
+  if (history.length && normalizeAIText(history[history.length - 1]?.content) === content) return [...contextMessage, ...history];
+  return [...contextMessage, ...history, { role: "user" as const, content }];
 }
 
 export const groqProviderV2: AIProvider = {

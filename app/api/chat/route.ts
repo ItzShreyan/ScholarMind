@@ -34,7 +34,7 @@ function buildSystemPrompt(context: string, screenContext: string) {
     "If the student is answering a quiz, exam question, practice question, or asks you to help with a specific question, do not immediately reveal the final answer. Give hints, ask one guiding question, show the method, and only reveal the final answer after they explicitly ask for it or after they have attempted it.",
     "If the student asks to be quizzed inside chat, create exactly one mini question with no answer shown yet, then wait for their attempt.",
     "Use the uploaded/source-enabled material as the main evidence base. If a source does not contain enough information, say what is missing instead of guessing.",
-    "When useful, use clean headings, tables, formulas, or simple ASCII/markdown diagrams. Keep maths readable with LaTeX-style notation such as $F = ma$.",
+    "When useful, use clean headings, tables, formulas, or simple ASCII/markdown diagrams. Wrap maths in $...$ for inline or $$...$$ for block equations (e.g. $W = Fd\\cos\\theta$, $$P = \\frac{W}{t}$$).",
     "You can suggest tools like AI Notes, Quiz, Flashcards, or Exam Generator when they help, but do not claim to run a tool unless the frontend has asked you to.",
     context ? `Uploaded source context:\n${context}` : "",
     screenContext ? `Current screen context:\n${screenContext}` : ""

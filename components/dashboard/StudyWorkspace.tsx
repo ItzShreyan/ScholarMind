@@ -12,6 +12,7 @@ import {
   ChevronUp,
   CheckCircle2,
   Copy,
+  Eraser,
   Eye,
   ExternalLink,
   FileText,
@@ -134,7 +135,7 @@ type ToolHistoryItem = {
 type WorkspaceDynamicTab = {
   id: string;
   label: string;
-  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search" | "browse";
+  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search" | "browse" | "canvas-browse";
   closable: true;
   action?: AIAction;
   output?: string;
@@ -186,7 +187,7 @@ type CopiedSourceClipboard = {
   sourceStudioTitle: string;
   copiedAt: number;
 };
-type CanvasTool = "mouse" | "text" | "highlight" | "draw";
+type CanvasTool = "mouse" | "text" | "highlight" | "draw" | "eraser";
 type CanvasAnnotation = {
   id: string;
   tabId: string;
@@ -220,6 +221,15 @@ const desktopResizeHandleWidth = 14;
 const sourceClipboardStorageKey = "scholarmind_source_clipboard";
 const focusMusicStateStorageKey = "scholarmind_focus_music_state";
 const chatThreadsStoragePrefix = "scholarmind_chat_threads:";
+const recentWebsitesStoragePrefix = "scholarmind_recent_websites:";
+const maxRecentWebsites = 6;
+
+type RecentWebsite = {
+  url: string;
+  label: string;
+  visitedAt: number;
+};
+
 const focusTracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
 
 const musicProviders = [
@@ -273,17 +283,28 @@ function createToolDraft(action: AIAction): ToolDraft {
 }
 
 function parseJsonBlock<T>(text: string): T | null {
-  const cleaned = extractStructuredOutput(text);
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    const match = cleaned.match(/```json\s*([\s\S]*?)```/i) || cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-    if (!match) return null;
+  const cleaned = extractStructuredOutput(text).replace(/^\uFEFF/, "").trim();
+  const candidates = [
+    cleaned,
+    cleaned.replace(/,\s*([\]}])/g, "$1")
+  ];
+
+  for (const candidate of candidates) {
     try {
-      return JSON.parse(match[1]) as T;
+      return JSON.parse(candidate) as T;
     } catch {
-      return null;
+      // try next candidate
     }
+  }
+
+  const match = cleaned.match(/```json\s*([\s\S]*?)```/i) || cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if (!match) return null;
+
+  const jsonText = match[1].replace(/,\s*([\]}])/g, "$1");
+  try {
+    return JSON.parse(jsonText) as T;
+  } catch {
+    return null;
   }
 }
 
@@ -845,6 +866,7 @@ export function StudyWorkspace({
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
   const [workspaceSearchLoading, setWorkspaceSearchLoading] = useState(false);
   const [workspaceSearchError, setWorkspaceSearchError] = useState("");
+  const [recentWebsites, setRecentWebsites] = useState<RecentWebsite[]>([]);
   const [splitWorkspaceTabId, setSplitWorkspaceTabId] = useState<string | null>(null);
   const [splitPickerOpen, setSplitPickerOpen] = useState(false);
   const [splitRatio, setSplitRatio] = useState(50);
@@ -853,6 +875,7 @@ export function StudyWorkspace({
   const [canvasTool, setCanvasTool] = useState<CanvasTool>("mouse");
   const [canvasAnnotations, setCanvasAnnotations] = useState<CanvasAnnotation[]>([]);
   const [canvasStrokes, setCanvasStrokes] = useState<CanvasStroke[]>([]);
+  const activeCanvasTabRef = useRef<string | null>(null);
   const [activeCanvasStroke, setActiveCanvasStroke] = useState<CanvasStroke | null>(null);
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
@@ -1014,6 +1037,20 @@ export function StudyWorkspace({
   useEffect(() => {
     setSessionList(sessions);
   }, [sessions]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`${recentWebsitesStoragePrefix}${activeSessionId || "global"}`);
+      if (!stored) {
+        setRecentWebsites([]);
+        return;
+      }
+      const parsed = JSON.parse(stored) as RecentWebsite[];
+      setRecentWebsites(Array.isArray(parsed) ? parsed.slice(0, maxRecentWebsites) : []);
+    } catch {
+      setRecentWebsites([]);
+    }
+  }, [activeSessionId]);
 
   useEffect(() => {
     try {
@@ -1542,8 +1579,52 @@ export function StudyWorkspace({
       return [...current, nextTab].slice(-16);
     });
     setWorkspaceTab(nextTab.id);
-    setTab("chat");
+    if (
+      nextTab.kind === "output" ||
+      nextTab.kind === "canvas-output" ||
+      nextTab.kind === "canvas-browse" ||
+      nextTab.kind === "canvas-source"
+    ) {
+      setTab("tools");
+    } else {
+      setTab("chat");
+    }
   }, []);
+
+  const recordRecentWebsite = useCallback(
+    (url: string, label: string) => {
+      setRecentWebsites((current) => {
+        const next = [{ url, label, visitedAt: Date.now() }, ...current.filter((item) => item.url !== url)].slice(
+          0,
+          maxRecentWebsites
+        );
+        try {
+          localStorage.setItem(
+            `${recentWebsitesStoragePrefix}${activeSessionId || "global"}`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // Ignore storage failures.
+        }
+        return next;
+      });
+    },
+    [activeSessionId]
+  );
+
+  const openBrowseInWorkspace = useCallback(
+    (url: string, label: string) => {
+      recordRecentWebsite(url, label);
+      upsertWorkspaceTab({
+        id: `canvas-browse-${Date.now()}`,
+        label: clipText(label, 24),
+        kind: "canvas-browse",
+        url,
+        closable: true
+      });
+    },
+    [recordRecentWebsite, upsertWorkspaceTab]
+  );
 
   const closeWorkspaceTab = useCallback((tabId: string) => {
     setWorkspaceTabs((current) => current.filter((item) => item.id !== tabId));
@@ -1618,7 +1699,7 @@ export function StudyWorkspace({
     const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
     upsertWorkspaceTab({
       id: `canvas-output-${activeAction}`,
-      label: `${label} Canvas`,
+      label: label,
       kind: "canvas-output",
       action: activeAction,
       output,
@@ -1667,7 +1748,7 @@ export function StudyWorkspace({
         const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
         upsertWorkspaceTab({
           id: `canvas-source-${file.id}`,
-          label: `${clipText(file.file_name, 24)} Canvas`,
+          label: clipText(file.file_name, 28),
           kind: "canvas-source",
           file,
           previewKind: kind,
@@ -1678,7 +1759,7 @@ export function StudyWorkspace({
       } catch {
         upsertWorkspaceTab({
           id: `canvas-source-${file.id}`,
-          label: `${clipText(file.file_name, 24)} Canvas`,
+          label: clipText(file.file_name, 28),
           kind: "canvas-source",
           file,
           previewKind: "text",
@@ -1751,8 +1832,27 @@ export function StudyWorkspace({
     };
   }, []);
 
+  const eraseStrokesNear = useCallback((tabId: string, point: CanvasPoint) => {
+    const radius = 24;
+    setCanvasStrokes((current) =>
+      current.filter((stroke) => {
+        if (stroke.tabId !== tabId) return true;
+        return !stroke.points.some((p) => Math.hypot(p.x - point.x, p.y - point.y) <= radius);
+      })
+    );
+  }, []);
+
   const beginCanvasStroke = useCallback(
     (tabId: string, event: ReactPointerEvent<HTMLDivElement>) => {
+      activeCanvasTabRef.current = tabId;
+
+      if (canvasTool === "eraser") {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        eraseStrokesNear(tabId, getCanvasPointerPoint(event));
+        return;
+      }
+
       if (canvasTool !== "draw" && canvasTool !== "highlight") return;
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -1767,11 +1867,17 @@ export function StudyWorkspace({
         createdAt: Date.now()
       });
     },
-    [canvasTool, getCanvasPointerPoint]
+    [canvasTool, eraseStrokesNear, getCanvasPointerPoint]
   );
 
   const moveCanvasStroke = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (canvasTool === "eraser" && activeCanvasTabRef.current) {
+        event.preventDefault();
+        eraseStrokesNear(activeCanvasTabRef.current, getCanvasPointerPoint(event));
+        return;
+      }
+
       if (!activeCanvasStroke) return;
       event.preventDefault();
       const point = getCanvasPointerPoint(event);
@@ -1784,17 +1890,22 @@ export function StudyWorkspace({
           : current
       );
     },
-    [activeCanvasStroke, getCanvasPointerPoint]
+    [activeCanvasStroke, canvasTool, eraseStrokesNear, getCanvasPointerPoint]
   );
 
   const finishCanvasStroke = useCallback(() => {
+    if (canvasTool === "eraser") {
+      activeCanvasTabRef.current = null;
+      return;
+    }
+
     setActiveCanvasStroke((current) => {
       if (!current || current.points.length < 2) return null;
       setCanvasStrokes((strokes) => [current, ...strokes].slice(0, 120));
       setStatusNote("Canvas drawing saved. Stylus, Apple Pencil, and S-Pen strokes are visible to your study context.");
       return null;
     });
-  }, []);
+  }, [canvasTool]);
 
   const strokePath = useCallback((points: CanvasPoint[]) => {
     if (!points.length) return "";
@@ -2163,8 +2274,15 @@ export function StudyWorkspace({
     (hint: string, action: AIAction) => {
       const sourceContext = buildStudyContext(sourceEnabledFiles, hint, {
         maxCharacters:
-          action === "notes" ? 22000 : action === "exam" ? 16000 : action === "quiz" || action === "flashcards" ? 10000 : 8000,
-        maxChunks: action === "notes" ? 24 : action === "exam" ? 18 : action === "quiz" || action === "flashcards" ? 12 : 8
+          action === "notes"
+            ? 18000
+            : action === "exam"
+              ? 14000
+              : action === "quiz" || action === "flashcards"
+                ? 7500
+                : 6500,
+        maxChunks:
+          action === "notes" ? 20 : action === "exam" ? 14 : action === "quiz" || action === "flashcards" ? 10 : 7
       });
       const profile = onboardingSummary(onboarding);
 
@@ -2587,13 +2705,7 @@ export function StudyWorkspace({
           throw new Error("That URL does not look valid. Try again with https:// included.");
         }
 
-        upsertWorkspaceTab({
-          id: `browse-${Date.now()}`,
-          label: clipText(hostname, 24),
-          kind: "browse",
-          url: normalizedUrl,
-          closable: true
-        });
+        openBrowseInWorkspace(normalizedUrl, hostname);
         setStatusNote(`Opened ${hostname} inside this studio.`);
         return;
       }
@@ -2701,6 +2813,20 @@ export function StudyWorkspace({
       setImportingSourceId(null);
     }
   };
+
+  const saveBrowseAsNote = useCallback(
+    async (url: string, label: string) => {
+      await importWebSource({
+        id: `browse-save-${Date.now()}`,
+        title: label || url,
+        url,
+        snippet: `Saved from workspace browser on ${new Date().toLocaleDateString()}.`,
+        source: "Workspace browser",
+        trustLabel: "Web"
+      });
+    },
+    [importWebSource]
+  );
 
   const copySourcesFromStudio = (sourceSessionId: string, sourceStudioTitle: string) => {
     if (sourceSessionId === activeSessionId) {
@@ -3055,8 +3181,8 @@ export function StudyWorkspace({
     const studyProfile = hasStudyHistory ? buildPerformanceSummary(currentMetrics) : "";
     const studentProfile = onboardingSummary(onboarding);
     const chatContext = buildStudyContext(sourceEnabledFiles, question, {
-      maxCharacters: 9000,
-      maxChunks: 10
+      maxCharacters: 6500,
+      maxChunks: 8
     });
     const enrichedPrompt = historySnapshot.length
       ? [
@@ -3342,7 +3468,8 @@ export function StudyWorkspace({
         : "";
     const result = await runAI(toolDraft.action, `${buildToolPrompt(toolDraft, sourceEnabledFiles)}${performanceNote}`);
     if (result) {
-      setToolModalView("result");
+      setToolModalOpen(false);
+      setToolModalView("setup");
     }
   };
 
@@ -3369,16 +3496,19 @@ export function StudyWorkspace({
   };
 
   const renderWorkspaceDynamicTab = (workspaceItem: WorkspaceDynamicTab) => {
-    const isCanvas = workspaceItem.kind === "canvas-source" || workspaceItem.kind === "canvas-output";
+    const isCanvas =
+      workspaceItem.kind === "canvas-source" ||
+      workspaceItem.kind === "canvas-output" ||
+      workspaceItem.kind === "canvas-browse";
     const isOutput =
       workspaceItem.kind === "output" || (workspaceItem.kind === "canvas-output" && Boolean(workspaceItem.action && workspaceItem.output));
     const isSearch = workspaceItem.kind === "search";
-    const isBrowse = workspaceItem.kind === "browse";
+    const isBrowse = workspaceItem.kind === "browse" || workspaceItem.kind === "canvas-browse";
     const interactiveOutputAction = workspaceItem.action;
     const tabAnnotations = canvasAnnotations.filter((annotation) => annotation.tabId === workspaceItem.id);
     const tabStrokes = canvasStrokes.filter((stroke) => stroke.tabId === workspaceItem.id);
     const drawableStrokes = activeCanvasStroke?.tabId === workspaceItem.id ? [activeCanvasStroke, ...tabStrokes] : tabStrokes;
-    const canvasCanDraw = isCanvas && (canvasTool === "draw" || canvasTool === "highlight");
+    const canvasCanInteract = isCanvas && (canvasTool === "draw" || canvasTool === "highlight" || canvasTool === "eraser");
 
     return (
       <motion.div
@@ -3390,31 +3520,48 @@ export function StudyWorkspace({
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] bg-white/8 px-4 py-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
-              {isBrowse ? "Studio browser" : isSearch ? "Web search" : isCanvas ? "Canvas mode" : isOutput ? "Generated output" : "Source preview"}
+              {isBrowse ? "Studio browser" : isSearch ? "Web search" : isCanvas ? "Open workspace" : isOutput ? "Generated output" : "Source preview"}
             </p>
             <h3 className="mt-1 truncate text-lg font-semibold">{workspaceItem.label}</h3>
             <p className="muted mt-1 text-xs">
               {isBrowse
-                ? "Websites open inside this studio tab. Some sites may block embedded viewing."
+                ? "Browse, annotate, and save pages as notes inside this studio."
                 : isSearch
                 ? "Google-style results stay inside this studio. Add useful sources so the tutor can read them."
                 : isCanvas
-                ? "Select, read, and annotate inside the Studio Workspace."
-                : "Opened as an internal Studio tab, not a browser tab."}
+                ? "Open fullscreen, annotate, highlight, draw, and erase inside the workspace."
+                : "Quick preview tab. Use Open for the full workspace view."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             {workspaceItem.file && workspaceItem.kind === "source" ? (
               <Button onClick={() => openFileInCanvas(workspaceItem.file as FileItem)} variant="secondary" size="sm">
                 <Maximize2 className="h-4 w-4" />
-                Canvas
+                Open
               </Button>
             ) : null}
             {isOutput && workspaceItem.kind === "output" ? (
               <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm">
                 <Maximize2 className="h-4 w-4" />
-                Canvas
+                Open
               </Button>
+            ) : null}
+            {isBrowse && workspaceItem.url ? (
+              <>
+                <Button
+                  onClick={() => void saveBrowseAsNote(workspaceItem.url!, workspaceItem.label)}
+                  variant="secondary"
+                  size="sm"
+                  disabled={Boolean(importingSourceId)}
+                >
+                  {importingSourceId ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+                  Save as note
+                </Button>
+                <Button onClick={() => window.open(workspaceItem.url!, "_blank", "noopener,noreferrer")} variant="ghost" size="sm">
+                  <ExternalLink className="h-4 w-4" />
+                  New tab
+                </Button>
+              </>
             ) : null}
             <Button onClick={() => closeWorkspaceTab(workspaceItem.id)} variant="ghost" size="sm">
               <X className="h-4 w-4" />
@@ -3430,7 +3577,8 @@ export function StudyWorkspace({
               { key: "mouse", label: "Mouse", icon: MousePointer2 },
               { key: "text", label: "Text box", icon: PenLine },
               { key: "highlight", label: "Highlight", icon: Highlighter },
-              { key: "draw", label: "Draw / working", icon: Pencil }
+              { key: "draw", label: "Draw / working", icon: Pencil },
+              { key: "eraser", label: "Eraser", icon: Eraser }
             ].map((item) => (
               <button
                 key={item.key}
@@ -3550,7 +3698,11 @@ export function StudyWorkspace({
         {isCanvas ? (
           <div
             className={`absolute inset-x-0 bottom-0 top-[10.5rem] z-20 rounded-[24px] ${
-              canvasCanDraw ? "cursor-crosshair touch-none" : "pointer-events-none"
+              canvasCanInteract
+                ? canvasTool === "eraser"
+                  ? "cursor-cell touch-none"
+                  : "cursor-crosshair touch-none"
+                : "pointer-events-none"
             }`}
             onPointerDown={(event) => beginCanvasStroke(workspaceItem.id, event)}
             onPointerMove={moveCanvasStroke}
@@ -3608,20 +3760,12 @@ export function StudyWorkspace({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button
-                        onClick={() =>
-                          upsertWorkspaceTab({
-                            id: `browse-${Date.now()}-${index}`,
-                            label: clipText(result.title, 24),
-                            kind: "browse",
-                            url: result.url,
-                            closable: true
-                          })
-                        }
+                        onClick={() => openBrowseInWorkspace(result.url, result.title)}
                         size="sm"
                         variant="secondary"
                       >
                         <ExternalLink className="h-4 w-4" />
-                        Open here
+                        Open
                       </Button>
                       <Button onClick={() => importWebSource(result)} size="sm" disabled={importingSourceId === result.id}>
                         {importingSourceId === result.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
@@ -4103,7 +4247,7 @@ export function StudyWorkspace({
       return <AINotesConsole content={output} />;
     }
 
-    if (output && looksRichOutput(output)) {
+    if (output && (looksRichOutput(output) || activeAction !== "summary")) {
       return (
         <motion.article
           initial={{ opacity: 0, y: 10 }}
@@ -4723,7 +4867,7 @@ export function StudyWorkspace({
                       className="rounded-[22px] bg-white/14 p-3 transition hover:bg-white/18"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <button type="button" onClick={() => openFileInWorkspaceTab(file)} className="min-w-0 flex-1 text-left">
+                        <button type="button" onClick={() => openFileInCanvas(file)} className="min-w-0 flex-1 text-left">
                           <p className="text-sm font-semibold">
                             <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
                             {file.file_name}
@@ -4748,7 +4892,7 @@ export function StudyWorkspace({
                           </button>
                           <button
                             type="button"
-                            onClick={() => openFileInWorkspaceTab(file)}
+                            onClick={() => openFileInCanvas(file)}
                             className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]"
                           >
                             <Eye className="h-3 w-3" />
@@ -5061,7 +5205,7 @@ export function StudyWorkspace({
                         ].map((item) => (
                           <span key={item.label} className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-[var(--muted)]">
                             <item.icon className="h-3.5 w-3.5 text-[var(--accent-sky)]" />
-                            {item.label} in Canvas
+                            {item.label} in Open view
                           </span>
                         ))}
                       </div>
@@ -5159,6 +5303,32 @@ export function StudyWorkspace({
                         )}
                       </div>
                     </div>
+
+                    <div className="rounded-[26px] bg-white/8 p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="font-semibold">Recently viewed websites</p>
+                        <span className="muted text-xs">Up to {maxRecentWebsites}</span>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {recentWebsites.length ? (
+                          recentWebsites.map((site) => (
+                            <button
+                              key={`${site.url}-${site.visitedAt}`}
+                              type="button"
+                              onClick={() => openBrowseInWorkspace(site.url, site.label)}
+                              className="rounded-[22px] bg-white/10 p-4 text-left transition hover:bg-white/16"
+                            >
+                              <p className="text-sm font-semibold">{site.label}</p>
+                              <p className="muted mt-2 truncate text-xs">{site.url}</p>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="rounded-[22px] bg-white/10 p-4 text-sm md:col-span-2">
+                            Search the web or paste a URL above. Sites you open will appear here for quick return visits.
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 
@@ -5181,7 +5351,7 @@ export function StudyWorkspace({
                             key={`workspace-source-${file.id}`}
                             className="rounded-[24px] bg-white/10 p-4 transition hover:bg-white/16"
                           >
-                            <button type="button" onClick={() => openFileInWorkspaceTab(file)} className="w-full text-left">
+                            <button type="button" onClick={() => openFileInCanvas(file)} className="w-full text-left">
                               <div className="flex items-start justify-between gap-3">
                                 <p className="text-sm font-semibold">
                                 <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
@@ -5196,13 +5366,9 @@ export function StudyWorkspace({
                               <p className="muted mt-3 line-clamp-4 text-xs">{file.extracted_text}</p>
                             </button>
                             <div className="mt-3 flex flex-wrap gap-2">
-                              <Button onClick={() => openFileInWorkspaceTab(file)} variant="ghost" size="sm">
-                                <Eye className="h-3.5 w-3.5" />
-                                Open tab
-                              </Button>
                               <Button onClick={() => openFileInCanvas(file)} variant="secondary" size="sm">
                                 <Maximize2 className="h-3.5 w-3.5" />
-                                Canvas
+                                Open
                               </Button>
                               <Button
                                 onClick={() => removeFile(file)}
@@ -5244,7 +5410,7 @@ export function StudyWorkspace({
                         </Button>
                         <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm" disabled={!output}>
                           <Maximize2 className="h-4 w-4" />
-                          Canvas
+                          Open
                         </Button>
                         <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm" disabled={!output}>
                           Export JSON
@@ -6029,7 +6195,7 @@ export function StudyWorkspace({
                     <div className="flex flex-wrap items-center gap-2">
                       <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm">
                         <Maximize2 className="h-4 w-4" />
-                        Canvas
+                        Open
                       </Button>
                       <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm">
                         Export JSON

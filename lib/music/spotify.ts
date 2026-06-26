@@ -20,16 +20,52 @@ function getEncryptionKey() {
 }
 
 export function getSpotifyRedirectUri(req?: Request) {
+  const normalizeRedirectUri = (value: string) => {
+    try {
+      const url = new URL(value);
+      if (url.hostname === "127.0.0.1") {
+        url.hostname = "localhost";
+      }
+      if (url.hostname !== "localhost" && url.protocol === "http:") {
+        url.protocol = "https:";
+      }
+      return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+    } catch {
+      return value.replace(/\/+$/, "");
+    }
+  };
+
   const configured = process.env.SPOTIFY_REDIRECT_URI?.trim();
   if (configured) {
-    return configured.startsWith("http") ? configured : `https://${configured}`;
+    if (configured.startsWith("http://") || configured.startsWith("https://")) {
+      return normalizeRedirectUri(configured);
+    }
+    const isLocal = /^(localhost|127\.0\.0\.1)([:/]|$)/i.test(configured);
+    return normalizeRedirectUri(`${isLocal ? "http" : "https"}://${configured.replace(/\/+$/, "")}`);
+  }
+
+  const siteUrl = getSiteUrl();
+  if (siteUrl) {
+    return normalizeRedirectUri(`${siteUrl.replace(/\/+$/, "")}/api/music/spotify/callback`);
   }
 
   if (req) {
-    return `${new URL(req.url).origin}/api/music/spotify/callback`;
+    const forwardedHost = req.headers.get("x-forwarded-host");
+    const forwardedProto = req.headers.get("x-forwarded-proto");
+    if (forwardedHost) {
+      const proto = forwardedProto?.split(",")[0]?.trim() || "https";
+      const host = forwardedHost.split(",")[0].trim();
+      return normalizeRedirectUri(`${proto}://${host}/api/music/spotify/callback`);
+    }
+
+    const url = new URL(req.url);
+    if (url.hostname === "127.0.0.1") {
+      url.hostname = "localhost";
+    }
+    return normalizeRedirectUri(`${url.origin}/api/music/spotify/callback`);
   }
 
-  return `${getSiteUrl()}/api/music/spotify/callback`;
+  return "https://scholarmindai.netlify.app/api/music/spotify/callback";
 }
 
 export function getSpotifyClientCredentials() {

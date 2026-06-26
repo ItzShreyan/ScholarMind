@@ -3,26 +3,12 @@
 import React, { useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
-const superscriptMap: Record<string, string> = {
-  "0": "⁰",
-  "1": "¹",
-  "2": "²",
-  "3": "³",
-  "4": "⁴",
-  "5": "⁵",
-  "6": "⁶",
-  "7": "⁷",
-  "8": "⁸",
-  "9": "⁹",
-  "+": "⁺",
-  "-": "⁻",
-  "=": "⁼",
-  "(": "⁽",
-  ")": "⁾",
-  n: "ⁿ",
-  i: "ⁱ"
-};
+const latexCommandPattern =
+  /\\(?:text|frac|sqrt|cos|sin|tan|log|ln|theta|alpha|beta|gamma|delta|pi|sigma|phi|omega|times|cdot|pm|leq|geq|neq|infty|sum|int|vec|hat|bar|left|right|mathrm|mathbf|overline|underline|approx|propto|partial|nabla|mu|lambda|rho|epsilon|degree)/i;
 
 function normalizeStudyContent(content: string) {
   const normalized = content.replace(/^Local fallback response\s*/i, "").trim();
@@ -34,78 +20,21 @@ function normalizeStudyContent(content: string) {
   return normalized;
 }
 
-function toUnicodeSuperscript(value: string) {
-  const clean = value.replace(/^\{|\}$/g, "").replace(/^\(|\)$/g, "");
-  return clean
-    .split("")
-    .map((character) => superscriptMap[character] ?? character)
-    .join("");
-}
+function prepareMathContent(content: string) {
+  let prepared = content;
 
-const greekMap: Record<string, string> = {
-  alpha: "α",
-  beta: "β",
-  gamma: "γ",
-  delta: "δ",
-  epsilon: "ε",
-  theta: "θ",
-  lambda: "λ",
-  mu: "μ",
-  pi: "π",
-  sigma: "σ",
-  phi: "φ",
-  omega: "ω"
-};
+  prepared = prepared.replace(/\\\(([\s\S]+?)\\\)/g, (_, math) => `$${math.trim()}$`);
+  prepared = prepared.replace(/\\\[([\s\S]+?)\\\]/g, (_, math) => `$$${math.trim()}$$`);
 
-function renderMathAwareText(children: React.ReactNode) {
-  return React.Children.map(children, (child) => {
-    if (typeof child !== "string") return child;
-    const text = child
-      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "($1)/($2)")
-      .replace(/\\sqrt\{([^}]+)\}/g, "√($1)")
-      .replace(/\\([a-zA-Z]+)/g, (_, name: string) => greekMap[name.toLowerCase()] ?? name);
-
-    const parts: React.ReactNode[] = [];
-    const pattern =
-      /(\$\$[\s\S]+?\$\$)|(\$[^$]+\$)|([A-Za-z0-9)\]}]+)\^(\{[^}]+\}|\([^)]+\)|[-+]?\d+|[A-Za-z])/g;
-    let lastIndex = 0;
-    let match: RegExpExecArray | null;
-
-    while ((match = pattern.exec(text))) {
-      if (match.index > lastIndex) {
-        parts.push(text.slice(lastIndex, match.index));
-      }
-
-      if (match[1]) {
-        parts.push(
-          <span key={`${match.index}-block`} className="my-2 block rounded-[18px] bg-white/10 px-3 py-2 font-mono text-[0.95em] text-[var(--accent-mint)]">
-            {match[1].slice(2, -2)}
-          </span>
-        );
-      } else if (match[2]) {
-        parts.push(
-          <span key={`${match.index}-formula`} className="rounded-lg bg-white/10 px-1.5 py-0.5 font-mono text-[0.95em] text-[var(--accent-mint)]">
-            {match[2].slice(1, -1)}
-          </span>
-        );
-      } else {
-        parts.push(match[3]);
-        parts.push(
-          <sup key={`${match.index}-sup`} className="font-mono text-[0.75em] leading-none">
-            {toUnicodeSuperscript(match[4])}
-          </sup>
-        );
-      }
-
-      lastIndex = pattern.lastIndex;
-    }
-
-    if (lastIndex < text.length) {
-      parts.push(text.slice(lastIndex));
-    }
-
-    return parts.length ? parts : text;
+  prepared = prepared.replace(/\(([^()\n]{1,180})\)/g, (match, inner: string) => {
+    if (inner.includes("$")) return match;
+    if (!latexCommandPattern.test(inner) && !/[=^_\\]/.test(inner)) return match;
+    return `$${inner.trim()}$`;
   });
+
+  prepared = prepared.replace(/\[(\s*P\s*=\s*[^[\n]{1,80})\]/gi, (_, math) => `$$${math.trim()}$$`);
+
+  return prepared;
 }
 
 function MermaidBlock({ chart }: { chart: string }) {
@@ -171,7 +100,7 @@ export function RichStudyText({
   content: string;
   compact?: boolean;
 }) {
-  const normalized = useMemo(() => normalizeStudyContent(content), [content]);
+  const normalized = useMemo(() => prepareMathContent(normalizeStudyContent(content)), [content]);
   const markdownComponents = useMemo<Components>(
     () => ({
       a: (props) => (
@@ -209,20 +138,20 @@ export function RichStudyText({
             </pre>
           </div>
         );
-      },
-      p: ({ children, ...props }) => <p {...props}>{renderMathAwareText(children)}</p>,
-      li: ({ children, ...props }) => <li {...props}>{renderMathAwareText(children)}</li>,
-      td: ({ children, ...props }) => <td {...props}>{renderMathAwareText(children)}</td>,
-      th: ({ children, ...props }) => <th {...props}>{renderMathAwareText(children)}</th>
+      }
     }),
     []
   );
 
   return (
     <div
-      className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[16px] leading-8 md:text-[17px] md:leading-9"} [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
+      className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[16px] leading-8 md:text-[17px] md:leading-9"} [&_.katex]:text-[1.05em] [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:rounded-[18px] [&_.katex-display]:bg-white/8 [&_.katex-display]:px-4 [&_.katex-display]:py-3 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={markdownComponents}
+      >
         {normalized}
       </ReactMarkdown>
     </div>

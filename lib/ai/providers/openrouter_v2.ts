@@ -45,8 +45,15 @@ export const openrouterProviderV2: AIProvider = {
             body: JSON.stringify({
               model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
               messages,
-              temperature: input.action === "notes" ? 0.35 : 0.4,
-              max_tokens: input.action === "notes" ? 6500 : input.action === "exam" ? 5200 : 1400,
+              temperature: input.action === "notes" ? 0.35 : input.action === "quiz" || input.action === "flashcards" ? 0.25 : 0.4,
+              max_tokens:
+                input.action === "notes"
+                  ? 6500
+                  : input.action === "exam"
+                    ? 5200
+                    : input.action === "quiz" || input.action === "flashcards"
+                      ? 3200
+                      : 1800,
               reasoning: { exclude: true },
               include_reasoning: false
             })
