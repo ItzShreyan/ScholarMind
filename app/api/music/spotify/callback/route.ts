@@ -1,27 +1,56 @@
 import { NextResponse } from "next/server";
+import {
+  encryptSpotifyTokens,
+  exchangeSpotifyCode,
+  getSpotifyRedirectUri,
+  sanitizeReturnPath,
+  spotifyReturnCookie,
+  spotifySessionCookie,
+  spotifyStateCookie
+} from "@/lib/music/spotify";
 
-function dashboardRedirect(req: Request, status: string) {
-  const url = new URL("/dashboard", new URL(req.url).origin);
+function readCookie(req: Request, name: string) {
+  return req.headers
+    .get("cookie")
+    ?.split(";")
+    .map((item) => item.trim())
+    .find((item) => item.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
+}
+
+function redirectWithStatus(req: Request, returnTo: string, status: string) {
+  const url = new URL(sanitizeReturnPath(returnTo), new URL(req.url).origin);
   url.searchParams.set("music", status);
-  return NextResponse.redirect(url);
+  const response = NextResponse.redirect(url);
+  response.cookies.set(spotifyStateCookie, "", { path: "/", maxAge: 0 });
+  response.cookies.set(spotifyReturnCookie, "", { path: "/", maxAge: 0 });
+  return response;
 }
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
-  const cookieState = req.headers
-    .get("cookie")
-    ?.split(";")
-    .map((item) => item.trim())
-    .find((item) => item.startsWith("scholarmind_spotify_state="))
-    ?.split("=")[1];
+  const returnTo = sanitizeReturnPath(decodeURIComponent(readCookie(req, spotifyReturnCookie) || "/studio"));
+  const cookieState = readCookie(req, spotifyStateCookie);
 
   if (!code || !state || !cookieState || state !== cookieState) {
-    return dashboardRedirect(req, "spotify_not_connected");
+    return redirectWithStatus(req, returnTo, "spotify_not_connected");
   }
 
-  // Token exchange and playback controls need encrypted account-token storage.
-  // For launch preview, this confirms OAuth wiring without storing Spotify tokens.
-  return dashboardRedirect(req, "spotify_oauth_ready");
+  try {
+    const redirectUri = getSpotifyRedirectUri(req);
+    const tokens = await exchangeSpotifyCode(code, redirectUri);
+    const response = redirectWithStatus(req, returnTo, "spotify_connected");
+    response.cookies.set(spotifySessionCookie, encryptSpotifyTokens(tokens), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 30,
+      path: "/"
+    });
+    return response;
+  } catch {
+    return redirectWithStatus(req, returnTo, "spotify_not_connected");
+  }
 }

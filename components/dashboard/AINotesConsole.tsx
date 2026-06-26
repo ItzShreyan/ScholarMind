@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Atom, BookOpen, Download, FlaskConical, Waves } from "lucide-react";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { Button } from "@/components/ui/Button";
+import { extractStructuredOutput } from "@/lib/ai/strip-reasoning";
 
 type FormulaBlock = {
   label?: string;
@@ -52,14 +53,15 @@ type StructuredNotes = {
 };
 
 function parseNotes(raw: string): StructuredNotes | null {
+  const cleaned = extractStructuredOutput(raw);
   try {
-    const parsed = JSON.parse(raw) as StructuredNotes;
+    const parsed = JSON.parse(cleaned) as StructuredNotes;
     return {
       ...parsed,
       simulationSpec: parsed.simulationSpec ?? parsed.scienceSimulation ?? null
     };
   } catch {
-    const match = raw.match(/```json\s*([\s\S]*?)```/i) || raw.match(/(\{[\s\S]*\})/);
+    const match = cleaned.match(/```json\s*([\s\S]*?)```/i) || cleaned.match(/(\{[\s\S]*\})/);
     if (!match) return null;
     try {
       const parsed = JSON.parse(match[1]) as StructuredNotes;

@@ -1,37 +1,43 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronUp, Music, Pause, Play, Search, X } from "lucide-react";
+import { usePathname } from "next/navigation";
+import { ChevronUp, Music, Search, X } from "lucide-react";
+import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
+import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 
 const focusMusicStateStorageKey = "scholarmind_focus_music_state";
 
-const tracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
-
 const providerStatus = [
-  { name: "Spotify", status: "Connect available • free accounts limited", href: "/api/music/spotify/login", disabled: false },
-  { name: "YouTube Music", status: "Unavailable in preview", href: null, disabled: true },
-  { name: "SoundCloud", status: "Account link unavailable", href: null, disabled: true }
+  { name: "Spotify", status: "Connect available • Premium recommended", key: "spotify", disabled: false },
+  { name: "YouTube Music", status: "Unavailable in preview", key: "youtube", disabled: true },
+  { name: "SoundCloud", status: "Account link unavailable", key: "soundcloud", disabled: true }
 ];
 
 export function FocusMusicDock() {
+  const pathname = usePathname();
   const loadedRef = useRef(false);
   const [playing, setPlaying] = useState(false);
-  const [trackIndex, setTrackIndex] = useState(0);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const selectedTrack = tracks[trackIndex] ?? null;
+  const [spotifyConnected, setSpotifyConnected] = useState(false);
+  const spotifyLoginHref = `/api/music/spotify/login?returnTo=${encodeURIComponent(pathname || "/dashboard")}`;
+
+  useEffect(() => {
+    void fetch("/api/music/spotify/status")
+      .then((response) => response.json())
+      .then((json) => setSpotifyConnected(Boolean(json.connected)))
+      .catch(() => setSpotifyConnected(false));
+  }, []);
 
   useEffect(() => {
     const restore = (value?: unknown) => {
       try {
         const parsed =
           value && typeof value === "object"
-            ? (value as { playing?: boolean; trackIndex?: number })
+            ? (value as { playing?: boolean })
             : JSON.parse(localStorage.getItem(focusMusicStateStorageKey) || "{}");
         if (typeof parsed.playing === "boolean") setPlaying(parsed.playing);
-        if (typeof parsed.trackIndex === "number" && tracks.length) {
-          setTrackIndex(Math.max(0, Math.min(tracks.length - 1, parsed.trackIndex)));
-        }
       } catch {
         // The focus dock should never block the dashboard.
       }
@@ -58,124 +64,94 @@ export function FocusMusicDock() {
 
   useEffect(() => {
     if (!loadedRef.current) return;
-    const state = { playing, trackIndex, updatedAt: Date.now() };
+    const state = { playing, updatedAt: Date.now() };
     try {
       localStorage.setItem(focusMusicStateStorageKey, JSON.stringify(state));
       window.dispatchEvent(new CustomEvent("scholarmind:music-state", { detail: state }));
     } catch {
       // Ignore storage failures.
     }
-  }, [playing, trackIndex]);
+  }, [playing]);
 
-  const filteredTracks = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return tracks;
-    return tracks.filter((track) =>
-      [track.title, track.artist, track.mood].some((value) => value.toLowerCase().includes(query))
-    );
-  }, [search]);
+  const providerCards = useMemo(
+    () =>
+      providerStatus.map((provider) => {
+        const contents = (
+          <>
+            <p className="inline-flex items-center gap-2 text-xs font-semibold">
+              <Music className="h-3.5 w-3.5 text-[var(--accent-gold)]" />
+              {provider.name}
+            </p>
+            <p className="muted mt-1 text-[11px]">
+              {provider.key === "spotify" && spotifyConnected ? "Account linked" : provider.status}
+            </p>
+          </>
+        );
+
+        if (provider.key === "spotify" && !provider.disabled) {
+          return (
+            <a key={provider.name} href={spotifyLoginHref} className="rounded-[18px] bg-white/8 px-3 py-3 transition hover:bg-white/14">
+              {contents}
+            </a>
+          );
+        }
+
+        return (
+          <button key={provider.name} type="button" disabled className="cursor-not-allowed rounded-[18px] bg-white/6 px-3 py-3 text-left opacity-70">
+            {contents}
+          </button>
+        );
+      }),
+    [spotifyConnected, spotifyLoginHref]
+  );
 
   return (
-    <div className="panel panel-border mt-4 overflow-hidden rounded-[28px]">
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-        <button
-          type="button"
-          onClick={() => {
-            if (!selectedTrack) {
-              setOpen(true);
-              return;
-            }
-            setPlaying((current) => !current);
-          }}
-          className={`grid h-10 w-10 place-items-center rounded-full transition ${
-            playing
-              ? "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-slate-950"
-              : "bg-white/10 text-[var(--fg)]"
-          }`}
-          aria-label={playing ? "Pause focus music" : "Play focus music"}
-        >
-          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-        </button>
-        <div className={`h-9 w-9 rounded-[14px] ${selectedTrack ? `bg-gradient-to-br ${selectedTrack.color}` : "bg-white/10"}`} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{selectedTrack?.title || "No music playing"}</p>
-          <p className="muted truncate text-xs">
-            {selectedTrack ? `${selectedTrack.mood} focus queue persists between Dashboard and Studio` : "Connect Spotify to browse account music. Free accounts may have limited playback."}
-          </p>
+    <SpotifyPlaybackProvider connected={spotifyConnected}>
+      <div className="panel panel-border mt-4 overflow-hidden rounded-[28px]">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <SpotifyPlaybackPanel
+            connected={spotifyConnected}
+            loginHref={spotifyLoginHref}
+            compact
+            onPlayingChange={setPlaying}
+          />
+          <button
+            type="button"
+            onClick={() => setOpen((current) => !current)}
+            className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
+            aria-label="Open dashboard music dock"
+          >
+            {open ? <X className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => setOpen((current) => !current)}
-          className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
-          aria-label="Open dashboard music dock"
-        >
-          {open ? <X className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-        </button>
-      </div>
 
-      {open ? (
-        <div className="border-t border-white/10 p-4">
-          <div className="rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
-            <div className="flex items-center gap-2">
-              <Search className="h-4 w-4 text-[var(--accent-sky)]" />
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search focus tracks..."
-                className="w-full bg-transparent text-sm outline-none"
+        {open ? (
+          <div className="border-t border-white/10 p-4">
+            <div className="grid gap-2 sm:grid-cols-3">{providerCards}</div>
+
+            <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
+              <div className="flex items-center gap-2">
+                <Search className="h-4 w-4 text-[var(--accent-sky)]" />
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search Spotify tracks..."
+                  className="w-full bg-transparent text-sm outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <SpotifyPlaybackPanel
+                connected={spotifyConnected}
+                loginHref={spotifyLoginHref}
+                searchQuery={search}
+                onPlayingChange={setPlaying}
               />
             </div>
           </div>
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {filteredTracks.length ? filteredTracks.map((track, index) => {
-              const realIndex = tracks.findIndex((item) => item.title === track.title);
-              return (
-                <button
-                  key={track.title}
-                  type="button"
-                  onClick={() => {
-                    setTrackIndex(realIndex >= 0 ? realIndex : index);
-                    setPlaying(true);
-                  }}
-                  className="rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
-                >
-                  <p className="text-sm font-semibold">{track.title}</p>
-                  <p className="muted mt-1 text-xs">{track.artist} • {track.mood}</p>
-                </button>
-              );
-            }) : (
-              <div className="rounded-[20px] border border-dashed border-white/14 bg-white/6 p-4 text-sm sm:col-span-2">
-                <p className="font-semibold">No music playing</p>
-                <p className="muted mt-1 text-xs">Connect Spotify to browse account music. Free Spotify accounts may have limited playback; YouTube Music and SoundCloud are unavailable here.</p>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            {providerStatus.map((provider) => {
-              const contents = (
-                <>
-                <p className="inline-flex items-center gap-2 text-xs font-semibold">
-                  <Music className="h-3.5 w-3.5 text-[var(--accent-gold)]" />
-                  {provider.name}
-                </p>
-                <p className="muted mt-1 text-[11px]">{provider.status}</p>
-                </>
-              );
-              return provider.href && !provider.disabled ? (
-                <a key={provider.name} href={provider.href} className="rounded-[18px] bg-white/8 px-3 py-3 transition hover:bg-white/14">
-                  {contents}
-                </a>
-              ) : (
-                <button key={provider.name} type="button" disabled className="cursor-not-allowed rounded-[18px] bg-white/6 px-3 py-3 text-left opacity-70">
-                  {contents}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </SpotifyPlaybackProvider>
   );
 }

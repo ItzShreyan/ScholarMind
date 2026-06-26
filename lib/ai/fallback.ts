@@ -10,6 +10,7 @@ import { openrouterProviderV2 } from "@/lib/ai/providers/openrouter_v2";
 import { togetherProvider } from "@/lib/ai/providers/together";
 import { selectProvider } from "@/lib/ai/router";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
+import { extractStructuredOutput, looksLikeReasoningLeak } from "@/lib/ai/strip-reasoning";
 import { hasOpenRouterKey } from "@/lib/ai/openrouter-keys";
 
 const providers: Record<string, AIProvider> = {
@@ -116,6 +117,7 @@ function isBadResponse(text: string, input: AIRequest): boolean {
   if (mode === "flashcards" && !normalized.includes('"front"') && !normalized.includes("q:") && !normalized.includes("flashcard")) return true;
   if (mode === "quiz" && !normalized.includes('"question"') && !/\b1\./.test(normalized)) return true;
   if (mode === "notes" && !normalized.includes('"sections"') && !normalized.includes("#")) return true;
+  if (looksLikeReasoningLeak(text, String(mode))) return true;
   if (normalized === "[object object]" || normalized === "{}") return true;
   if (/(?:0{3,},){4,}0{3,}/.test(normalized)) return true;
   if (digits > letters * 2 && normalized.length > 80) return true;
@@ -149,7 +151,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
   try {
     if (primary && !(strictRemote && primary.name === "local")) {
       const result = await primary.generate(input);
-      const normalizedText = normalizeAIText(result.text);
+      const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
       if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
         return { ...result, text: normalizedText };
@@ -191,7 +193,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
 
     try {
       const result = await provider.generate(input);
-      const normalizedText = normalizeAIText(result.text);
+      const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
       if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
         return { ...result, text: normalizedText };

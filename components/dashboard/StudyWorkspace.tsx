@@ -23,7 +23,6 @@ import {
   Maximize2,
   MousePointer2,
   Music,
-  Pause,
   Pencil,
   PenLine,
   Play,
@@ -38,6 +37,8 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
+import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
+import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
 import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
@@ -45,6 +46,7 @@ import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
 import { onboardingSummary, type OnboardingRecord } from "@/lib/onboarding-profile";
 import { parseFlashcards } from "@/lib/ai/parse";
+import { extractStructuredOutput } from "@/lib/ai/strip-reasoning";
 import type { SiteSettings } from "@/lib/site-settings";
 import { formatSupabaseSetupError } from "@/lib/supabase/setup";
 import {
@@ -132,7 +134,7 @@ type ToolHistoryItem = {
 type WorkspaceDynamicTab = {
   id: string;
   label: string;
-  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search";
+  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search" | "browse";
   closable: true;
   action?: AIAction;
   output?: string;
@@ -190,6 +192,10 @@ type CanvasAnnotation = {
   tabId: string;
   tool: Exclude<CanvasTool, "mouse">;
   text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   createdAt: number;
 };
 type CanvasPoint = { x: number; y: number; pressure: number };
@@ -236,8 +242,6 @@ const musicProviders = [
   }
 ];
 
-const musicLibrary: Array<{ title: string; artist: string; type: string; provider: string; mood: string }> = [];
-
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
   { key: "notes", label: "AI Notes", copy: "Build long textbook-style notes with formulas, examples, questions, and science labs." },
@@ -269,10 +273,11 @@ function createToolDraft(action: AIAction): ToolDraft {
 }
 
 function parseJsonBlock<T>(text: string): T | null {
+  const cleaned = extractStructuredOutput(text);
   try {
-    return JSON.parse(text) as T;
+    return JSON.parse(cleaned) as T;
   } catch {
-    const match = text.match(/```json\s*([\s\S]*?)```/i) || text.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+    const match = cleaned.match(/```json\s*([\s\S]*?)```/i) || cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
     if (!match) return null;
     try {
       return JSON.parse(match[1]) as T;
@@ -283,7 +288,7 @@ function parseJsonBlock<T>(text: string): T | null {
 }
 
 function cleanGeneratedText(text: string) {
-  return text
+  return extractStructuredOutput(text)
     .replace(/^Local fallback response\s*/i, "")
     .replace(/```(?:json)?/gi, "")
     .trim();
@@ -795,6 +800,7 @@ export function StudyWorkspace({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const spotifyLoginHref = `/api/music/spotify/login?returnTo=${encodeURIComponent(pathname || "/studio")}`;
   const searchParams = useSearchParams();
   const workspaceGridRef = useRef<HTMLDivElement>(null);
   const chatViewportRef = useRef<HTMLDivElement>(null);
@@ -852,6 +858,7 @@ export function StudyWorkspace({
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicPanelOpen, setMusicPanelOpen] = useState(false);
   const [musicSearch, setMusicSearch] = useState("");
+  const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [statusNote, setStatusNote] = useState("");
   const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
   const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
@@ -1317,6 +1324,33 @@ export function StudyWorkspace({
     }
   }, [musicPlaying, selectedTrackIndex]);
 
+  useEffect(() => {
+    void fetch("/api/music/spotify/status")
+      .then((response) => response.json())
+      .then((json) => setSpotifyConnected(Boolean(json.connected)))
+      .catch(() => setSpotifyConnected(false));
+  }, []);
+
+  useEffect(() => {
+    const musicStatus = searchParams.get("music");
+    if (!musicStatus) return;
+
+    if (musicStatus === "spotify_connected") {
+      setSpotifyConnected(true);
+      setMusicPanelOpen(true);
+      setStatusNote("Spotify connected. Browse your playlists or search for tracks in the music panel.");
+    } else if (musicStatus === "spotify_not_connected") {
+      setStatusNote("Spotify could not be connected. Check your redirect URL and try again.");
+    } else if (musicStatus === "spotify_setup_required") {
+      setStatusNote("Spotify is not configured on this deployment yet.");
+    }
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("music");
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
   const activeWorkspaceDynamicTab = useMemo(
     () => workspaceTabs.find((item) => item.id === workspaceTab) ?? null,
     [workspaceTab, workspaceTabs]
@@ -1325,16 +1359,6 @@ export function StudyWorkspace({
     () => workspaceTabs.find((item) => item.id === splitWorkspaceTabId) ?? null,
     [splitWorkspaceTabId, workspaceTabs]
   );
-  const filteredMusicLibrary = useMemo(() => {
-    const query = musicSearch.trim().toLowerCase();
-    if (!query) return musicLibrary;
-    return musicLibrary.filter((item) =>
-      [item.title, item.artist, item.type, item.provider, item.mood].some((value) =>
-        value.toLowerCase().includes(query)
-      )
-    );
-  }, [musicSearch]);
-
   const updateMetrics = useCallback(
     (updater: (current: StudyMetrics) => StudyMetrics) => {
       if (!activeSessionId) return;
@@ -1626,7 +1650,7 @@ export function StudyWorkspace({
       upsertWorkspaceTab({
         id: `output-${action}-${Date.now()}`,
         label: focusLabel ? `${label}: ${clipText(focusLabel, 24)}` : label,
-        kind: "canvas-output",
+        kind: "output",
         action,
         output: generatedOutput,
         closable: true
@@ -1699,33 +1723,23 @@ export function StudyWorkspace({
     [upsertWorkspaceTab]
   );
 
-  const addCanvasAnnotation = useCallback((tabId: string, tool: Exclude<CanvasTool, "mouse">) => {
-    const defaultText =
-      tool === "highlight"
-        ? "Highlighted for review"
-        : tool === "draw"
-          ? "Drawing note"
-          : "Annotation";
-    const text = window.prompt(
-      tool === "highlight"
-        ? "What should this highlight remind you?"
-        : tool === "draw"
-          ? "Describe the drawing or working you want to attach."
-          : "Add a note to this canvas.",
-      defaultText
-    );
-    if (!text?.trim()) return;
+  const addCanvasAnnotation = useCallback((tabId: string, tool: Exclude<CanvasTool, "mouse">, point?: { x: number; y: number }) => {
+    const placement = point ?? { x: 18, y: 18 };
     setCanvasAnnotations((current) => [
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         tabId,
         tool,
-        text: text.trim(),
+        text: tool === "highlight" ? "Highlight this section" : "Type your note here",
+        x: placement.x,
+        y: placement.y,
+        width: tool === "highlight" ? 220 : 180,
+        height: tool === "highlight" ? 72 : 96,
         createdAt: Date.now()
       },
       ...current
     ]);
-    setStatusNote("Canvas annotation added. The tutor can use visible canvas notes as study context.");
+    setStatusNote("Text box added. Drag it anywhere on the canvas and resize from the corner.");
   }, []);
 
   const getCanvasPointerPoint = useCallback((event: ReactPointerEvent<HTMLDivElement>): CanvasPoint => {
@@ -1870,6 +1884,13 @@ export function StudyWorkspace({
 
     return () => window.clearTimeout(timeoutId);
   }, [activeSessionId, sourceEnabledCount, sourcePromptedForStudio]);
+
+  useEffect(() => {
+    const tab = workspaceTabs.find((item) => item.id === workspaceTab);
+    if (!tab || !(tab.kind === "output" || tab.kind === "canvas-output") || !tab.output) return;
+    if (tab.action) setActiveAction(tab.action);
+    setOutput(tab.output);
+  }, [workspaceTab, workspaceTabs]);
 
   useEffect(() => {
     if (!preferencesReady || defaultToolAppliedRef.current) return;
@@ -2552,15 +2573,40 @@ export function StudyWorkspace({
     setWorkspaceSearchError("");
 
     try {
+      const looksLikeUrl =
+        /^https?:\/\//i.test(query) ||
+        /^www\./i.test(query) ||
+        /^[\w-]+\.(ac\.|co\.|com|org|net|edu|gov|io|app)[^\s]*$/i.test(query);
+
+      if (looksLikeUrl) {
+        const normalizedUrl = /^https?:\/\//i.test(query) ? query : `https://${query.replace(/^www\./i, "www.")}`;
+        let hostname = normalizedUrl;
+        try {
+          hostname = new URL(normalizedUrl).hostname;
+        } catch {
+          throw new Error("That URL does not look valid. Try again with https:// included.");
+        }
+
+        upsertWorkspaceTab({
+          id: `browse-${Date.now()}`,
+          label: clipText(hostname, 24),
+          kind: "browse",
+          url: normalizedUrl,
+          closable: true
+        });
+        setStatusNote(`Opened ${hostname} inside this studio.`);
+        return;
+      }
+
       const response = await fetch("/api/sources/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, engine: "scholar" })
+        body: JSON.stringify({ query, engine: "google" })
       });
       const json = await readJsonResponse(response);
 
       if (!response.ok) {
-        throw new Error(normalizeErrorMessage(json.error, "Unable to search sources right now."));
+        throw new Error(normalizeErrorMessage(json.error, "Unable to search the web right now."));
       }
 
       const results = Array.isArray(json.results) ? json.results : [];
@@ -2572,7 +2618,7 @@ export function StudyWorkspace({
         results,
         closable: true
       });
-      setStatusNote(results.length ? `Found ${results.length} source result(s) for “${query}”.` : "No results found. Try a more specific topic.");
+      setStatusNote(results.length ? `Found ${results.length} web result(s) for “${query}”.` : "No results found. Try a more specific topic.");
     } catch (error) {
       setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
     } finally {
@@ -2771,6 +2817,8 @@ export function StudyWorkspace({
     });
   };
 
+  // Legacy modal preview kept for fallback flows.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- referenced by preview modal UI below
   const openFilePreview = async (file: FileItem) => {
     setPreview({
       open: true,
@@ -2878,7 +2926,7 @@ export function StudyWorkspace({
         throw new Error(errorMessage);
       }
 
-      const normalized = sanitizeDisplayText(json.text || json.error, "No response");
+      const normalized = sanitizeDisplayText(extractStructuredOutput(json.text || json.error), "No response");
       setOutput(normalized || "No response");
       saveToolResult(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
       openGeneratedResultInWorkspaceTab(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
@@ -3322,8 +3370,11 @@ export function StudyWorkspace({
 
   const renderWorkspaceDynamicTab = (workspaceItem: WorkspaceDynamicTab) => {
     const isCanvas = workspaceItem.kind === "canvas-source" || workspaceItem.kind === "canvas-output";
-    const isOutput = workspaceItem.kind === "output" || workspaceItem.kind === "canvas-output";
+    const isOutput =
+      workspaceItem.kind === "output" || (workspaceItem.kind === "canvas-output" && Boolean(workspaceItem.action && workspaceItem.output));
     const isSearch = workspaceItem.kind === "search";
+    const isBrowse = workspaceItem.kind === "browse";
+    const interactiveOutputAction = workspaceItem.action;
     const tabAnnotations = canvasAnnotations.filter((annotation) => annotation.tabId === workspaceItem.id);
     const tabStrokes = canvasStrokes.filter((stroke) => stroke.tabId === workspaceItem.id);
     const drawableStrokes = activeCanvasStroke?.tabId === workspaceItem.id ? [activeCanvasStroke, ...tabStrokes] : tabStrokes;
@@ -3339,12 +3390,14 @@ export function StudyWorkspace({
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[24px] bg-white/8 px-4 py-3">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-coral)]">
-              {isSearch ? "Studio search" : isCanvas ? "Canvas mode" : isOutput ? "Generated output" : "Source preview"}
+              {isBrowse ? "Studio browser" : isSearch ? "Web search" : isCanvas ? "Canvas mode" : isOutput ? "Generated output" : "Source preview"}
             </p>
             <h3 className="mt-1 truncate text-lg font-semibold">{workspaceItem.label}</h3>
             <p className="muted mt-1 text-xs">
-              {isSearch
-                ? "Search results stay inside this studio. Add useful sources so the tutor can read them."
+              {isBrowse
+                ? "Websites open inside this studio tab. Some sites may block embedded viewing."
+                : isSearch
+                ? "Google-style results stay inside this studio. Add useful sources so the tutor can read them."
                 : isCanvas
                 ? "Select, read, and annotate inside the Studio Workspace."
                 : "Opened as an internal Studio tab, not a browser tab."}
@@ -3384,7 +3437,7 @@ export function StudyWorkspace({
                 type="button"
                 onClick={() => {
                   setCanvasTool(item.key as CanvasTool);
-                  if (item.key === "text") {
+                  if (item.key === "text" || item.key === "highlight") {
                     addCanvasAnnotation(workspaceItem.id, item.key as Exclude<CanvasTool, "mouse">);
                   }
                 }}
@@ -3413,10 +3466,59 @@ export function StudyWorkspace({
             ) : null}
             </div>
             {tabAnnotations.length ? (
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[10.5rem] z-30">
                 {tabAnnotations.map((annotation) => (
-                  <div key={annotation.id} className="rounded-[18px] border border-white/10 bg-black/10 px-3 py-2">
-                    <div className="flex items-center justify-between gap-2">
+                  <div
+                    key={annotation.id}
+                    className={`pointer-events-auto absolute rounded-[16px] border px-3 py-2 shadow-[0_16px_40px_rgba(6,10,24,0.28)] ${
+                      annotation.tool === "highlight"
+                        ? "border-[rgba(255,226,105,0.45)] bg-[rgba(255,226,105,0.28)]"
+                        : "border-white/20 bg-[rgba(8,12,24,0.82)]"
+                    }`}
+                    style={{
+                      left: `${annotation.x}%`,
+                      top: `${annotation.y}%`,
+                      width: annotation.width,
+                      minHeight: annotation.height
+                    }}
+                    onPointerDown={(event) => {
+                      if (canvasTool !== "mouse") return;
+                      event.preventDefault();
+                      const target = event.currentTarget;
+                      const container = target.parentElement;
+                      if (!container) return;
+                      const startX = event.clientX;
+                      const startY = event.clientY;
+                      const rect = container.getBoundingClientRect();
+                      const originX = annotation.x;
+                      const originY = annotation.y;
+
+                      const onMove = (moveEvent: PointerEvent) => {
+                        const nextX = originX + ((moveEvent.clientX - startX) / rect.width) * 100;
+                        const nextY = originY + ((moveEvent.clientY - startY) / rect.height) * 100;
+                        setCanvasAnnotations((current) =>
+                          current.map((item) =>
+                            item.id === annotation.id
+                              ? {
+                                  ...item,
+                                  x: Math.max(0, Math.min(92, nextX)),
+                                  y: Math.max(0, Math.min(92, nextY))
+                                }
+                              : item
+                          )
+                        );
+                      };
+
+                      const onUp = () => {
+                        window.removeEventListener("pointermove", onMove);
+                        window.removeEventListener("pointerup", onUp);
+                      };
+
+                      window.addEventListener("pointermove", onMove);
+                      window.addEventListener("pointerup", onUp);
+                    }}
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--accent-gold)]">
                         {annotation.tool}
                       </p>
@@ -3429,7 +3531,15 @@ export function StudyWorkspace({
                         <X className="h-3 w-3" />
                       </button>
                     </div>
-                    <p className="mt-1 text-xs leading-5">{annotation.text}</p>
+                    <textarea
+                      value={annotation.text}
+                      onChange={(event) =>
+                        setCanvasAnnotations((current) =>
+                          current.map((item) => (item.id === annotation.id ? { ...item, text: event.target.value } : item))
+                        )
+                      }
+                      className="min-h-[3rem] w-full resize both bg-transparent text-xs leading-5 outline-none"
+                    />
                   </div>
                 ))}
               </div>
@@ -3465,36 +3575,58 @@ export function StudyWorkspace({
           </div>
         ) : null}
 
-        {isSearch ? (
+        {isBrowse && workspaceItem.url ? (
           <div className="space-y-3">
+            <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-3 text-xs">
+              <p className="font-semibold">{workspaceItem.url}</p>
+              <p className="muted mt-1">If the site blocks embedding, use Add source from search results or open it in a new tab.</p>
+            </div>
+          <iframe
+            src={workspaceItem.url}
+            title={workspaceItem.label}
+            loading="lazy"
+            className={`${isCanvas ? "h-[68vh]" : "h-[62vh]"} w-full rounded-[24px] border border-white/10 bg-white`}
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          />
+          </div>
+        ) : isSearch ? (
+          <div className="space-y-4">
+            <div className="rounded-[24px] border border-white/10 bg-white/8 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-sky)]">Google-style results</p>
+              <p className="mt-2 text-lg font-semibold">{workspaceItem.query || "Search"}</p>
+              <p className="muted mt-1 text-xs">Results open inside this studio. Import a page to make it tutor-readable.</p>
+            </div>
             {(workspaceItem.results ?? []).length ? (
               (workspaceItem.results ?? []).map((result, index) => (
                 <div key={`${workspaceItem.id}-${result.url || index}`} className="rounded-[24px] border border-white/10 bg-white/8 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold">{result.title}</p>
-                        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${trustBadgeTone(result.trustLabel)}`}>
-                          {result.trustLabel}
-                        </span>
-                      </div>
-                      <p className="muted mt-2 line-clamp-3 text-xs leading-5">{result.snippet}</p>
-                      <p className="muted mt-2 truncate text-[11px]">{result.url}</p>
+                      <p className="text-xs text-[var(--accent-mint)]">{result.source || (() => { try { return new URL(result.url).hostname; } catch { return "Web"; } })()}</p>
+                      <p className="mt-1 text-base font-semibold text-[var(--accent-sky)]">{result.title}</p>
+                      <p className="muted mt-2 text-sm leading-6">{result.snippet}</p>
+                      <p className="muted mt-2 truncate text-xs">{result.url}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
+                      <Button
+                        onClick={() =>
+                          upsertWorkspaceTab({
+                            id: `browse-${Date.now()}-${index}`,
+                            label: clipText(result.title, 24),
+                            kind: "browse",
+                            url: result.url,
+                            closable: true
+                          })
+                        }
+                        size="sm"
+                        variant="secondary"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        Open here
+                      </Button>
                       <Button onClick={() => importWebSource(result)} size="sm" disabled={importingSourceId === result.id}>
                         {importingSourceId === result.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                        Add
+                        Add source
                       </Button>
-                      <a
-                        href={result.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold transition hover:bg-white/16"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Visit
-                      </a>
                     </div>
                   </div>
                 </div>
@@ -3506,8 +3638,10 @@ export function StudyWorkspace({
             )}
           </div>
         ) : isOutput ? (
-          workspaceItem.action === "notes" ? (
+          interactiveOutputAction === "notes" ? (
             <AINotesConsole content={workspaceItem.output || ""} />
+          ) : ["flashcards", "quiz", "exam"].includes(interactiveOutputAction || "") ? (
+            renderToolResults()
           ) : (
             <article className={`${isCanvas ? "min-h-[58vh]" : ""} rounded-[28px] bg-white/8 p-5`}>
               <RichStudyText content={workspaceItem.output || "No output found for this tab."} />
@@ -3517,6 +3651,7 @@ export function StudyWorkspace({
           <iframe
             src={workspaceItem.url}
             title={workspaceItem.file?.file_name || workspaceItem.label}
+            loading="lazy"
             className={`${isCanvas ? "h-[68vh]" : "h-[58vh]"} w-full rounded-[24px] border border-white/10 bg-white`}
           />
         ) : workspaceItem.previewKind === "image" && workspaceItem.url ? (
@@ -4378,10 +4513,10 @@ export function StudyWorkspace({
                 </div>
                 <div className="mt-3 flex gap-2">
                   <a
-                    href="/api/music/spotify/login"
+                    href={spotifyLoginHref}
                     className="flex-1 rounded-[16px] bg-white/10 px-3 py-2 text-center text-xs font-medium transition hover:bg-white/16"
                   >
-                    Spotify
+                    {spotifyConnected ? "Spotify connected" : "Connect Spotify"}
                   </a>
                   <button
                     type="button"
@@ -4588,7 +4723,7 @@ export function StudyWorkspace({
                       className="rounded-[22px] bg-white/14 p-3 transition hover:bg-white/18"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <button type="button" onClick={() => openFilePreview(file)} className="min-w-0 flex-1 text-left">
+                        <button type="button" onClick={() => openFileInWorkspaceTab(file)} className="min-w-0 flex-1 text-left">
                           <p className="text-sm font-semibold">
                             <FileText className="mr-2 inline h-4 w-4 text-[var(--accent-sky)]" />
                             {file.file_name}
@@ -4613,7 +4748,7 @@ export function StudyWorkspace({
                           </button>
                           <button
                             type="button"
-                            onClick={() => openFilePreview(file)}
+                            onClick={() => openFileInWorkspaceTab(file)}
                             className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]"
                           >
                             <Eye className="h-3 w-3" />
@@ -4637,7 +4772,7 @@ export function StudyWorkspace({
                           </button>
                         </div>
                       </div>
-                      <button type="button" onClick={() => openFilePreview(file)} className="mt-2 w-full text-left">
+                      <button type="button" onClick={() => openFileInWorkspaceTab(file)} className="mt-2 w-full text-left">
                         {file.source_enabled === false ? (
                           <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/50">
                             Excluded from tutor, tools, and revision plans
@@ -4935,9 +5070,9 @@ export function StudyWorkspace({
                     <div className="rounded-[26px] border border-white/10 bg-white/8 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
                         <div className="min-w-0 flex-1">
-                          <p className="font-semibold">Search for sources inside this studio</p>
+                          <p className="font-semibold">Search the web inside this studio</p>
                           <p className="muted mt-1 text-xs">
-                            Search academic-style sources or paste a URL. Results open as workspace tabs so the tutor can explain what is visible.
+                            Search Google-style results or paste a URL. Everything opens as a workspace tab inside this studio.
                           </p>
                         </div>
                         <div className="flex flex-[1.2] items-center gap-2 rounded-[22px] border border-white/10 bg-black/10 px-3 py-2">
@@ -4951,7 +5086,7 @@ export function StudyWorkspace({
                                 void searchWorkspaceSources();
                               }
                             }}
-                            placeholder="Search a topic or paste a URL..."
+                            placeholder="Search Google or paste a URL..."
                             className="w-full bg-transparent text-sm outline-none"
                           />
                           <Button onClick={searchWorkspaceSources} size="sm" disabled={workspaceSearchLoading}>
@@ -5068,6 +5203,19 @@ export function StudyWorkspace({
                               <Button onClick={() => openFileInCanvas(file)} variant="secondary" size="sm">
                                 <Maximize2 className="h-3.5 w-3.5" />
                                 Canvas
+                              </Button>
+                              <Button
+                                onClick={() => removeFile(file)}
+                                variant="ghost"
+                                size="sm"
+                                disabled={deletingFileId === file.id}
+                              >
+                                {deletingFileId === file.id ? (
+                                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5 text-[var(--accent-coral)]" />
+                                )}
+                                Delete
                               </Button>
                             </div>
                           </div>
@@ -5538,6 +5686,7 @@ export function StudyWorkspace({
         </aside>
       </div>
 
+      <SpotifyPlaybackProvider connected={spotifyConnected}>
       <div className="fixed bottom-3 left-3 right-3 z-30 mx-auto max-w-[1800px]">
         {musicPanelOpen ? (
           <motion.div
@@ -5550,7 +5699,9 @@ export function StudyWorkspace({
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
                   Focus music
                 </p>
-                <h3 className="mt-1 text-lg font-semibold">Browse playlists and connect accounts</h3>
+                <h3 className="mt-1 text-lg font-semibold">
+                  {spotifyConnected ? "Spotify connected" : "Browse playlists and connect accounts"}
+                </h3>
               </div>
               <button
                 type="button"
@@ -5578,10 +5729,13 @@ export function StudyWorkspace({
                   return provider.href && !provider.unavailable ? (
                     <a
                       key={provider.key}
-                      href={provider.href}
+                      href={provider.key === "spotify" ? spotifyLoginHref : provider.href}
                       className="rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
                     >
                       {providerCard}
+                      {provider.key === "spotify" && spotifyConnected ? (
+                        <p className="mt-2 text-[11px] font-semibold text-[var(--accent-mint)]">Account linked</p>
+                      ) : null}
                     </a>
                   ) : (
                     <button
@@ -5602,89 +5756,32 @@ export function StudyWorkspace({
                   <input
                     value={musicSearch}
                     onChange={(event) => setMusicSearch(event.target.value)}
-                    placeholder="Search playlists, albums, moods..."
+                    placeholder="Search Spotify tracks, artists, albums..."
                     className="w-full bg-transparent text-sm outline-none"
                   />
                 </div>
               </div>
 
               <div className="mt-4 space-y-2">
-                {filteredMusicLibrary.length ? filteredMusicLibrary.map((item, index) => (
-                  <button
-                    key={`${item.provider}-${item.title}`}
-                    type="button"
-                    onClick={() => {
-                      const matchingTrack = focusTracks.findIndex((track) => track.mood.toLowerCase() === item.mood.toLowerCase());
-                      setSelectedTrackIndex(matchingTrack >= 0 ? matchingTrack : index % focusTracks.length);
-                      setMusicPlaying(true);
-                    }}
-                    className="w-full rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{item.title}</p>
-                        <p className="muted mt-1 truncate text-xs">
-                          {item.artist} • {item.type} • {item.provider}
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
-                        Play
-                      </span>
-                    </div>
-                  </button>
-                )) : (
-                  <div className="rounded-[22px] border border-dashed border-white/14 bg-white/6 px-4 py-8 text-center">
-                    <p className="font-semibold">No music playing</p>
-                    <p className="muted mt-2 text-sm">
-                      Connect Spotify to browse your account music here. Free Spotify accounts may have limited playback. YouTube Music and SoundCloud account linking are unavailable in this preview.
-                    </p>
-                  </div>
-                )}
+                <SpotifyPlaybackPanel
+                  connected={spotifyConnected}
+                  loginHref={spotifyLoginHref}
+                  searchQuery={musicSearch}
+                  onPlayingChange={setMusicPlaying}
+                />
               </div>
             </div>
           </motion.div>
         ) : null}
 
         <div className="panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] px-3 py-2 shadow-[0_18px_50px_rgba(2,6,23,0.28)]">
-          <button
-            type="button"
-            onClick={() => {
-              if (!selectedTrack) {
-                setMusicPanelOpen(true);
-                return;
-              }
-              setMusicPlaying((current) => !current);
-            }}
-            className={`grid h-10 w-10 place-items-center rounded-full transition ${
-              musicPlaying
-                ? "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-slate-950"
-                : "bg-white/10 text-[var(--fg)]"
-            }`}
-            aria-label={musicPlaying ? "Pause focus music" : "Play focus music"}
-          >
-            {musicPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-          </button>
-          <div className={`h-9 w-9 rounded-[14px] ${selectedTrack ? `bg-gradient-to-br ${selectedTrack.color}` : "bg-white/10"}`} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">{selectedTrack?.title || "No music playing"}</p>
-            <p className="muted truncate text-xs">
-              {selectedTrack ? `${selectedTrack.mood} focus queue` : "Spotify connect available with limited free-account playback. YouTube Music and SoundCloud unavailable."}
-            </p>
-          </div>
-          {focusTracks.length ? <div className="hidden flex-wrap gap-2 md:flex">
-            {focusTracks.map((track, index) => (
-              <button
-                key={`bottom-track-${track.title}`}
-                type="button"
-                onClick={() => setSelectedTrackIndex(index)}
-                className={`rounded-full px-3 py-2 text-xs font-medium transition ${
-                  selectedTrackIndex === index ? "bg-white/18 text-[var(--fg)]" : "bg-white/8 text-[var(--muted)] hover:bg-white/12"
-                }`}
-              >
-                {track.mood}
-              </button>
-            ))}
-          </div> : null}
+          <SpotifyPlaybackPanel
+            connected={spotifyConnected}
+            loginHref={spotifyLoginHref}
+            compact
+            searchQuery={musicSearch}
+            onPlayingChange={setMusicPlaying}
+          />
           <button
             type="button"
             onClick={() => setMusicPanelOpen((current) => !current)}
@@ -5695,6 +5792,7 @@ export function StudyWorkspace({
           </button>
         </div>
       </div>
+      </SpotifyPlaybackProvider>
 
       {sourceModalOpen ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(2,6,23,0.6)] px-4 py-6 backdrop-blur-sm">
@@ -6143,6 +6241,7 @@ export function StudyWorkspace({
                 <iframe
                   src={preview.url}
                   title={preview.file?.file_name || "PDF preview"}
+                  loading="lazy"
                   className="h-[72vh] w-full rounded-[24px] border border-white/10 bg-white"
                 />
               ) : preview.kind === "image" && preview.url ? (

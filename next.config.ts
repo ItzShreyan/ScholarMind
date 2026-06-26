@@ -18,13 +18,13 @@ const nextConfig: NextConfig = {
   async headers() {
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://www.youtube.com https://www.gstatic.com https://open.spotify.com https://w.soundcloud.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://www.youtube.com https://www.gstatic.com https://open.spotify.com https://sdk.scdn.co https://w.soundcloud.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' data: https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.supabase.co https://i.ytimg.com https://i.scdn.co https://i1.sndcdn.com",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://openrouter.ai https://api.openrouter.ai https://api.spotify.com https://accounts.spotify.com https://www.googleapis.com https://api.soundcloud.com",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://openrouter.ai https://api.openrouter.ai https://api.spotify.com https://accounts.spotify.com https://*.spotify.com wss://*.spotify.com https://www.googleapis.com https://api.soundcloud.com",
       "media-src 'self' blob: https://*.sndcdn.com https://*.scdn.co",
-      "frame-src 'self' https://open.spotify.com https://www.youtube.com https://www.youtube-nocookie.com https://w.soundcloud.com",
+      "frame-src 'self' https://*.supabase.co blob: https://open.spotify.com https://www.youtube.com https://www.youtube-nocookie.com https://w.soundcloud.com https:",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

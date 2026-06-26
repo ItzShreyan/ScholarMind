@@ -42,30 +42,57 @@ function toUnicodeSuperscript(value: string) {
     .join("");
 }
 
+const greekMap: Record<string, string> = {
+  alpha: "α",
+  beta: "β",
+  gamma: "γ",
+  delta: "δ",
+  epsilon: "ε",
+  theta: "θ",
+  lambda: "λ",
+  mu: "μ",
+  pi: "π",
+  sigma: "σ",
+  phi: "φ",
+  omega: "ω"
+};
+
 function renderMathAwareText(children: React.ReactNode) {
   return React.Children.map(children, (child) => {
     if (typeof child !== "string") return child;
+    const text = child
+      .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "($1)/($2)")
+      .replace(/\\sqrt\{([^}]+)\}/g, "√($1)")
+      .replace(/\\([a-zA-Z]+)/g, (_, name: string) => greekMap[name.toLowerCase()] ?? name);
+
     const parts: React.ReactNode[] = [];
-    const pattern = /(\$[^$]+\$)|([A-Za-z0-9)\]}]+)\^(\{[^}]+\}|\([^)]+\)|[-+]?\d+|[A-Za-z])/g;
+    const pattern =
+      /(\$\$[\s\S]+?\$\$)|(\$[^$]+\$)|([A-Za-z0-9)\]}]+)\^(\{[^}]+\}|\([^)]+\)|[-+]?\d+|[A-Za-z])/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
 
-    while ((match = pattern.exec(child))) {
+    while ((match = pattern.exec(text))) {
       if (match.index > lastIndex) {
-        parts.push(child.slice(lastIndex, match.index));
+        parts.push(text.slice(lastIndex, match.index));
       }
 
       if (match[1]) {
         parts.push(
+          <span key={`${match.index}-block`} className="my-2 block rounded-[18px] bg-white/10 px-3 py-2 font-mono text-[0.95em] text-[var(--accent-mint)]">
+            {match[1].slice(2, -2)}
+          </span>
+        );
+      } else if (match[2]) {
+        parts.push(
           <span key={`${match.index}-formula`} className="rounded-lg bg-white/10 px-1.5 py-0.5 font-mono text-[0.95em] text-[var(--accent-mint)]">
-            {match[1].slice(1, -1)}
+            {match[2].slice(1, -1)}
           </span>
         );
       } else {
-        parts.push(match[2]);
+        parts.push(match[3]);
         parts.push(
           <sup key={`${match.index}-sup`} className="font-mono text-[0.75em] leading-none">
-            {toUnicodeSuperscript(match[3])}
+            {toUnicodeSuperscript(match[4])}
           </sup>
         );
       }
@@ -73,11 +100,11 @@ function renderMathAwareText(children: React.ReactNode) {
       lastIndex = pattern.lastIndex;
     }
 
-    if (lastIndex < child.length) {
-      parts.push(child.slice(lastIndex));
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
     }
 
-    return parts.length ? parts : child;
+    return parts.length ? parts : text;
   });
 }
 
