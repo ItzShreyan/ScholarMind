@@ -13,6 +13,9 @@ import {
   reserveAiUsage
 } from "@/lib/ai/limits";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+
 const schema = z.object({
   action: z.enum([
     "summary",

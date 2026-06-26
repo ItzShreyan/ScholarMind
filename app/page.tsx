@@ -432,6 +432,9 @@ export default function LandingPage() {
             <SecurityBadge compact />
             <Link href="/privacy" className="muted transition hover:text-[var(--fg)]">Privacy</Link>
             <Link href="/terms" className="muted transition hover:text-[var(--fg)]">Terms</Link>
+            <a href="mailto:hello.minddevelopment@gmail.com" className="muted transition hover:text-[var(--accent-sky)]">
+              hello.minddevelopment@gmail.com
+            </a>
             <span className="muted">© {new Date().getFullYear()} ScholarMind</span>
           </div>
         </Container>

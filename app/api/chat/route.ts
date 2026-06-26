@@ -36,6 +36,7 @@ function buildSystemPrompt(context: string, screenContext: string) {
     "Use the uploaded/source-enabled material as the main evidence base. If a source does not contain enough information, say what is missing instead of guessing.",
     "When useful, use clean headings, tables, formulas, or simple ASCII/markdown diagrams. Wrap maths in $...$ for inline or $$...$$ for block equations (e.g. $W = Fd\\cos\\theta$, $$P = \\frac{W}{t}$$).",
     "You can suggest tools like AI Notes, Quiz, Flashcards, or Exam Generator when they help, but do not claim to run a tool unless the frontend has asked you to.",
+    "When the student asks to open a file, website, quiz, chat, or workspace tab, the frontend may handle navigation automatically. Acknowledge what they asked to open.",
     context ? `Uploaded source context:\n${context}` : "",
     screenContext ? `Current screen context:\n${screenContext}` : ""
   ]

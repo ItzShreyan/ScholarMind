@@ -83,6 +83,17 @@ export const groqProviderV2: AIProvider = {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) throw new Error("Missing GROQ_API_KEY");
     const messages = buildMessages(input);
+    const action = String(input.action || input.mode || "");
+    const maxTokens =
+      action === "notes"
+        ? 5500
+        : action === "exam"
+          ? 4500
+          : action === "quiz" || action === "flashcards"
+            ? 2800
+            : 1600;
+    const timeoutMs =
+      action === "notes" || action === "exam" ? 45000 : action === "quiz" || action === "flashcards" ? 30000 : 20000;
 
     const run = async () => {
       const res = await fetchWithTimeout(
@@ -96,12 +107,12 @@ export const groqProviderV2: AIProvider = {
           body: JSON.stringify({
             model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
             messages,
-            temperature: 0.4,
-            max_tokens: 1200,
+            temperature: action === "quiz" || action === "flashcards" ? 0.25 : 0.4,
+            max_tokens: maxTokens,
             stream: true
           })
         },
-        15000
+        timeoutMs
       );
 
       if (!res.ok) throw new Error(`Groq V2 failed: ${res.status}`);

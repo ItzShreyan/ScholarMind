@@ -28,6 +28,7 @@ import {
   PenLine,
   Play,
   Plus,
+  RefreshCw,
   Search,
   SendHorizonal,
   Timer,
@@ -41,6 +42,7 @@ import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
+import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
 import { defaultUserPreferences } from "@/lib/preferences/defaults";
@@ -406,6 +408,17 @@ function detectChatToolRequest(text: string): AIAction | null {
   if (/\b(ai notes|long notes|textbook notes|study notes|detailed notes)\b/.test(normalized)) return "notes";
   if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
   return null;
+}
+
+function extractUrlFromText(text: string) {
+  const match = text.match(/https?:\/\/[^\s)]+/i);
+  return match?.[0]?.replace(/[.,;]+$/, "") || null;
+}
+
+function extractWebUrlFromSourceText(text: string) {
+  const labeled = text.match(/Source URL:\s*(https?:\/\/[^\s]+)/i);
+  if (labeled?.[1]) return labeled[1].trim();
+  return extractUrlFromText(text);
 }
 
 async function readJsonResponse(response: Response) {
@@ -824,6 +837,8 @@ export function StudyWorkspace({
   const spotifyLoginHref = `/api/music/spotify/login?returnTo=${encodeURIComponent(pathname || "/studio")}`;
   const searchParams = useSearchParams();
   const workspaceGridRef = useRef<HTMLDivElement>(null);
+  const workspaceScrollRef = useRef<HTMLDivElement>(null);
+  const lastWorkspaceScrollYRef = useRef(0);
   const chatViewportRef = useRef<HTMLDivElement>(null);
   const quickImportInputRef = useRef<HTMLInputElement>(null);
   const planLaunchAttemptRef = useRef<string | null>(null);
@@ -851,6 +866,7 @@ export function StudyWorkspace({
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
   const [workspaceTab, setWorkspaceTab] = useState("home");
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
+  const [browseReloadKeys, setBrowseReloadKeys] = useState<Record<string, number>>({});
   const [showTimerPopover, setShowTimerPopover] = useState(false);
   const [timerMode, setTimerMode] = useState<"regular" | "interval">("interval");
   const [timerMinutes, setTimerMinutes] = useState(60);
@@ -1582,6 +1598,7 @@ export function StudyWorkspace({
     if (
       nextTab.kind === "output" ||
       nextTab.kind === "canvas-output" ||
+      nextTab.kind === "browse" ||
       nextTab.kind === "canvas-browse" ||
       nextTab.kind === "canvas-source"
     ) {
@@ -1616,9 +1633,9 @@ export function StudyWorkspace({
     (url: string, label: string) => {
       recordRecentWebsite(url, label);
       upsertWorkspaceTab({
-        id: `canvas-browse-${Date.now()}`,
+        id: `browse-${Date.now()}`,
         label: clipText(label, 24),
-        kind: "canvas-browse",
+        kind: "browse",
         url,
         closable: true
       });
@@ -1774,6 +1791,14 @@ export function StudyWorkspace({
 
   const openFileInWorkspaceTab = useCallback(
     async (file: FileItem) => {
+      if (file.file_type === "text/web") {
+        const webUrl = extractWebUrlFromSourceText(file.extracted_text || "");
+        if (webUrl) {
+          openBrowseInWorkspace(webUrl, file.file_name);
+          return;
+        }
+      }
+
       try {
         const response = await fetch(`/api/files/preview?fileId=${file.id}`);
         const json = await readJsonResponse(response);
@@ -1801,7 +1826,7 @@ export function StudyWorkspace({
         });
       }
     },
-    [upsertWorkspaceTab]
+    [openBrowseInWorkspace, upsertWorkspaceTab]
   );
 
   const addCanvasAnnotation = useCallback((tabId: string, tool: Exclude<CanvasTool, "mouse">, point?: { x: number; y: number }) => {
@@ -1872,11 +1897,7 @@ export function StudyWorkspace({
 
   const moveCanvasStroke = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (canvasTool === "eraser" && activeCanvasTabRef.current) {
-        event.preventDefault();
-        eraseStrokesNear(activeCanvasTabRef.current, getCanvasPointerPoint(event));
-        return;
-      }
+      if (canvasTool === "eraser") return;
 
       if (!activeCanvasStroke) return;
       event.preventDefault();
@@ -1927,26 +1948,37 @@ export function StudyWorkspace({
           700
         )}`
       : "No source preview modal open.";
-    const visibleAnnotations = canvasAnnotations
-      .filter((annotation) => annotation.tabId === workspaceTab)
-      .slice(0, 8)
-      .map((annotation) => `${annotation.tool}: ${annotation.text}`)
+    const openTabsSummary = workspaceTabs
+      .map((tab) => {
+        const parts = [`${tab.label} (${tab.kind})`];
+        if (tab.url) parts.push(`url=${tab.url}`);
+        if (tab.query) parts.push(`search=${tab.query}`);
+        if (tab.action) parts.push(`tool=${tab.action}`);
+        if (tab.file?.file_name) parts.push(`file=${tab.file.file_name}`);
+        return parts.join(" | ");
+      })
+      .slice(0, 10)
+      .join(" || ");
+    const activeTab = workspaceTabs.find((item) => item.id === workspaceTab);
+    const annotationSummary = canvasAnnotations
+      .slice(0, 12)
+      .map((annotation) => `[${annotation.tabId}] ${annotation.tool}: ${clipText(annotation.text, 120)}`)
       .join(" | ");
-    const visibleStrokes = canvasStrokes
-      .filter((stroke) => stroke.tabId === workspaceTab)
-      .slice(0, 8)
-      .map((stroke) => `${stroke.tool} stroke with ${stroke.points.length} points`)
+    const strokeSummary = canvasStrokes
+      .slice(0, 12)
+      .map((stroke) => `[${stroke.tabId}] ${stroke.tool} stroke (${stroke.points.length} points)`)
       .join(" | ");
 
     return [
-      `Workspace tab: ${workspaceTab}.`,
+      `Active workspace tab: ${activeTab?.label || workspaceTab}.`,
       currentSession?.title ? `Current studio: ${currentSession.title}.` : "",
+      openTabsSummary ? `Open workspace tabs: ${openTabsSummary}.` : "No extra workspace tabs open.",
       `Source-enabled files in view: ${currentFilesLabel}.`,
       `Selected tool: ${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}.`,
       openResultLabel,
       previewContext,
-      visibleAnnotations ? `Visible canvas annotations: ${visibleAnnotations}.` : "",
-      visibleStrokes ? `Visible canvas drawings: ${visibleStrokes}.` : "",
+      annotationSummary ? `Canvas annotations across tabs: ${annotationSummary}.` : "",
+      strokeSummary ? `Canvas drawings across tabs: ${strokeSummary}.` : "",
       currentToolHistory.length
         ? `Recent generated outputs: ${currentToolHistory
             .slice(0, 4)
@@ -1956,7 +1988,21 @@ export function StudyWorkspace({
     ]
       .filter(Boolean)
       .join("\n");
-  }, [activeAction, canvasAnnotations, canvasStrokes, currentFilesLabel, currentSession?.title, currentToolHistory, output, preview.file?.file_name, preview.kind, preview.open, preview.text, workspaceTab]);
+  }, [
+    activeAction,
+    canvasAnnotations,
+    canvasStrokes,
+    currentFilesLabel,
+    currentSession?.title,
+    currentToolHistory,
+    output,
+    preview.file?.file_name,
+    preview.kind,
+    preview.open,
+    preview.text,
+    workspaceTab,
+    workspaceTabs
+  ]);
 
   useEffect(() => {
     setRevealedQuiz({});
@@ -2093,6 +2139,24 @@ export function StudyWorkspace({
       behavior: messages.length > 1 ? "smooth" : "auto"
     });
   }, [chatLoading, messages]);
+
+  useEffect(() => {
+    const container = workspaceScrollRef.current;
+    if (!container) return;
+
+    const onScroll = () => {
+      const y = container.scrollTop;
+      if (y > lastWorkspaceScrollYRef.current + 12) {
+        setMusicPanelOpen(true);
+      } else if (y < lastWorkspaceScrollYRef.current - 12) {
+        setMusicPanelOpen(false);
+      }
+      lastWorkspaceScrollYRef.current = y;
+    };
+
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, []);
 
   const playSoftPing = useCallback((kind: "break" | "focus" | "done" = "focus") => {
     try {
@@ -2804,9 +2868,10 @@ export function StudyWorkspace({
         ...current,
         [sessionId]: Array.isArray(json.files) ? json.files : current[sessionId] ?? []
       }));
-      setStatusNote(`${source.title} was added to this studio as a web source.`);
+      openBrowseInWorkspace(source.url, source.title);
+      setStatusNote(`${source.title} was added to this studio and opened in the workspace browser.`);
       setSourceModalOpen(false);
-      setTab("files");
+      setTab("tools");
     } catch (error) {
       setSourceModalError((error as Error).message || "Unable to import this web source.");
     } finally {
@@ -3084,6 +3149,73 @@ export function StudyWorkspace({
     }
   }, [activeSessionId, buildContextForPrompt, openGeneratedResultInWorkspaceTab, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.focus, updateMetrics]);
 
+  const executeWorkspaceNavigation = useCallback(
+    (question: string) => {
+      const lower = question.toLowerCase();
+      if (!/\b(open|show|switch to|go to|bring up|display|pull up)\b/.test(lower)) return false;
+
+      if (/\b(files?|sources?|uploads?|notes?)\b/.test(lower) && !/\b(ai notes|textbook)\b/.test(lower)) {
+        setTab("files");
+        setWorkspaceTab("sources");
+        setStatusNote("Opened your studio sources.");
+        return true;
+      }
+
+      if (/\b(chat|tutor|messages?)\b/.test(lower)) {
+        setTab("chat");
+        setStatusNote("Opened AI chat.");
+        return true;
+      }
+
+      if (/\b(study tools?|tools?)\b/.test(lower)) {
+        setTab("tools");
+        setStatusNote("Opened study tools.");
+        return true;
+      }
+
+      const toolMatch = actionButtons.find(
+        (item) => lower.includes(item.label.toLowerCase()) || lower.includes(item.key.replace(/_/g, " "))
+      );
+      if (toolMatch) {
+        setActiveAction(toolMatch.key);
+        setTab("tools");
+        const saved = currentToolHistory.find((item) => item.action === toolMatch.key);
+        if (saved) openSavedToolResult(saved);
+        setStatusNote(`Opened ${toolMatch.label}.`);
+        return true;
+      }
+
+      const url = extractUrlFromText(question);
+      if (url) {
+        try {
+          openBrowseInWorkspace(url, new URL(url).hostname);
+        } catch {
+          openBrowseInWorkspace(url, clipText(url, 24));
+        }
+        setStatusNote("Opened that website inside the studio workspace.");
+        return true;
+      }
+
+      const matchedFile = currentFiles.find((file) => lower.includes(file.file_name.toLowerCase().slice(0, 24)));
+      if (matchedFile) {
+        void openFileInWorkspaceTab(matchedFile);
+        setStatusNote(`Opened ${matchedFile.file_name}.`);
+        return true;
+      }
+
+      const matchedTab = workspaceTabs.find((tab) => lower.includes(tab.label.toLowerCase()));
+      if (matchedTab) {
+        setWorkspaceTab(matchedTab.id);
+        setTab("tools");
+        setStatusNote(`Switched to ${matchedTab.label}.`);
+        return true;
+      }
+
+      return false;
+    },
+    [currentFiles, currentToolHistory, openBrowseInWorkspace, openFileInWorkspaceTab, openSavedToolResult, workspaceTabs]
+  );
+
   const submitChatQuestion = useCallback(async (questionInput: string) => {
     const question = questionInput.trim();
     if (!question || loading || chatLoading) return false;
@@ -3125,6 +3257,15 @@ export function StudyWorkspace({
         }
       ]);
       setTab("tools");
+      return true;
+    }
+
+    if (executeWorkspaceNavigation(question)) {
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: question },
+        { role: "ai", content: "Done — I updated the studio workspace for you." }
+      ]);
       return true;
     }
 
@@ -3304,7 +3445,7 @@ export function StudyWorkspace({
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -3497,9 +3638,7 @@ export function StudyWorkspace({
 
   const renderWorkspaceDynamicTab = (workspaceItem: WorkspaceDynamicTab) => {
     const isCanvas =
-      workspaceItem.kind === "canvas-source" ||
-      workspaceItem.kind === "canvas-output" ||
-      workspaceItem.kind === "canvas-browse";
+      workspaceItem.kind === "canvas-source" || workspaceItem.kind === "canvas-output";
     const isOutput =
       workspaceItem.kind === "output" || (workspaceItem.kind === "canvas-output" && Boolean(workspaceItem.action && workspaceItem.output));
     const isSearch = workspaceItem.kind === "search";
@@ -3549,6 +3688,19 @@ export function StudyWorkspace({
             {isBrowse && workspaceItem.url ? (
               <>
                 <Button
+                  onClick={() =>
+                    setBrowseReloadKeys((current) => ({
+                      ...current,
+                      [workspaceItem.id]: (current[workspaceItem.id] ?? 0) + 1
+                    }))
+                  }
+                  variant="secondary"
+                  size="sm"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Reload
+                </Button>
+                <Button
                   onClick={() => void saveBrowseAsNote(workspaceItem.url!, workspaceItem.label)}
                   variant="secondary"
                   size="sm"
@@ -3559,7 +3711,7 @@ export function StudyWorkspace({
                 </Button>
                 <Button onClick={() => window.open(workspaceItem.url!, "_blank", "noopener,noreferrer")} variant="ghost" size="sm">
                   <ExternalLink className="h-4 w-4" />
-                  New tab
+                  External
                 </Button>
               </>
             ) : null}
@@ -3613,85 +3765,87 @@ export function StudyWorkspace({
               </button>
             ) : null}
             </div>
-            {tabAnnotations.length ? (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[10.5rem] z-30">
-                {tabAnnotations.map((annotation) => (
-                  <div
-                    key={annotation.id}
-                    className={`pointer-events-auto absolute rounded-[16px] border px-3 py-2 shadow-[0_16px_40px_rgba(6,10,24,0.28)] ${
-                      annotation.tool === "highlight"
-                        ? "border-[rgba(255,226,105,0.45)] bg-[rgba(255,226,105,0.28)]"
-                        : "border-white/20 bg-[rgba(8,12,24,0.82)]"
-                    }`}
-                    style={{
-                      left: `${annotation.x}%`,
-                      top: `${annotation.y}%`,
-                      width: annotation.width,
-                      minHeight: annotation.height
-                    }}
-                    onPointerDown={(event) => {
-                      if (canvasTool !== "mouse") return;
-                      event.preventDefault();
-                      const target = event.currentTarget;
-                      const container = target.parentElement;
-                      if (!container) return;
-                      const startX = event.clientX;
-                      const startY = event.clientY;
-                      const rect = container.getBoundingClientRect();
-                      const originX = annotation.x;
-                      const originY = annotation.y;
+          </div>
+        ) : null}
 
-                      const onMove = (moveEvent: PointerEvent) => {
-                        const nextX = originX + ((moveEvent.clientX - startX) / rect.width) * 100;
-                        const nextY = originY + ((moveEvent.clientY - startY) / rect.height) * 100;
-                        setCanvasAnnotations((current) =>
-                          current.map((item) =>
-                            item.id === annotation.id
-                              ? {
-                                  ...item,
-                                  x: Math.max(0, Math.min(92, nextX)),
-                                  y: Math.max(0, Math.min(92, nextY))
-                                }
-                              : item
-                          )
-                        );
-                      };
+        {isCanvas && tabAnnotations.length ? (
+          <div className="pointer-events-none absolute inset-0 z-30" data-annotation-layer>
+            {tabAnnotations.map((annotation) => (
+              <div
+                key={annotation.id}
+                data-annotation-root
+                className={`pointer-events-auto absolute rounded-[16px] border px-3 py-2 shadow-[0_16px_40px_rgba(6,10,24,0.28)] ${
+                  annotation.tool === "highlight"
+                    ? "border-[rgba(255,226,105,0.45)] bg-[rgba(255,226,105,0.28)]"
+                    : "border-white/20 bg-[rgba(8,12,24,0.82)]"
+                }`}
+                style={{
+                  left: `${annotation.x}%`,
+                  top: `${annotation.y}%`,
+                  width: annotation.width,
+                  minHeight: annotation.height
+                }}
+              >
+                <div
+                  className="mb-2 flex cursor-move items-center justify-between gap-2"
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    const container = (event.currentTarget.closest("[data-annotation-layer]") as HTMLElement) || event.currentTarget.parentElement;
+                    if (!container) return;
+                    const startX = event.clientX;
+                    const startY = event.clientY;
+                    const rect = container.getBoundingClientRect();
+                    const originX = annotation.x;
+                    const originY = annotation.y;
 
-                      const onUp = () => {
-                        window.removeEventListener("pointermove", onMove);
-                        window.removeEventListener("pointerup", onUp);
-                      };
-
-                      window.addEventListener("pointermove", onMove);
-                      window.addEventListener("pointerup", onUp);
-                    }}
-                  >
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--accent-gold)]">
-                        {annotation.tool}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setCanvasAnnotations((current) => current.filter((item) => item.id !== annotation.id))}
-                        className="rounded-full bg-white/10 p-1 transition hover:bg-white/16"
-                        aria-label="Remove annotation"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                    <textarea
-                      value={annotation.text}
-                      onChange={(event) =>
-                        setCanvasAnnotations((current) =>
-                          current.map((item) => (item.id === annotation.id ? { ...item, text: event.target.value } : item))
+                    const onMove = (moveEvent: PointerEvent) => {
+                      const nextX = originX + ((moveEvent.clientX - startX) / rect.width) * 100;
+                      const nextY = originY + ((moveEvent.clientY - startY) / rect.height) * 100;
+                      setCanvasAnnotations((current) =>
+                        current.map((item) =>
+                          item.id === annotation.id
+                            ? {
+                                ...item,
+                                x: Math.max(0, Math.min(96, nextX)),
+                                y: Math.max(0, Math.min(96, nextY))
+                              }
+                            : item
                         )
-                      }
-                      className="min-h-[3rem] w-full resize both bg-transparent text-xs leading-5 outline-none"
-                    />
-                  </div>
-                ))}
+                      );
+                    };
+
+                    const onUp = () => {
+                      window.removeEventListener("pointermove", onMove);
+                      window.removeEventListener("pointerup", onUp);
+                    };
+
+                    window.addEventListener("pointermove", onMove);
+                    window.addEventListener("pointerup", onUp);
+                  }}
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--accent-gold)]">
+                    {annotation.tool}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setCanvasAnnotations((current) => current.filter((item) => item.id !== annotation.id))}
+                    className="rounded-full bg-white/10 p-1 transition hover:bg-white/16"
+                    aria-label="Remove annotation"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                <textarea
+                  value={annotation.text}
+                  onChange={(event) =>
+                    setCanvasAnnotations((current) =>
+                      current.map((item) => (item.id === annotation.id ? { ...item, text: event.target.value } : item))
+                    )
+                  }
+                  className="min-h-[3rem] w-full resize both bg-transparent text-xs leading-5 outline-none"
+                />
               </div>
-            ) : null}
+            ))}
           </div>
         ) : null}
 
@@ -3729,17 +3883,18 @@ export function StudyWorkspace({
 
         {isBrowse && workspaceItem.url ? (
           <div className="space-y-3">
-            <div className="rounded-[24px] border border-white/10 bg-white/8 px-4 py-3 text-xs">
-              <p className="font-semibold">{workspaceItem.url}</p>
-              <p className="muted mt-1">If the site blocks embedding, use Add source from search results or open it in a new tab.</p>
+            <div className="flex flex-wrap items-center gap-2 rounded-[24px] border border-white/10 bg-white/8 px-4 py-3 text-xs">
+              <p className="min-w-0 flex-1 truncate font-semibold">{workspaceItem.url}</p>
+              <p className="muted text-[11px]">Live page inside your studio. Some sites block embedding — use Save as note or External if needed.</p>
             </div>
-          <iframe
-            src={workspaceItem.url}
-            title={workspaceItem.label}
-            loading="lazy"
-            className={`${isCanvas ? "h-[68vh]" : "h-[62vh]"} w-full rounded-[24px] border border-white/10 bg-white`}
-            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-          />
+            <iframe
+              key={`${workspaceItem.id}-${browseReloadKeys[workspaceItem.id] ?? 0}`}
+              src={workspaceItem.url}
+              title={workspaceItem.label}
+              loading="lazy"
+              className="h-[min(72vh,900px)] w-full rounded-[24px] border border-white/10 bg-white"
+              sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+            />
           </div>
         ) : isSearch ? (
           <div className="space-y-4">
@@ -4326,6 +4481,7 @@ export function StudyWorkspace({
               </p>
             </div>
             <div className="relative flex flex-wrap items-center gap-2">
+              <SecurityBadge compact />
               <button
                 type="button"
                 onClick={() => setShowTimerPopover((current) => !current)}
@@ -5172,7 +5328,7 @@ export function StudyWorkspace({
                 </motion.div>
               ) : null}
 
-              <div className="hide-scrollbar min-h-[38rem] max-h-[72vh] overflow-auto p-5">
+              <div ref={workspaceScrollRef} className="hide-scrollbar min-h-[38rem] max-h-[72vh] overflow-auto p-5">
                 {workspaceTab === "home" ? (
                   <div className="space-y-5">
                     <div className="rounded-[30px] bg-[radial-gradient(circle_at_18%_20%,rgba(255,143,107,0.24),transparent_32%),radial-gradient(circle_at_86%_20%,rgba(107,221,255,0.2),transparent_30%),rgba(255,255,255,0.08)] p-6">
@@ -5851,6 +6007,13 @@ export function StudyWorkspace({
           </div>
         </aside>
       </div>
+
+      <footer className="mt-6 text-center text-xs text-[var(--muted)]">
+        Need help? Email{" "}
+        <a href="mailto:hello.minddevelopment@gmail.com" className="font-semibold text-[var(--accent-sky)] hover:underline">
+          hello.minddevelopment@gmail.com
+        </a>
+      </footer>
 
       <SpotifyPlaybackProvider connected={spotifyConnected}>
       <div className="fixed bottom-3 left-3 right-3 z-30 mx-auto max-w-[1800px]">

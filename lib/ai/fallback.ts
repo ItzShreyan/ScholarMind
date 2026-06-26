@@ -114,9 +114,32 @@ function isBadResponse(text: string, input: AIRequest): boolean {
   const mode = input.mode;
 
   if (!normalized.trim()) return true;
-  if (mode === "flashcards" && !normalized.includes('"front"') && !normalized.includes("q:") && !normalized.includes("flashcard")) return true;
-  if (mode === "quiz" && !normalized.includes('"question"') && !/\b1\./.test(normalized)) return true;
-  if (mode === "notes" && !normalized.includes('"sections"') && !normalized.includes("#")) return true;
+  if (mode === "flashcards") {
+    const hasCards =
+      normalized.includes('"front"') ||
+      normalized.includes("front:") ||
+      normalized.includes('"back"') ||
+      normalized.includes("q:") ||
+      normalized.includes("flashcard") ||
+      (normalized.includes("[") && normalized.includes("{"));
+    if (!hasCards) return true;
+  }
+  if (mode === "quiz") {
+    const hasQuestions =
+      normalized.includes('"question"') ||
+      /\bquestion\s*\d+/i.test(normalized) ||
+      /\b1\./.test(normalized) ||
+      (normalized.includes("[") && normalized.includes("options"));
+    if (!hasQuestions) return true;
+  }
+  if (mode === "notes") {
+    const hasNotes =
+      normalized.includes('"sections"') ||
+      normalized.includes('"title"') ||
+      normalized.includes("#") ||
+      normalized.length >= 280;
+    if (!hasNotes) return true;
+  }
   if (looksLikeReasoningLeak(text, String(mode))) return true;
   if (normalized === "[object object]" || normalized === "{}") return true;
   if (/(?:0{3,},){4,}0{3,}/.test(normalized)) return true;

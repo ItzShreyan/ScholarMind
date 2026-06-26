@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { Settings, UserCircle2 } from "lucide-react";
 import { BrandLink } from "@/components/common/BrandLink";
+import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { isHostOwner } from "@/lib/host";
 
@@ -47,6 +48,7 @@ export function DashboardHeader({ email }: { email?: string }) {
         </nav>
 
         <div className="flex items-center gap-2">
+          <SecurityBadge compact />
           <ThemeToggle />
           <Link
             href="/settings"

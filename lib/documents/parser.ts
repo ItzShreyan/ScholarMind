@@ -189,10 +189,15 @@ async function recognizeImage(buffer: Buffer) {
 }
 
 async function extractPdfDocument(buffer: Buffer) {
-  const pdfParse = (await import("pdf-parse")).default;
   let parsedText = "";
 
   try {
+    const pdfParseModule = await import("pdf-parse");
+    const pdfParse =
+      typeof pdfParseModule.default === "function"
+        ? pdfParseModule.default
+        : (pdfParseModule as { default?: typeof import("pdf-parse") }).default;
+    if (!pdfParse) throw new Error("PDF parser is unavailable.");
     const parsed = await pdfParse(buffer);
     parsedText = normalizeWhitespace(parsed.text || "");
   } catch {
