@@ -21,6 +21,8 @@ type SpotifyPlaybackState = {
   deviceId: string | null;
   track: SpotifyTrackItem | null;
   activePlaylist: SpotifyPlaylistItem | null;
+  playbackSource: string;
+  externalDevice: { name: string; type: string } | null;
   error: string;
   premiumRequired: boolean;
 };
@@ -154,6 +156,8 @@ function SpotifyPlaybackProviderInner({
     deviceId: null,
     track: null,
     activePlaylist: null,
+    playbackSource: "No music playing",
+    externalDevice: null,
     error: "",
     premiumRequired: false
   });
@@ -223,6 +227,8 @@ function SpotifyPlaybackProviderInner({
           connected: true,
           ready: true,
           deviceId: device_id,
+          playbackSource: "ScholarMind player",
+          externalDevice: null,
           error: "",
           premiumRequired: false
         }));
@@ -244,6 +250,8 @@ function SpotifyPlaybackProviderInner({
           ...current,
           playing: !nextState.paused,
           track: mapPlayerTrack(nextState.track_window.current_track),
+          playbackSource: "ScholarMind player",
+          externalDevice: null,
           error: ""
         }));
       });
@@ -320,12 +328,37 @@ function SpotifyPlaybackProviderInner({
       try {
         const response = await fetch("/api/music/spotify/now-playing");
         if (!response.ok) return;
-        const json = await readJson<{ playing?: boolean; track?: SpotifyTrackItem | null }>(response);
-        setState((current) => ({
-          ...current,
-          playing: Boolean(json.playing),
-          track: json.track ?? current.track
-        }));
+        const json = await readJson<{
+          playing?: boolean;
+          track?: SpotifyTrackItem | null;
+          device?: { name?: string; type?: string } | null;
+        }>(response);
+
+        setState((current) => {
+          if (current.ready && current.playing && current.track?.id === json.track?.id) {
+            return current;
+          }
+
+          const externalDevice = json.device?.name
+            ? { name: json.device.name, type: json.device.type || "device" }
+            : null;
+
+          return {
+            ...current,
+            playing: Boolean(json.playing),
+            track: json.track ?? current.track,
+            externalDevice: json.playing ? externalDevice : null,
+            playbackSource: json.playing
+              ? current.ready
+                ? "ScholarMind player"
+                : externalDevice
+                  ? `Spotify on ${externalDevice.name}`
+                  : "Spotify on your account"
+              : current.playbackSource === "ScholarMind player"
+                ? current.playbackSource
+                : "No music playing"
+          };
+        });
       } catch {
         // Ignore polling failures.
       }
@@ -334,7 +367,7 @@ function SpotifyPlaybackProviderInner({
     void syncNowPlaying();
     const intervalId = window.setInterval(() => {
       void syncNowPlaying();
-    }, 12000);
+    }, 5000);
     return () => window.clearInterval(intervalId);
   }, [enabled]);
 

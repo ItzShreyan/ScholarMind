@@ -1,8 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  defaultChatDailyLimit,
   defaultExamGeneratorWeeklyLimit,
+  defaultExamPracticeWeeklyLimit,
   defaultFreePreviewDailyLimit,
-  defaultFreePreviewHourlyLimit
+  defaultFreePreviewHourlyLimit,
+  defaultToolDailyLimit
 } from "@/lib/ai/preview";
 
 type UsageEntry = {
@@ -40,19 +43,16 @@ type WindowedReservationResult =
 
 type LimitClient = SupabaseClient;
 
+export type UsageScope = "general" | "exam" | "exam_practice" | "chat" | "tool";
+
 const usageStore = new Map<string, UsageEntry[]>();
-const examUsageStore = new Map<string, UsageEntry[]>();
 
 export const freePreviewHourlyLimit = Math.max(1, Number(process.env.AI_HOURLY_LIMIT ?? defaultFreePreviewHourlyLimit));
 export const freePreviewDailyLimit = Math.max(1, Number(process.env.AI_DAILY_LIMIT ?? defaultFreePreviewDailyLimit));
 export const examGeneratorWeeklyLimit = Math.max(1, Number(process.env.AI_EXAM_WEEKLY_LIMIT ?? defaultExamGeneratorWeeklyLimit));
 
-function getUsageKey(actorKey: string) {
-  return `ai:${actorKey}`;
-}
-
-function getExamUsageKey(actorKey: string) {
-  return `ai:exam:${actorKey}`;
+function getUsageKey(actorKey: string, scope: UsageScope) {
+  return `ai:${scope}:${actorKey}`;
 }
 
 function pruneEntries(entries: UsageEntry[], now: number, windowMs = 1000 * 60 * 60 * 24) {
@@ -64,15 +64,20 @@ function countRecent(entries: UsageEntry[], since: number) {
   return entries.filter((entry) => entry.timestamp >= since).length;
 }
 
-function reserveInMemory(actorKey: string, store: Map<string, UsageEntry[]>, hourlyLimit: number, dailyLimit: number): ReservationResult {
+function reserveInMemory(
+  actorKey: string,
+  scope: UsageScope,
+  hourlyLimit: number,
+  dailyLimit: number
+): ReservationResult {
   const now = Date.now();
-  const usageKey = store === examUsageStore ? getExamUsageKey(actorKey) : getUsageKey(actorKey);
-  const currentEntries = pruneEntries(store.get(usageKey) ?? [], now);
+  const usageKey = getUsageKey(actorKey, scope);
+  const currentEntries = pruneEntries(usageStore.get(usageKey) ?? [], now);
   const hourlyCount = hourlyLimit > 0 ? countRecent(currentEntries, now - 1000 * 60 * 60) : 0;
   const dailyCount = currentEntries.length;
 
   if ((hourlyLimit > 0 && hourlyCount >= hourlyLimit) || dailyCount >= dailyLimit) {
-    store.set(usageKey, currentEntries);
+    usageStore.set(usageKey, currentEntries);
     return {
       allowed: false,
       hourlyRemaining: hourlyLimit > 0 ? Math.max(0, hourlyLimit - hourlyCount) : 0,
@@ -81,9 +86,9 @@ function reserveInMemory(actorKey: string, store: Map<string, UsageEntry[]>, hou
     };
   }
 
-  const token = `${now}-${Math.random().toString(36).slice(2, 10)}`;
+  const token = `${scope}-${now}-${Math.random().toString(36).slice(2, 10)}`;
   currentEntries.push({ id: token, timestamp: now });
-  store.set(usageKey, currentEntries);
+  usageStore.set(usageKey, currentEntries);
 
   return {
     allowed: true,
@@ -94,14 +99,19 @@ function reserveInMemory(actorKey: string, store: Map<string, UsageEntry[]>, hou
   };
 }
 
-function reserveInMemoryWindow(actorKey: string, store: Map<string, UsageEntry[]>, limit: number, windowMs: number): WindowedReservationResult {
+function reserveInMemoryWindow(
+  actorKey: string,
+  scope: UsageScope,
+  limit: number,
+  windowMs: number
+): WindowedReservationResult {
   const now = Date.now();
-  const usageKey = store === examUsageStore ? getExamUsageKey(actorKey) : getUsageKey(actorKey);
-  const currentEntries = pruneEntries(store.get(usageKey) ?? [], now, windowMs);
+  const usageKey = getUsageKey(actorKey, scope);
+  const currentEntries = pruneEntries(usageStore.get(usageKey) ?? [], now, windowMs);
   const usageCount = currentEntries.length;
 
   if (usageCount >= limit) {
-    store.set(usageKey, currentEntries);
+    usageStore.set(usageKey, currentEntries);
     return {
       allowed: false,
       remaining: 0,
@@ -109,9 +119,9 @@ function reserveInMemoryWindow(actorKey: string, store: Map<string, UsageEntry[]
     };
   }
 
-  const token = `${now}-${Math.random().toString(36).slice(2, 10)}`;
+  const token = `${scope}-${now}-${Math.random().toString(36).slice(2, 10)}`;
   currentEntries.push({ id: token, timestamp: now });
-  store.set(usageKey, currentEntries);
+  usageStore.set(usageKey, currentEntries);
 
   return {
     allowed: true,
@@ -121,12 +131,12 @@ function reserveInMemoryWindow(actorKey: string, store: Map<string, UsageEntry[]
   };
 }
 
-function releaseInMemory(actorKey: string, token: string, store: Map<string, UsageEntry[]>) {
-  const usageKey = store === examUsageStore ? getExamUsageKey(actorKey) : getUsageKey(actorKey);
-  const currentEntries = store.get(usageKey);
+function releaseInMemory(actorKey: string, scope: UsageScope, token: string) {
+  const usageKey = getUsageKey(actorKey, scope);
+  const currentEntries = usageStore.get(usageKey);
   if (!currentEntries?.length) return;
 
-  store.set(
+  usageStore.set(
     usageKey,
     currentEntries.filter((entry) => entry.id !== token)
   );
@@ -143,7 +153,7 @@ async function reserveInSupabase({
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
-  scope: "general" | "exam";
+  scope: UsageScope;
   hourlyLimit: number;
   dailyLimit: number;
 }): Promise<ReservationResult | null> {
@@ -168,9 +178,7 @@ async function reserveInSupabase({
 
     const rows = Array.isArray(data) ? data : [];
     const hourlyCount =
-      hourlyLimit > 0
-        ? rows.filter((row) => new Date(row.created_at).getTime() >= hourAgo).length
-        : 0;
+      hourlyLimit > 0 ? rows.filter((row) => new Date(row.created_at).getTime() >= hourAgo).length : 0;
     const dailyCount = rows.length;
 
     if ((hourlyLimit > 0 && hourlyCount >= hourlyLimit) || dailyCount >= dailyLimit) {
@@ -216,7 +224,7 @@ async function reserveInSupabaseWindow({
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
-  scope: "general" | "exam";
+  scope: UsageScope;
   limit: number;
   windowMs: number;
 }): Promise<WindowedReservationResult | null> {
@@ -285,8 +293,58 @@ async function releaseInSupabase({
   try {
     await supabase.from("study_ai_usage").delete().eq("id", token).eq("user_id", userId);
   } catch {
-    // Fallback release happens at the caller only for memory-backed reservations.
+    // Ignore release failures for persisted reservations.
   }
+}
+
+export async function reserveScopedUsage({
+  supabase,
+  actorKey,
+  userId,
+  scope,
+  hourlyLimit = 0,
+  dailyLimit
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  scope: UsageScope;
+  hourlyLimit?: number;
+  dailyLimit: number;
+}) {
+  const persisted = await reserveInSupabase({
+    supabase,
+    actorKey,
+    userId,
+    scope,
+    hourlyLimit,
+    dailyLimit
+  });
+
+  return persisted ?? reserveInMemory(actorKey, scope, hourlyLimit, dailyLimit);
+}
+
+export async function releaseScopedUsage({
+  supabase,
+  actorKey,
+  userId,
+  scope,
+  token,
+  persisted
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  scope: UsageScope;
+  token: string;
+  persisted: boolean;
+}) {
+  if (persisted) {
+    await releaseInSupabase({ supabase, userId, token });
+    return;
+  }
+
+  releaseInMemory(actorKey, scope, token);
 }
 
 export async function reserveAiUsage({
@@ -294,24 +352,24 @@ export async function reserveAiUsage({
   actorKey,
   userId,
   hourlyLimit = freePreviewHourlyLimit,
-  dailyLimit = freePreviewDailyLimit
+  dailyLimit = freePreviewDailyLimit,
+  scope = "tool"
 }: {
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
   hourlyLimit?: number;
   dailyLimit?: number;
+  scope?: UsageScope;
 }) {
-  const persisted = await reserveInSupabase({
+  return reserveScopedUsage({
     supabase,
     actorKey,
     userId,
-    scope: "general",
+    scope,
     hourlyLimit,
     dailyLimit
   });
-
-  return persisted ?? reserveInMemory(actorKey, usageStore, hourlyLimit, dailyLimit);
 }
 
 export async function releaseAiUsage({
@@ -319,46 +377,41 @@ export async function releaseAiUsage({
   actorKey,
   userId,
   token,
-  persisted
+  persisted,
+  scope = "tool"
 }: {
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
   token: string;
   persisted: boolean;
+  scope?: UsageScope;
 }) {
-  if (persisted) {
-    await releaseInSupabase({ supabase, userId, token });
-    return;
-  }
-
-  releaseInMemory(actorKey, token, usageStore);
+  return releaseScopedUsage({ supabase, actorKey, userId, scope, token, persisted });
 }
 
-export async function reserveExamUsage({
+export async function reserveChatUsage({
   supabase,
   actorKey,
   userId,
-  weeklyLimit = examGeneratorWeeklyLimit
+  dailyLimit = defaultChatDailyLimit
 }: {
   supabase?: LimitClient | null;
   actorKey: string;
   userId?: string | null;
-  weeklyLimit?: number;
+  dailyLimit?: number;
 }) {
-  const persisted = await reserveInSupabaseWindow({
+  return reserveScopedUsage({
     supabase,
     actorKey,
     userId,
-    scope: "exam",
-    limit: weeklyLimit,
-    windowMs: 1000 * 60 * 60 * 24 * 7
+    scope: "chat",
+    hourlyLimit: 0,
+    dailyLimit
   });
-
-  return persisted ?? reserveInMemoryWindow(actorKey, examUsageStore, weeklyLimit, 1000 * 60 * 60 * 24 * 7);
 }
 
-export async function releaseExamUsage({
+export async function releaseChatUsage({
   supabase,
   actorKey,
   userId,
@@ -371,21 +424,72 @@ export async function releaseExamUsage({
   token: string;
   persisted: boolean;
 }) {
+  return releaseScopedUsage({ supabase, actorKey, userId, scope: "chat", token, persisted });
+}
+
+export async function reserveExamUsage({
+  supabase,
+  actorKey,
+  userId,
+  weeklyLimit = examGeneratorWeeklyLimit,
+  scope = "exam"
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  weeklyLimit?: number;
+  scope?: "exam" | "exam_practice";
+}) {
+  const persisted = await reserveInSupabaseWindow({
+    supabase,
+    actorKey,
+    userId,
+    scope,
+    limit: weeklyLimit,
+    windowMs: 1000 * 60 * 60 * 24 * 7
+  });
+
+  return persisted ?? reserveInMemoryWindow(actorKey, scope, weeklyLimit, 1000 * 60 * 60 * 24 * 7);
+}
+
+export async function releaseExamUsage({
+  supabase,
+  actorKey,
+  userId,
+  token,
+  persisted,
+  scope = "exam"
+}: {
+  supabase?: LimitClient | null;
+  actorKey: string;
+  userId?: string | null;
+  token: string;
+  persisted: boolean;
+  scope?: "exam" | "exam_practice";
+}) {
   if (persisted) {
     await releaseInSupabase({ supabase, userId, token });
     return;
   }
 
-  releaseInMemory(actorKey, token, examUsageStore);
+  releaseInMemory(actorKey, scope, token);
 }
 
 export function formatAiLimitMessage(
   hourlyLimit = freePreviewHourlyLimit,
-  dailyLimit = freePreviewDailyLimit
+  dailyLimit = defaultToolDailyLimit
 ) {
-  return `Free preview limit reached. You can use up to ${hourlyLimit} AI generations per hour and ${dailyLimit} per day while Pro is still coming soon.`;
+  return `Study tool limit reached. You can run up to ${dailyLimit} study tool generation${dailyLimit === 1 ? "" : "s"} per day in the free preview.`;
 }
 
-export function formatExamLimitMessage(weeklyLimit = examGeneratorWeeklyLimit) {
-  return `Exam generator limit reached. You can generate up to ${weeklyLimit} full mock exam${weeklyLimit === 1 ? "" : "s"} per week in the free preview.`;
+export function formatChatLimitMessage(dailyLimit = defaultChatDailyLimit) {
+  return `AI tutor limit reached. You can send up to ${dailyLimit} tutor message${dailyLimit === 1 ? "" : "s"} per day in the free preview.`;
+}
+
+export function formatExamLimitMessage(weeklyLimit = examGeneratorWeeklyLimit, practice = false) {
+  if (practice) {
+    return `Practice exam limit reached. You can generate up to ${weeklyLimit} practice question set${weeklyLimit === 1 ? "" : "s"} per week in the free preview.`;
+  }
+
+  return `Full mock exam limit reached. You can generate up to ${weeklyLimit} full mock exam${weeklyLimit === 1 ? "" : "s"} per week in the free preview.`;
 }

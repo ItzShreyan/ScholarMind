@@ -45,7 +45,7 @@ create table if not exists public.study_ai_usage (
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
   actor_key text not null,
-  scope text not null check (scope in ('general', 'exam')),
+  scope text not null check (scope in ('general', 'exam', 'exam_practice', 'chat', 'tool')),
   created_at timestamptz default now()
 );
 
@@ -145,7 +145,7 @@ create table if not exists public.study_site_settings (
   id boolean primary key default true check (id = true),
   ai_daily_limit integer not null default 20 check (ai_daily_limit >= 1 and ai_daily_limit <= 200),
   ai_hourly_limit integer not null default 8 check (ai_hourly_limit >= 0 and ai_hourly_limit <= 100),
-  exam_weekly_limit integer not null default 3 check (exam_weekly_limit >= 1 and exam_weekly_limit <= 20),
+  exam_weekly_limit integer not null default 1 check (exam_weekly_limit >= 1 and exam_weekly_limit <= 20),
   research_mode_locked boolean not null default true,
   maintenance_message text not null default '',
   created_at timestamptz default now(),
@@ -284,8 +284,41 @@ create index if not exists study_site_events_type_created_at_idx
 on public.study_site_events (event_type, created_at desc);
 
 insert into public.study_site_settings (id, ai_daily_limit, ai_hourly_limit, exam_weekly_limit, research_mode_locked, maintenance_message)
-values (true, 20, 8, 3, true, '')
+values (true, 20, 8, 1, true, '')
 on conflict (id) do nothing;
+
+alter table public.study_site_settings
+add column if not exists chat_daily_limit integer not null default 15 check (chat_daily_limit >= 1 and chat_daily_limit <= 200);
+
+alter table public.study_site_settings
+add column if not exists tool_daily_limit integer not null default 10 check (tool_daily_limit >= 1 and tool_daily_limit <= 200);
+
+alter table public.study_site_settings
+add column if not exists exam_practice_weekly_limit integer not null default 3 check (exam_practice_weekly_limit >= 1 and exam_practice_weekly_limit <= 20);
+
+do $$
+declare
+  constraint_name text;
+begin
+  select con.conname into constraint_name
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'study_ai_usage'
+    and con.contype = 'c'
+    and pg_get_constraintdef(con.oid) like '%scope%';
+
+  if constraint_name is not null then
+    execute format('alter table public.study_ai_usage drop constraint %I', constraint_name);
+  end if;
+
+  alter table public.study_ai_usage
+  add constraint study_ai_usage_scope_check
+  check (scope in ('general', 'exam', 'exam_practice', 'chat', 'tool'));
+exception
+  when duplicate_object then null;
+end $$;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (

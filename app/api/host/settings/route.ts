@@ -7,7 +7,10 @@ import { mapSiteSettings } from "@/lib/site-settings";
 const schema = z.object({
   aiDailyLimit: z.number().int().min(1).max(200),
   aiHourlyLimit: z.number().int().min(0).max(100),
+  chatDailyLimit: z.number().int().min(1).max(200),
+  toolDailyLimit: z.number().int().min(1).max(200),
   examWeeklyLimit: z.number().int().min(1).max(20),
+  examPracticeWeeklyLimit: z.number().int().min(1).max(20),
   researchModeLocked: z.boolean(),
   maintenanceMessage: z.string().max(280)
 });
@@ -32,7 +35,10 @@ export async function POST(req: Request) {
           id: true,
           ai_daily_limit: body.aiDailyLimit,
           ai_hourly_limit: body.aiHourlyLimit,
+          chat_daily_limit: body.chatDailyLimit,
+          tool_daily_limit: body.toolDailyLimit,
           exam_weekly_limit: body.examWeeklyLimit,
+          exam_practice_weekly_limit: body.examPracticeWeeklyLimit,
           research_mode_locked: body.researchModeLocked,
           maintenance_message: body.maintenanceMessage
         },

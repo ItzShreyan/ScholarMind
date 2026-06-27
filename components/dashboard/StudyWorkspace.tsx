@@ -421,6 +421,15 @@ function extractWebUrlFromSourceText(text: string) {
   return extractUrlFromText(text);
 }
 
+function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {
+  const lower = text.toLowerCase();
+  if (!/\b(highlight|annotate|annotation|mark up|markup|text box|add a note|mark this)\b/.test(lower)) {
+    return null;
+  }
+  if (/\bhighlight\b/.test(lower)) return "highlight";
+  return "text";
+}
+
 async function readJsonResponse(response: Response) {
   const text = await response.text();
 
@@ -896,6 +905,7 @@ export function StudyWorkspace({
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicPanelOpen, setMusicPanelOpen] = useState(false);
+  const [musicDockCompact, setMusicDockCompact] = useState(false);
   const [musicSearch, setMusicSearch] = useState("");
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [statusNote, setStatusNote] = useState("");
@@ -1773,6 +1783,8 @@ export function StudyWorkspace({
           url: json.url || null,
           closable: true
         });
+        setWorkspaceTab(`canvas-source-${file.id}`);
+        setTab("tools");
       } catch {
         upsertWorkspaceTab({
           id: `canvas-source-${file.id}`,
@@ -1799,44 +1811,27 @@ export function StudyWorkspace({
         }
       }
 
-      try {
-        const response = await fetch(`/api/files/preview?fileId=${file.id}`);
-        const json = await readJsonResponse(response);
-        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
-        upsertWorkspaceTab({
-          id: `source-${file.id}`,
-          label: clipText(file.file_name, 28),
-          kind: "source",
-          file,
-          previewKind: kind,
-          text: json.text || file.extracted_text || "",
-          url: json.url || null,
-          closable: true
-        });
-      } catch {
-        upsertWorkspaceTab({
-          id: `source-${file.id}`,
-          label: clipText(file.file_name, 28),
-          kind: "source",
-          file,
-          previewKind: "text",
-          text: file.extracted_text || "Preview text is not available for this file.",
-          url: null,
-          closable: true
-        });
-      }
+      await openFileInCanvas(file);
     },
-    [openBrowseInWorkspace, upsertWorkspaceTab]
+    [openBrowseInWorkspace, openFileInCanvas]
   );
 
-  const addCanvasAnnotation = useCallback((tabId: string, tool: Exclude<CanvasTool, "mouse">, point?: { x: number; y: number }) => {
+  const addCanvasAnnotation = useCallback(
+    (
+      tabId: string,
+      tool: Exclude<CanvasTool, "mouse">,
+      point?: { x: number; y: number },
+      initialText?: string
+    ) => {
     const placement = point ?? { x: 18, y: 18 };
     setCanvasAnnotations((current) => [
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
         tabId,
         tool,
-        text: tool === "highlight" ? "Highlight this section" : "Type your note here",
+        text:
+          initialText?.trim() ||
+          (tool === "highlight" ? "Highlight this section" : "Type your note here"),
         x: placement.x,
         y: placement.y,
         width: tool === "highlight" ? 220 : 180,
@@ -1961,16 +1956,45 @@ export function StudyWorkspace({
       .join(" || ");
     const activeTab = workspaceTabs.find((item) => item.id === workspaceTab);
     const annotationSummary = canvasAnnotations
-      .slice(0, 12)
-      .map((annotation) => `[${annotation.tabId}] ${annotation.tool}: ${clipText(annotation.text, 120)}`)
+      .slice(0, 16)
+      .map(
+        (annotation) =>
+          `[${annotation.tabId}] ${annotation.tool} at (${annotation.x.toFixed(0)}%, ${annotation.y.toFixed(0)}%): "${clipText(annotation.text, 160)}"`
+      )
       .join(" | ");
     const strokeSummary = canvasStrokes
-      .slice(0, 12)
-      .map((stroke) => `[${stroke.tabId}] ${stroke.tool} stroke (${stroke.points.length} points)`)
+      .slice(0, 16)
+      .map(
+        (stroke) =>
+          `[${stroke.tabId}] ${stroke.tool} stroke with ${stroke.points.length} points, color ${stroke.color}, width ${stroke.width}`
+      )
       .join(" | ");
+    const activeTabDetail = workspaceTabs.find((item) => item.id === workspaceTab);
+    const activeTabPreview = activeTabDetail
+      ? [
+          activeTabDetail.url ? `Live page: ${activeTabDetail.url}` : "",
+          activeTabDetail.file?.file_name ? `File: ${activeTabDetail.file.file_name}` : "",
+          activeTabDetail.previewKind ? `Preview mode: ${activeTabDetail.previewKind}` : "",
+          activeTabDetail.text ? `Visible text preview: ${clipText(activeTabDetail.text.replace(/\s+/g, " "), 1200)}` : "",
+          activeTabDetail.output
+            ? `Visible generated output: ${clipText(cleanGeneratedText(activeTabDetail.output).replace(/\s+/g, " "), 900)}`
+            : ""
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
+    const activeTabAnnotations = canvasAnnotations
+      .filter((annotation) => annotation.tabId === workspaceTab)
+      .map((annotation) => `${annotation.tool}: "${clipText(annotation.text, 140)}"`)
+      .join(" | ");
+    const activeTabStrokes = canvasStrokes.filter((stroke) => stroke.tabId === workspaceTab).length;
 
     return [
       `Active workspace tab: ${activeTab?.label || workspaceTab}.`,
+      activeTabPreview ? `What the student is viewing now:\n${activeTabPreview}` : "",
+      activeTabAnnotations ? `Annotations on the active tab: ${activeTabAnnotations}.` : "",
+      activeTabStrokes ? `Freehand marks on the active tab: ${activeTabStrokes} stroke(s).` : "",
+      `Active canvas tool: ${canvasTool}.`,
       currentSession?.title ? `Current studio: ${currentSession.title}.` : "",
       openTabsSummary ? `Open workspace tabs: ${openTabsSummary}.` : "No extra workspace tabs open.",
       `Source-enabled files in view: ${currentFilesLabel}.`,
@@ -1992,6 +2016,7 @@ export function StudyWorkspace({
     activeAction,
     canvasAnnotations,
     canvasStrokes,
+    canvasTool,
     currentFilesLabel,
     currentSession?.title,
     currentToolHistory,
@@ -2146,10 +2171,11 @@ export function StudyWorkspace({
 
     const onScroll = () => {
       const y = container.scrollTop;
-      if (y > lastWorkspaceScrollYRef.current + 12) {
-        setMusicPanelOpen(true);
-      } else if (y < lastWorkspaceScrollYRef.current - 12) {
+      if (y < lastWorkspaceScrollYRef.current - 12) {
+        setMusicDockCompact(true);
         setMusicPanelOpen(false);
+      } else if (y > lastWorkspaceScrollYRef.current + 12) {
+        setMusicDockCompact(false);
       }
       lastWorkspaceScrollYRef.current = y;
     };
@@ -3108,6 +3134,7 @@ export function StudyWorkspace({
           action,
           prompt,
           context,
+          examMode: action === "exam" ? toolDraft.examMode || "full" : undefined,
           sessionId: activeSessionId ?? undefined
         })
       });
@@ -3131,11 +3158,13 @@ export function StudyWorkspace({
       }));
       const remainingUsage =
         typeof json.usage?.dailyRemaining === "number"
-          ? ` ${json.usage.dailyRemaining} AI run(s) left today in the free preview.`
+          ? ` ${json.usage.dailyRemaining} study tool run(s) left today.`
           : "";
       const examUsage =
         action === "exam" && typeof json.usage?.examWeeklyRemaining === "number"
-          ? ` ${json.usage.examWeeklyRemaining} full exam generation(s) left this week.`
+          ? toolDraft.examMode === "practice"
+            ? ` ${json.usage.examWeeklyRemaining} practice question set(s) left this week.`
+            : ` ${json.usage.examWeeklyRemaining} full mock exam(s) left this week.`
           : "";
       setStatusNote(
         `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${sourceEnabledCount} source-enabled file(s).${remainingUsage}${examUsage}`
@@ -3147,7 +3176,42 @@ export function StudyWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [activeSessionId, buildContextForPrompt, openGeneratedResultInWorkspaceTab, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.focus, updateMetrics]);
+  }, [activeSessionId, buildContextForPrompt, openGeneratedResultInWorkspaceTab, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.examMode, toolDraft.focus, updateMetrics]);
+
+  const applyCanvasAssist = useCallback(
+    (question: string) => {
+      const assist = detectCanvasAssistRequest(question);
+      if (!assist) return false;
+
+      const targetTab =
+        workspaceTabs.find((tab) => tab.id === workspaceTab) ??
+        workspaceTabs.find((tab) => tab.kind === "canvas-source" || tab.kind === "source") ??
+        null;
+      if (!targetTab) {
+        setStatusNote("Open a note or source tab first, then ask me to highlight or annotate it.");
+        return false;
+      }
+
+      setWorkspaceTab(targetTab.id);
+      setTab("tools");
+      setCanvasTool(assist);
+      const selected = typeof window !== "undefined" ? window.getSelection()?.toString().trim() || "" : "";
+      const assistText = selected || clipText(question.replace(/^(please|can you|could you)\s+/i, "").trim(), 180);
+      addCanvasAnnotation(
+        targetTab.id,
+        assist,
+        { x: 20 + Math.random() * 36, y: 16 + Math.random() * 28 },
+        assistText || undefined
+      );
+      setStatusNote(
+        assist === "highlight"
+          ? "Added a highlight box on your open note. Drag it anywhere on the canvas."
+          : "Added a text box on your open note. Drag it anywhere on the canvas."
+      );
+      return true;
+    },
+    [addCanvasAnnotation, workspaceTab, workspaceTabs]
+  );
 
   const executeWorkspaceNavigation = useCallback(
     (question: string) => {
@@ -3266,6 +3330,20 @@ export function StudyWorkspace({
         { role: "user", content: question },
         { role: "ai", content: "Done — I updated the studio workspace for you." }
       ]);
+      return true;
+    }
+
+    if (applyCanvasAssist(question)) {
+      setMessages((current) => [
+        ...current,
+        { role: "user", content: question },
+        {
+          role: "ai",
+          content:
+            "I added that annotation on your open note. I can also see your canvas marks, open tabs, and browsing context while we chat."
+        }
+      ]);
+      setTab("tools");
       return true;
     }
 
@@ -3445,7 +3523,7 @@ export function StudyWorkspace({
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -6016,7 +6094,11 @@ export function StudyWorkspace({
       </footer>
 
       <SpotifyPlaybackProvider connected={spotifyConnected}>
-      <div className="fixed bottom-3 left-3 right-3 z-30 mx-auto max-w-[1800px]">
+      <div
+        className={`fixed bottom-3 z-30 transition-all duration-300 ${
+          musicDockCompact ? "right-3 left-auto w-[min(18rem,calc(100vw-1.5rem))]" : "left-3 right-3 mx-auto max-w-[1800px]"
+        }`}
+      >
         {musicPanelOpen ? (
           <motion.div
             initial={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -6103,22 +6185,31 @@ export function StudyWorkspace({
           </motion.div>
         ) : null}
 
-        <div className="panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] px-3 py-2 shadow-[0_18px_50px_rgba(2,6,23,0.28)]">
+        <div
+          className={`panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] shadow-[0_18px_50px_rgba(2,6,23,0.28)] transition-all duration-300 ${
+            musicDockCompact
+              ? "origin-bottom-right scale-[0.58] rounded-[18px] px-2 py-1 shadow-[0_10px_28px_rgba(2,6,23,0.22)]"
+              : "origin-bottom px-3 py-2"
+          }`}
+        >
           <SpotifyPlaybackPanel
             connected={spotifyConnected}
             loginHref={spotifyLoginHref}
             compact
+            ultraCompact={musicDockCompact}
             searchQuery={musicSearch}
             onPlayingChange={setMusicPlaying}
           />
-          <button
-            type="button"
-            onClick={() => setMusicPanelOpen((current) => !current)}
-            className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
-            aria-label="Open music browser"
-          >
-            {musicPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </button>
+          {!musicDockCompact ? (
+            <button
+              type="button"
+              onClick={() => setMusicPanelOpen((current) => !current)}
+              className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
+              aria-label="Open music browser"
+            >
+              {musicPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </button>
+          ) : null}
         </div>
       </div>
       </SpotifyPlaybackProvider>

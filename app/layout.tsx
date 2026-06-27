@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { TelemetryTracker } from "@/components/providers/TelemetryTracker";
-import { SecurityBadge } from "@/components/common/SecurityBadge";
+import { GlobalSecurityBadge } from "@/components/common/GlobalSecurityBadge";
 import { getSiteUrl } from "@/lib/site-url";
 import { getCachedSiteSettings } from "@/lib/site-settings";
 
@@ -82,9 +82,7 @@ export default async function RootLayout({
             </div>
           ) : null}
           {children}
-          <div className="fixed bottom-3 right-3 z-20 hidden sm:block">
-            <SecurityBadge compact />
-          </div>
+          <GlobalSecurityBadge />
         </AuthProvider>
       </body>
     </html>

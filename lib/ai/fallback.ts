@@ -108,44 +108,12 @@ function isGroundedEnough(text: string, input: AIRequest) {
 }
 
 function isBadResponse(text: string, input: AIRequest): boolean {
-  const normalized = (text || "").toLowerCase();
-  const letters = (normalized.match(/[a-z]/g) ?? []).length;
-  const digits = (normalized.match(/\d/g) ?? []).length;
-  const mode = input.mode;
+  const normalized = (text || "").trim();
+  if (!normalized) return true;
+  if (normalized.toLowerCase() === "[object object]" || normalized === "{}") return true;
+  if (looksLikeReasoningLeak(text, String(input.mode))) return true;
 
-  if (!normalized.trim()) return true;
-  if (mode === "flashcards") {
-    const hasCards =
-      normalized.includes('"front"') ||
-      normalized.includes("front:") ||
-      normalized.includes('"back"') ||
-      normalized.includes("q:") ||
-      normalized.includes("flashcard") ||
-      (normalized.includes("[") && normalized.includes("{"));
-    if (!hasCards) return true;
-  }
-  if (mode === "quiz") {
-    const hasQuestions =
-      normalized.includes('"question"') ||
-      /\bquestion\s*\d+/i.test(normalized) ||
-      /\b1\./.test(normalized) ||
-      (normalized.includes("[") && normalized.includes("options"));
-    if (!hasQuestions) return true;
-  }
-  if (mode === "notes") {
-    const hasNotes =
-      normalized.includes('"sections"') ||
-      normalized.includes('"title"') ||
-      normalized.includes("#") ||
-      normalized.length >= 280;
-    if (!hasNotes) return true;
-  }
-  if (looksLikeReasoningLeak(text, String(mode))) return true;
-  if (normalized === "[object object]" || normalized === "{}") return true;
-  if (/(?:0{3,},){4,}0{3,}/.test(normalized)) return true;
-  if (digits > letters * 2 && normalized.length > 80) return true;
-  if (/^(okay|sure|alright)[,\s]+(?:0|,|\.){12,}/.test(normalized)) return true;
-  if (["chat", "summary", "insights", "concepts", "study_plan", "hard_mode"].includes(String(mode)) && !isGroundedEnough(normalized, input)) {
+  if (String(input.mode) === "summary" && input.context && !isGroundedEnough(normalized.toLowerCase(), input)) {
     return true;
   }
 
@@ -155,7 +123,7 @@ function isBadResponse(text: string, input: AIRequest): boolean {
 export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
   const strictRemote = requiresRemoteAI(input);
-  const cacheKey = JSON.stringify({ v: 7, mode: input.mode, message: input.message });
+  const cacheKey = JSON.stringify({ v: 8, mode: input.mode, examMode: input.examMode, message: input.message });
   const cached = getCached(cacheKey);
   if (cached) return { text: normalizeAIText(cached), provider: "cache" };
 

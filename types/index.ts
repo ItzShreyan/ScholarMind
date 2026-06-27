@@ -23,6 +23,7 @@ export type AIRequest = {
   mode?: AIAction | string;
   content?: string;
   context?: string;
+  examMode?: "full" | "practice";
   sessionId?: string;
   userId?: string;
 };

@@ -11,6 +11,7 @@ type SpotifyPlaybackPanelProps = {
   connected: boolean;
   loginHref: string;
   compact?: boolean;
+  ultraCompact?: boolean;
   searchQuery?: string;
   onPlayingChange?: (playing: boolean) => void;
 };
@@ -49,6 +50,7 @@ function SpotifyPlaybackDisconnected({
 
 function SpotifyPlaybackConnected({
   compact = false,
+  ultraCompact = false,
   searchQuery = "",
   onPlayingChange
 }: SpotifyPlaybackPanelProps) {
@@ -98,6 +100,50 @@ function SpotifyPlaybackConnected({
   } = playback;
 
   const activePlaylist = state.activePlaylist;
+  const playbackSource =
+    state.playbackSource ||
+    (state.playing ? (state.ready ? "ScholarMind player" : "Spotify on your account") : "No music playing");
+  const playbackOrigin = state.externalDevice
+    ? `${state.externalDevice.type} • ${state.externalDevice.name}`
+    : state.ready
+      ? "In-browser player"
+      : state.track
+        ? "Your linked Spotify account"
+        : "";
+
+  if (ultraCompact) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[12px] bg-white/10">
+          {state.track?.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={state.track.imageUrl} alt="" className="h-full w-full object-cover" />
+          ) : null}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold">{state.track?.name || "Focus music"}</p>
+          <p className="muted truncate text-[10px]">
+            {state.track?.artist || playbackSource}
+            {playbackOrigin ? ` • ${playbackOrigin}` : ""}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void togglePlay()}
+          className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
+          aria-label={state.playing ? "Pause music" : "Play music"}
+        >
+          {actionLoading ? (
+            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+          ) : state.playing ? (
+            <Pause className="h-3.5 w-3.5" />
+          ) : (
+            <Play className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className={compact ? "flex min-w-0 flex-1 items-center gap-3" : "space-y-4"}>
@@ -126,6 +172,7 @@ function SpotifyPlaybackConnected({
                   ? "Search tracks or open one of your playlists."
                   : "Connecting Spotify player..."}
           </p>
+          <p className="muted truncate text-[10px]">{playbackSource}{playbackOrigin ? ` • ${playbackOrigin}` : ""}</p>
         </div>
         <div className="flex items-center gap-1">
           <button

@@ -23,6 +23,11 @@ export async function GET(req: Request) {
 
   const json = (await response.json()) as {
     is_playing?: boolean;
+    device?: {
+      name?: string;
+      type?: string;
+      id?: string;
+    };
     item?: {
       id: string;
       name: string;
@@ -45,9 +50,18 @@ export async function GET(req: Request) {
       }
     : null;
 
+  const device = json.device
+    ? {
+        name: json.device.name || "Spotify",
+        type: json.device.type || "unknown",
+        id: json.device.id || null
+      }
+    : null;
+
   const payload = NextResponse.json({
     playing: Boolean(json.is_playing),
-    track
+    track,
+    device
   });
   return attachRefreshedSpotifySession(payload, tokens);
 }

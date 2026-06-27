@@ -31,6 +31,7 @@ const schema = z.object({
   ]),
   prompt: z.string().min(2),
   context: z.string().optional(),
+  examMode: z.enum(["full", "practice"]).optional(),
   sessionId: z.preprocess(
     (value) => (typeof value === "string" && value.trim() ? value : undefined),
     z.string().optional()
@@ -48,20 +49,25 @@ export async function POST(req: Request) {
 
     const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const actorKey = user?.id || forwardedFor || "anonymous";
+    const practiceExam = body.action === "exam" && body.examMode === "practice";
+    const examScope = practiceExam ? "exam_practice" : "exam";
+    const examLimit = practiceExam ? siteSettings.examPracticeWeeklyLimit : siteSettings.examWeeklyLimit;
+
     const examReservation =
       body.action === "exam"
         ? await reserveExamUsage({
             supabase,
             actorKey,
             userId: user?.id,
-            weeklyLimit: siteSettings.examWeeklyLimit
+            weeklyLimit: examLimit,
+            scope: examScope
           })
         : null;
 
     if (examReservation && !examReservation.allowed) {
       return NextResponse.json(
         {
-          error: formatExamLimitMessage(siteSettings.examWeeklyLimit)
+          error: formatExamLimitMessage(examLimit, practiceExam)
         },
         { status: 429 }
       );
@@ -72,7 +78,8 @@ export async function POST(req: Request) {
       actorKey,
       userId: user?.id,
       hourlyLimit: siteSettings.aiHourlyLimit,
-      dailyLimit: siteSettings.aiDailyLimit
+      dailyLimit: siteSettings.toolDailyLimit,
+      scope: "tool"
     });
 
     if (!reservation.allowed) {
@@ -82,19 +89,25 @@ export async function POST(req: Request) {
           actorKey,
           userId: user?.id,
           token: examReservation.token,
-          persisted: examReservation.persisted
+          persisted: examReservation.persisted,
+          scope: examScope
         });
       }
       return NextResponse.json(
         {
-          error: formatAiLimitMessage(siteSettings.aiHourlyLimit, siteSettings.aiDailyLimit)
+          error: formatAiLimitMessage(siteSettings.aiHourlyLimit, siteSettings.toolDailyLimit)
         },
         { status: 429 }
       );
     }
 
     try {
-      const result = await generateWithFallback(body);
+      const result = await generateWithFallback({
+        action: body.action,
+        prompt: body.prompt,
+        context: body.context,
+        examMode: body.examMode
+      });
       try {
         await supabase.from("study_site_events").insert({
           visitor_key: actorKey,
@@ -104,7 +117,8 @@ export async function POST(req: Request) {
           page: body.sessionId ? `/dashboard/workspace/${body.sessionId}` : "/dashboard",
           feature: body.action,
           metadata: {
-            sessionId: body.sessionId ?? null
+            sessionId: body.sessionId ?? null,
+            examMode: body.examMode ?? null
           }
         });
       } catch {
@@ -127,7 +141,8 @@ export async function POST(req: Request) {
         actorKey,
         userId: user?.id,
         token: reservation.token,
-        persisted: reservation.persisted
+        persisted: reservation.persisted,
+        scope: "tool"
       });
       if (examReservation && examReservation.allowed) {
         await releaseExamUsage({
@@ -135,7 +150,8 @@ export async function POST(req: Request) {
           actorKey,
           userId: user?.id,
           token: examReservation.token,
-          persisted: examReservation.persisted
+          persisted: examReservation.persisted,
+          scope: examScope
         });
       }
 

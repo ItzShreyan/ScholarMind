@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
 import { getOpenRouterKeys, isOpenRouterKeyLimitError } from "@/lib/ai/openrouter-keys";
+import {
+  formatChatLimitMessage,
+  releaseChatUsage,
+  reserveChatUsage
+} from "@/lib/ai/limits";
+import { getSiteSettings } from "@/lib/site-settings";
 import { createClient } from "@/lib/supabase/server";
 
 type ProviderMessage = {
@@ -91,6 +97,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No chat message was provided." }, { status: 400 });
     }
 
+    const siteSettings = await getSiteSettings(supabase);
+    const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    const actorKey = user.id;
+    const chatReservation = await reserveChatUsage({
+      supabase,
+      actorKey,
+      userId: user.id,
+      dailyLimit: siteSettings.chatDailyLimit
+    });
+
+    if (!chatReservation.allowed) {
+      return NextResponse.json({ error: formatChatLimitMessage(siteSettings.chatDailyLimit) }, { status: 429 });
+    }
+
     const context = normalizeAIText(input?.context || "");
     const screenContext = normalizeAIText(input?.screenContext || "");
     const messages: ProviderMessage[] = [
@@ -142,11 +162,25 @@ export async function POST(req: Request) {
     }
 
     if (!data) {
+      await releaseChatUsage({
+        supabase,
+        actorKey,
+        userId: user.id,
+        token: chatReservation.token,
+        persisted: chatReservation.persisted
+      });
       return NextResponse.json({ error: `All OpenRouter keys failed. ${failures.join(" | ")}` }, { status: 400 });
     }
 
     const text = normalizeAIText(data.choices?.[0]?.message?.content);
     if (!text) {
+      await releaseChatUsage({
+        supabase,
+        actorKey,
+        userId: user.id,
+        token: chatReservation.token,
+        persisted: chatReservation.persisted
+      });
       return NextResponse.json({ error: "OpenRouter returned an empty chat message." }, { status: 400 });
     }
 

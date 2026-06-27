@@ -1,4 +1,5 @@
 import { AIProvider } from "@/lib/ai/types";
+import { buildPrompt } from "@/lib/ai/prompt";
 import { AIRequest } from "@/types";
 import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
 import { normalizeAIText } from "@/lib/ai/util";
@@ -59,22 +60,10 @@ async function streamResponseToText(response: Response): Promise<string> {
 }
 
 function buildMessages(input: AIRequest) {
-  const content = (input.message || input.prompt || input.content || "").trim();
+  const prompt = buildPrompt(input);
   const history = Array.isArray(input.history) ? input.history.filter((item) => normalizeAIText(item.content)) : [];
-  const context = normalizeAIText(input.context || "");
-  const contextMessage = context
-    ? [{
-        role: "system" as const,
-        content: [
-          "Use this uploaded/source-enabled study context as the evidence base.",
-          "Do not say there is no source material unless this context is empty or irrelevant.",
-          context
-        ].join("\n\n")
-      }]
-    : [];
-  if (!content) return [...contextMessage, ...history];
-  if (history.length && normalizeAIText(history[history.length - 1]?.content) === content) return [...contextMessage, ...history];
-  return [...contextMessage, ...history, { role: "user" as const, content }];
+  if (!history.length) return [{ role: "user" as const, content: prompt }];
+  return [...history, { role: "user" as const, content: prompt }];
 }
 
 export const groqProviderV2: AIProvider = {

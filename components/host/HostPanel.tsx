@@ -161,12 +161,28 @@ export function HostPanel({
     if (settings.aiHourlyLimit <= 4) {
       warnings.push(`Hourly AI usage is tight at ${settings.aiHourlyLimit} run(s) per hour, which can feel restrictive during peak study times.`);
     }
-    if (settings.examWeeklyLimit <= 3) {
-      warnings.push(`Full exam generation is low at ${settings.examWeeklyLimit} per week, so heavy exam practice users may run out fast.`);
+    if (settings.toolDailyLimit <= 6) {
+      warnings.push(`Study tool runs are capped at ${settings.toolDailyLimit} per day.`);
+    }
+    if (settings.chatDailyLimit <= 10) {
+      warnings.push(`AI tutor chat is capped at ${settings.chatDailyLimit} messages per day.`);
+    }
+    if (settings.examWeeklyLimit <= 1) {
+      warnings.push(`Full mock exam generation is capped at ${settings.examWeeklyLimit} per week.`);
+    }
+    if (settings.examPracticeWeeklyLimit <= 3) {
+      warnings.push(`Practice question sets are capped at ${settings.examPracticeWeeklyLimit} per week.`);
     }
 
     return warnings;
-  }, [settings.aiDailyLimit, settings.aiHourlyLimit, settings.examWeeklyLimit]);
+  }, [
+    settings.aiDailyLimit,
+    settings.aiHourlyLimit,
+    settings.chatDailyLimit,
+    settings.examPracticeWeeklyLimit,
+    settings.examWeeklyLimit,
+    settings.toolDailyLimit
+  ]);
 
   const saveSettings = async () => {
     setSaving(true);
@@ -370,7 +386,29 @@ export function HostPanel({
           ) : null}
           <div className="grid gap-4">
             <label className="grid gap-2 text-sm">
-              <span className="muted">Free AI runs per day</span>
+              <span className="muted">AI tutor messages per day</span>
+              <input
+                className="rounded-2xl border border-white/12 bg-white/8 px-4 py-3 outline-none"
+                type="number"
+                min={1}
+                max={200}
+                value={settings.chatDailyLimit}
+                onChange={(event) => setSettings((current) => ({ ...current, chatDailyLimit: Number(event.target.value) }))}
+              />
+            </label>
+            <label className="grid gap-2 text-sm">
+              <span className="muted">Study tool runs per day</span>
+              <input
+                className="rounded-2xl border border-white/12 bg-white/8 px-4 py-3 outline-none"
+                type="number"
+                min={1}
+                max={200}
+                value={settings.toolDailyLimit}
+                onChange={(event) => setSettings((current) => ({ ...current, toolDailyLimit: Number(event.target.value) }))}
+              />
+            </label>
+            <label className="grid gap-2 text-sm">
+              <span className="muted">Free AI runs per day (legacy total cap)</span>
               <input
                 className="rounded-2xl border border-white/12 bg-white/8 px-4 py-3 outline-none"
                 type="number"
@@ -392,7 +430,7 @@ export function HostPanel({
               />
             </label>
             <label className="grid gap-2 text-sm">
-              <span className="muted">Full exam limit per week</span>
+              <span className="muted">Full mock exam limit per week</span>
               <input
                 className="rounded-2xl border border-white/12 bg-white/8 px-4 py-3 outline-none"
                 type="number"
@@ -401,6 +439,19 @@ export function HostPanel({
                 value={settings.examWeeklyLimit}
                 onChange={(event) =>
                   setSettings((current) => ({ ...current, examWeeklyLimit: Number(event.target.value) }))
+                }
+              />
+            </label>
+            <label className="grid gap-2 text-sm">
+              <span className="muted">Practice question sets per week</span>
+              <input
+                className="rounded-2xl border border-white/12 bg-white/8 px-4 py-3 outline-none"
+                type="number"
+                min={1}
+                max={20}
+                value={settings.examPracticeWeeklyLimit}
+                onChange={(event) =>
+                  setSettings((current) => ({ ...current, examPracticeWeeklyLimit: Number(event.target.value) }))
                 }
               />
             </label>
