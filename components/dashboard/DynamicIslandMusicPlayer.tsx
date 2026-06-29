@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Pause, SkipBack, SkipForward, Volume2, X, Music } from "lucide-react";
 import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlayback";
@@ -17,12 +17,12 @@ interface DynamicIslandMusicPlayerProps {
   isCompact?: boolean;
 }
 
-export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact = false }: DynamicIslandMusicPlayerProps) {
+export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact: _isCompact = false }: DynamicIslandMusicPlayerProps) {
   const spotifyContext = useSpotifyPlaybackContext();
   const [isMinimized, setIsMinimized] = useState(true);
   const [systemAudio, setSystemAudio] = useState<SystemAudioTrack | null>(null);
   const [lastScrollY, setLastScrollY] = useState(0);
-  const scrollTimeoutRef = useRef<NodeJS.Timeout>();
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ✅ Detect system audio from browser tabs/apps using Media Session API
   useEffect(() => {
@@ -56,7 +56,10 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact = false
     // Fallback: Poll for audio context activity every 2 seconds
     const audioCheckInterval = setInterval(() => {
       try {
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioContextConstructor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextConstructor) return;
+
+        const audioContext = new AudioContextConstructor();
         if (audioContext.state === "running") {
           // Audio is playing somewhere
           if (!systemAudio) {
@@ -114,6 +117,14 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact = false
   const currentTrack = spotifyState?.track || systemAudio;
   const isPlaying = spotifyState?.playing || systemAudio?.isPlaying;
   const source = spotifyState?.playbackSource || systemAudio?.source || "No music";
+  const currentTrackTitle =
+    currentTrack && "name" in currentTrack
+      ? currentTrack.name
+      : currentTrack?.title ?? "Music Player";
+  const currentTrackArtist =
+    currentTrack && "artist" in currentTrack
+      ? currentTrack.artist
+      : "Unknown Artist";
 
   if (!currentTrack && !spotifyState?.connected) {
     return null;
@@ -144,7 +155,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact = false
               <Music className="h-4 w-4 text-[var(--accent-sky)]" />
             </motion.div>
             <span className="text-xs font-semibold text-white/80 max-w-[120px] truncate">
-              {currentTrack?.title || "Music Player"}
+              {currentTrackTitle}
             </span>
           </motion.div>
         </motion.div>
@@ -180,8 +191,8 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact = false
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.4 }}
               >
-                <p className="font-semibold text-white line-clamp-2">{currentTrack.title}</p>
-                <p className="text-xs text-white/60 mt-1">{currentTrack.artist}</p>
+                <p className="font-semibold text-white line-clamp-2">{currentTrackTitle}</p>
+                <p className="text-xs text-white/60 mt-1">{currentTrackArtist}</p>
               </motion.div>
             </div>
           ) : (

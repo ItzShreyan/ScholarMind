@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { AIRequest } from "@/types";
 import { getCached, setCached } from "@/lib/cache";
 import { AIProvider } from "@/lib/ai/types";
@@ -125,7 +126,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
   const strictRemote = requiresRemoteAI(input);
   // ✅ IMPROVED CACHE KEY: Include context + context hash to avoid stale outputs across sessions
-  const contextHash = input.context ? require('crypto').createHash('md5').update(input.context).digest('hex').slice(0, 8) : 'no-context';
+  const contextHash = input.context ? createHash("md5").update(input.context).digest("hex").slice(0, 8) : "no-context";
   const cacheKey = JSON.stringify({ v: 9, mode: input.mode, examMode: input.examMode, message: input.message, contextHash });
   const cached = getCached(cacheKey);
   if (cached) return { text: normalizeAIText(cached), provider: "cache" };

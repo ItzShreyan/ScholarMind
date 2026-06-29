@@ -9,7 +9,7 @@ export function detectDevicePerformance(): "high" | "medium" | "low" {
   if (typeof navigator === "undefined") return "high";
 
   // Check device memory (if available)
-  const deviceMemory = (navigator as any).deviceMemory;
+  const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
   if (deviceMemory !== undefined) {
     if (deviceMemory <= 2) return "low";
     if (deviceMemory <= 4) return "medium";
@@ -27,13 +27,13 @@ export function detectDevicePerformance(): "high" | "medium" | "low" {
  * Debounce function for scroll/resize events
  * Prevents excessive re-renders on low-end devices
  */
-export function debounce<T extends (...args: any[]) => any>(
-  func: T,
+export function debounce<TArgs extends unknown[], TReturn>(
+  func: (...args: TArgs) => TReturn,
   wait: number
-): (...args: Parameters<T>) => void {
+): (...args: TArgs) => void {
   let timeout: NodeJS.Timeout | null = null;
 
-  return function executedFunction(...args: Parameters<T>) {
+  return function executedFunction(...args: TArgs) {
     const later = () => {
       timeout = null;
       func(...args);
@@ -48,13 +48,13 @@ export function debounce<T extends (...args: any[]) => any>(
  * Throttle function for high-frequency events
  * Ensures consistent frame rate on low-end devices
  */
-export function throttle<T extends (...args: any[]) => any>(
-  func: T,
+export function throttle<TArgs extends unknown[], TReturn>(
+  func: (...args: TArgs) => TReturn,
   limit: number
-): (...args: Parameters<T>) => void {
+): (...args: TArgs) => void {
   let inThrottle: boolean;
 
-  return function executedFunction(...args: Parameters<T>) {
+  return function executedFunction(...args: TArgs) {
     if (!inThrottle) {
       func(...args);
       inThrottle = true;
@@ -73,7 +73,7 @@ export function scheduleIdleWork(callback: () => void, timeout: number = 2000): 
   }
 
   // Fallback: Use setTimeout
-  return window.setTimeout(callback, timeout) as any;
+  return window.setTimeout(callback, timeout);
 }
 
 /**
@@ -125,19 +125,19 @@ export function prefersReducedMotion(): boolean {
  * Optimize list rendering with virtualization
  * Only renders visible items to improve performance
  */
-export class VirtualList {
-  private items: any[] = [];
+export class VirtualList<T> {
+  private items: T[] = [];
   private itemHeight: number = 0;
   private containerHeight: number = 0;
   private scrollTop: number = 0;
 
-  constructor(items: any[], itemHeight: number, containerHeight: number) {
+  constructor(items: T[], itemHeight: number, containerHeight: number) {
     this.items = items;
     this.itemHeight = itemHeight;
     this.containerHeight = containerHeight;
   }
 
-  getVisibleItems(): { items: any[]; startIndex: number; endIndex: number } {
+  getVisibleItems(): { items: T[]; startIndex: number; endIndex: number } {
     const startIndex = Math.floor(this.scrollTop / this.itemHeight);
     const endIndex = Math.ceil((this.scrollTop + this.containerHeight) / this.itemHeight);
 
@@ -235,15 +235,18 @@ export function getOptimizedImageUrl(
 ): string {
   // Example for Cloudinary or similar CDN
   // Adjust based on your image provider
-  const performance = detectDevicePerformance();
+  const devicePerformance = detectDevicePerformance();
   const qualityMap = {
     high: quality,
     medium: Math.max(quality - 10, 60),
     low: Math.max(quality - 20, 40)
   };
 
+  const optimizedQuality = qualityMap[devicePerformance] ?? quality;
+  const separator = url.includes("?") ? "&" : "?";
+
   // Return optimized URL (implementation depends on your CDN)
-  return url;
+  return `${url}${separator}q=${optimizedQuality}&w=${width}&h=${height}`;
 }
 
 /**
@@ -300,8 +303,9 @@ export class PerformanceMonitor {
   }
 
   getMemoryUsage(): number | null {
-    if ((performance as any).memory) {
-      return (performance as any).memory.usedJSHeapSize / 1048576; // Convert to MB
+    const perfWithMemory = performance as Performance & { memory?: { usedJSHeapSize: number } };
+    if (perfWithMemory.memory) {
+      return perfWithMemory.memory.usedJSHeapSize / 1048576; // Convert to MB
     }
     return null;
   }
