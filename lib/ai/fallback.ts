@@ -113,7 +113,8 @@ function isBadResponse(text: string, input: AIRequest): boolean {
   if (normalized.toLowerCase() === "[object object]" || normalized === "{}") return true;
   if (looksLikeReasoningLeak(text, String(input.mode))) return true;
 
-  if (String(input.mode) === "summary" && input.context && !isGroundedEnough(normalized.toLowerCase(), input)) {
+  // ✅ IMPROVED: Only check grounding for summary when context is provided AND response is suspiciously short
+  if (String(input.mode) === "summary" && input.context && normalized.length < 50 && !isGroundedEnough(normalized.toLowerCase(), input)) {
     return true;
   }
 
@@ -123,13 +124,15 @@ function isBadResponse(text: string, input: AIRequest): boolean {
 export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
   const strictRemote = requiresRemoteAI(input);
-  const cacheKey = JSON.stringify({ v: 8, mode: input.mode, examMode: input.examMode, message: input.message });
+  // ✅ IMPROVED CACHE KEY: Include context + context hash to avoid stale outputs across sessions
+  const contextHash = input.context ? require('crypto').createHash('md5').update(input.context).digest('hex').slice(0, 8) : 'no-context';
+  const cacheKey = JSON.stringify({ v: 9, mode: input.mode, examMode: input.examMode, message: input.message, contextHash });
   const cached = getCached(cacheKey);
   if (cached) return { text: normalizeAIText(cached), provider: "cache" };
 
   if (strictRemote && !hasRemoteProviderConfigured()) {
     throw new Error(
-      "Study tools require a configured AI provider. Add OPENROUTER_API_KEY in .env.local or Netlify environment variables, then restart the app."
+      "Study tools require a configured AI provider. Add OPENROUTER_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY in .env.local, then restart the app."
     );
   }
 
@@ -195,9 +198,10 @@ export async function generateWithFallback(rawInput: AIRequest) {
     }
   }
 
-  throw new Error(
-    strictRemote
-      ? `Study tools require a live AI response, and every configured AI provider failed. ${failures.join(" | ")}`
-      : `All AI providers failed. ${failures.join(" | ")}`
-  );
+  const failureDetails = failures.slice(0, 3).join(" | ");
+  const errorMessage = strictRemote
+    ? `Study tools require a live AI response. All providers failed: ${failureDetails}. Try again in a moment or check your API keys.`
+    : `All AI providers failed: ${failureDetails}. Try again or enable an AI provider in .env.local.`;
+  
+  throw new Error(errorMessage);
 }

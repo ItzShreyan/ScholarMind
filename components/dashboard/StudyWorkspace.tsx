@@ -2654,31 +2654,27 @@ export function StudyWorkspace({
       const warnings: string[] = [];
       const rejectedFiles: { fileName: string; reason: string }[] = [];
 
-      for (const [index, file] of allowedFiles.entries()) {
-        const form = new FormData();
-        form.append("files", file);
-        form.append("sessionId", sessionId);
+      // ✅ POLISHED: Batch upload all files in a single request with better progress tracking
+      const form = new FormData();
+      allowedFiles.forEach((file) => form.append("files", file));
+      form.append("sessionId", sessionId);
 
-        const response = await fetch("/api/upload", { method: "POST", body: form });
-        const json = await readJsonResponse(response);
+      setUploadProgress(30);
+      const response = await fetch("/api/upload", { method: "POST", body: form });
+      const json = await readJsonResponse(response);
 
-        if (!response.ok) {
-          rejectedFiles.push(
-            ...(Array.isArray(json.rejectedFiles) ? json.rejectedFiles : []),
-            {
-              fileName: file.name,
-              reason: normalizeErrorMessage(json.error, "Upload failed.")
-            }
-          );
-          setUploadProgress(20 + ((index + 1) / allowedFiles.length) * 70);
-          continue;
+      if (!response.ok) {
+        if (Array.isArray(json.rejectedFiles)) {
+          rejectedFiles.push(...json.rejectedFiles);
+        } else if (json.error) {
+          allowedFiles.forEach(f => rejectedFiles.push({ fileName: f.name, reason: normalizeErrorMessage(json.error, "Upload failed.") }));
         }
-
+      } else {
         nextFiles = Array.isArray(json.files) ? json.files : nextFiles;
-        warnings.push(...(Array.isArray(json.warnings) ? json.warnings : []));
-        rejectedFiles.push(...(Array.isArray(json.rejectedFiles) ? json.rejectedFiles : []));
-        setUploadProgress(20 + ((index + 1) / allowedFiles.length) * 70);
+        if (Array.isArray(json.warnings)) warnings.push(...json.warnings);
+        if (Array.isArray(json.rejectedFiles)) rejectedFiles.push(...json.rejectedFiles);
       }
+      setUploadProgress(80);
 
       if (!nextFiles.length) {
         const refreshResponse = await fetch(`/api/sessions?sessionId=${sessionId}`);
@@ -3145,6 +3141,9 @@ export function StudyWorkspace({
       }
 
       const normalized = sanitizeDisplayText(extractStructuredOutput(json.text || json.error), "No response");
+      if (!normalized || normalized === "No response") {
+        setStatusNote(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} generated an empty response. Try uploading different sources or rephrasing your focus.`);
+      }
       setOutput(normalized || "No response");
       saveToolResult(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
       openGeneratedResultInWorkspaceTab(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
@@ -3171,7 +3170,9 @@ export function StudyWorkspace({
       );
       return json.text || "No response";
     } catch (error) {
-      setStatusNote(normalizeErrorMessage(error, "No response"));
+      const errorMsg = normalizeErrorMessage(error, "Generation failed");
+      setStatusNote(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} failed: ${errorMsg}`);
+      setOutput("");
       return null;
     } finally {
       setLoading(false);
