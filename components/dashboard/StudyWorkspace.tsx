@@ -353,6 +353,17 @@ function sanitizeDisplayText(value: unknown, fallback: string) {
   return normalized === "[object Object]" ? fallback : normalized;
 }
 
+function normalizeAIResponseText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(normalizeAIResponseText).filter(Boolean).join("\n");
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    const candidate = normalizeAIText(record.text ?? record.content ?? record.error ?? record.message);
+    return candidate || JSON.stringify(value);
+  }
+  return normalizeAIText(value);
+}
+
 function parseSSEChunk(chunk: string): string {
   const lines = chunk.split(/\r?\n/);
   let extracted = "";
@@ -419,6 +430,10 @@ function extractWebUrlFromSourceText(text: string) {
   const labeled = text.match(/Source URL:\s*(https?:\/\/[^\s]+)/i);
   if (labeled?.[1]) return labeled[1].trim();
   return extractUrlFromText(text);
+}
+
+function getGoogleSearchUrl(query: string) {
+  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`;
 }
 
 function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {
@@ -2171,12 +2186,15 @@ export function StudyWorkspace({
 
     const onScroll = () => {
       const y = container.scrollTop;
+      const atBottom = y + container.clientHeight >= container.scrollHeight - 100;
+
       if (y < lastWorkspaceScrollYRef.current - 12) {
         setMusicDockCompact(true);
         setMusicPanelOpen(false);
-      } else if (y > lastWorkspaceScrollYRef.current + 12) {
+      } else if (atBottom || y > lastWorkspaceScrollYRef.current + 12) {
         setMusicDockCompact(false);
       }
+
       lastWorkspaceScrollYRef.current = y;
     };
 
@@ -2796,27 +2814,9 @@ export function StudyWorkspace({
         return;
       }
 
-      const response = await fetch("/api/sources/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, engine: "google" })
-      });
-      const json = await readJsonResponse(response);
-
-      if (!response.ok) {
-        throw new Error(normalizeErrorMessage(json.error, "Unable to search the web right now."));
-      }
-
-      const results = Array.isArray(json.results) ? json.results : [];
-      upsertWorkspaceTab({
-        id: `search-${Date.now()}`,
-        label: `Search: ${clipText(query, 18)}`,
-        kind: "search",
-        query,
-        results,
-        closable: true
-      });
-      setStatusNote(results.length ? `Found ${results.length} web result(s) for “${query}”.` : "No results found. Try a more specific topic.");
+      const googleUrl = getGoogleSearchUrl(query);
+      openBrowseInWorkspace(googleUrl, `Google: ${clipText(query, 28)}`);
+      setStatusNote(`Opened Google search for “${query}” inside this studio.`);
     } catch (error) {
       setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
     } finally {
@@ -3140,13 +3140,15 @@ export function StudyWorkspace({
         throw new Error(errorMessage);
       }
 
-      const normalized = sanitizeDisplayText(extractStructuredOutput(json.text || json.error), "No response");
+      const rawText = normalizeAIResponseText(json.text ?? json.error ?? "");
+      const normalized = sanitizeDisplayText(extractStructuredOutput(rawText), "No response");
+      const finalText = normalized || sanitizeDisplayText(rawText, "No response");
       if (!normalized || normalized === "No response") {
         setStatusNote(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} generated an empty response. Try uploading different sources or rephrasing your focus.`);
       }
-      setOutput(normalized || "No response");
-      saveToolResult(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
-      openGeneratedResultInWorkspaceTab(action, normalized || "No response", action === toolDraft.action ? toolDraft.focus : "");
+      setOutput(finalText);
+      saveToolResult(action, finalText, action === toolDraft.action ? toolDraft.focus : "");
+      openGeneratedResultInWorkspaceTab(action, finalText, action === toolDraft.action ? toolDraft.focus : "");
       updateMetrics((current) => ({
 
         ...current,
@@ -3168,7 +3170,7 @@ export function StudyWorkspace({
       setStatusNote(
         `${actionButtons.find((item) => item.key === action)?.label || "Tool"} ready from ${sourceEnabledCount} source-enabled file(s).${remainingUsage}${examUsage}`
       );
-      return json.text || "No response";
+      return finalText;
     } catch (error) {
       const errorMsg = normalizeErrorMessage(error, "Generation failed");
       setStatusNote(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} failed: ${errorMsg}`);

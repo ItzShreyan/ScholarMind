@@ -7,6 +7,57 @@ import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlay
 
 type PanelView = "search" | "playlists" | "playlist-tracks";
 
+type SystemAudioTrack = {
+  title: string;
+  artist: string;
+  source: string;
+  isPlaying: boolean;
+};
+
+function useSystemAudioTrack() {
+  const [systemAudio, setSystemAudio] = useState<SystemAudioTrack | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !navigator.mediaSession) return;
+
+    const updateMetadata = () => {
+      const metadata = navigator.mediaSession.metadata;
+      if (metadata?.title) {
+        setSystemAudio({
+          title: metadata.title || "Unknown track",
+          artist: metadata.artist || "Unknown artist",
+          source: metadata.album || "Browser audio",
+          isPlaying: true
+        });
+      }
+    };
+
+    const handlePlay = () => setSystemAudio((current) => (current ? { ...current, isPlaying: true } : current));
+    const handlePause = () => setSystemAudio((current) => (current ? { ...current, isPlaying: false } : current));
+
+    updateMetadata();
+    try {
+      navigator.mediaSession.setActionHandler("play", handlePlay);
+      navigator.mediaSession.setActionHandler("pause", handlePause);
+    } catch {
+      // Some browsers may not support custom handlers for background audio.
+    }
+
+    const intervalId = window.setInterval(updateMetadata, 3000);
+    return () => {
+      window.clearInterval(intervalId);
+      try {
+        navigator.mediaSession.setActionHandler("play", null);
+        navigator.mediaSession.setActionHandler("pause", null);
+      } catch {
+        // Ignore cleanup failures.
+      }
+    };
+  }, []);
+
+  return systemAudio;
+}
+
 type SpotifyPlaybackPanelProps = {
   connected: boolean;
   loginHref: string;
@@ -28,14 +79,15 @@ function SpotifyPlaybackDisconnected({
   loginHref,
   compact = false
 }: SpotifyPlaybackPanelProps) {
+  const systemAudio = useSystemAudioTrack();
+  const playbackHint = systemAudio
+    ? `${systemAudio.isPlaying ? "Playing" : "Paused"} ${systemAudio.title} by ${systemAudio.artist} from ${systemAudio.source}.`
+    : "Premium accounts get full in-browser playback, search, and playlist browsing.";
+
   return (
     <div className={compact ? "min-w-0 flex-1" : "rounded-[22px] border border-dashed border-white/14 bg-white/6 px-4 py-4 text-sm"}>
       <p className="font-semibold">Connect Spotify to play music here</p>
-      {!compact ? (
-        <p className="muted mt-2 text-xs">
-          Premium accounts get full in-browser playback, search, and playlist browsing.
-        </p>
-      ) : null}
+      <p className="muted mt-2 text-xs">{playbackHint}</p>
       <a
         href={loginHref}
         className={`inline-flex items-center justify-center rounded-full bg-white/10 font-semibold transition hover:bg-white/16 ${
@@ -55,10 +107,36 @@ function SpotifyPlaybackConnected({
   onPlayingChange
 }: SpotifyPlaybackPanelProps) {
   const playback = useSpotifyPlaybackContext();
+  const systemAudio = useSystemAudioTrack();
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const [view, setView] = useState<PanelView>("search");
 
   const { state } = playback;
+  const isSystemAudioActive = !state.playing && !!systemAudio;
+  const displayTrack = state.track
+    ? state.track
+    : systemAudio
+      ? {
+          id: "system-audio",
+          name: systemAudio.title,
+          uri: "",
+          artist: systemAudio.artist,
+          album: "",
+          imageUrl: null,
+          durationMs: 0
+        }
+      : null;
+  const displayPlaying = state.playing || systemAudio?.isPlaying || false;
+  const playbackSource = state.playbackSource || systemAudio?.source || "No music playing";
+  const playbackOrigin = state.externalDevice
+    ? `${state.externalDevice.type} • ${state.externalDevice.name}`
+    : isSystemAudioActive
+      ? "Browser audio"
+      : state.ready
+        ? "In-browser player"
+        : state.track
+          ? "Your linked Spotify account"
+          : "";
 
   useEffect(() => {
     setLocalSearch(searchQuery);
@@ -100,30 +178,20 @@ function SpotifyPlaybackConnected({
   } = playback;
 
   const activePlaylist = state.activePlaylist;
-  const playbackSource =
-    state.playbackSource ||
-    (state.playing ? (state.ready ? "ScholarMind player" : "Spotify on your account") : "No music playing");
-  const playbackOrigin = state.externalDevice
-    ? `${state.externalDevice.type} • ${state.externalDevice.name}`
-    : state.ready
-      ? "In-browser player"
-      : state.track
-        ? "Your linked Spotify account"
-        : "";
 
   if (ultraCompact) {
     return (
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <div className="h-8 w-8 shrink-0 overflow-hidden rounded-[12px] bg-white/10">
-          {state.track?.imageUrl ? (
+          {displayTrack?.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={state.track.imageUrl} alt="" className="h-full w-full object-cover" />
+            <img src={displayTrack.imageUrl} alt="" className="h-full w-full object-cover" />
           ) : null}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-semibold">{state.track?.name || "Focus music"}</p>
+          <p className="truncate text-xs font-semibold">{displayTrack?.name || "Focus music"}</p>
           <p className="muted truncate text-[10px]">
-            {state.track?.artist || playbackSource}
+            {displayTrack?.artist || playbackSource}
             {playbackOrigin ? ` • ${playbackOrigin}` : ""}
           </p>
         </div>
@@ -131,7 +199,7 @@ function SpotifyPlaybackConnected({
           type="button"
           onClick={() => void togglePlay()}
           className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
-          aria-label={state.playing ? "Pause music" : "Play music"}
+          aria-label={displayPlaying ? "Pause music" : "Play music"}
         >
           {actionLoading ? (
             <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
