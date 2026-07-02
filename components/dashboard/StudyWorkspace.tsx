@@ -433,7 +433,8 @@ function extractWebUrlFromSourceText(text: string) {
 }
 
 function getGoogleSearchUrl(query: string) {
-  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`;
+  // Using DuckDuckGo instead of Google because Google sets X-Frame-Options: SAMEORIGIN and cannot be embedded in an iframe.
+  return `https://duckduckgo.com/?q=${encodeURIComponent(query.trim())}`;
 }
 
 function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {

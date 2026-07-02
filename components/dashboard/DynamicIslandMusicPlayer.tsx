@@ -136,11 +136,11 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef, isCompact: _isCom
         // ✅ Minimized Dynamic Island style
         <motion.div
           key="minimized"
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
-          transition={{ duration: 0.3, ease: "easeOut" }}
-          className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2"
+          exit={{ opacity: 0, y: -20 }}
+          transition={{ duration: 0.3, type: "spring", stiffness: 400, damping: 25 }}
+          className="fixed top-6 left-1/2 z-40 -translate-x-1/2"
           onClick={() => setIsMinimized(false)}
         >
           <motion.div

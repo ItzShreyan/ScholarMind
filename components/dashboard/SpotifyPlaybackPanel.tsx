@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ArrowLeft, ListMusic, LoaderCircle, Pause, Play, Search, SkipBack, SkipForward, X } from "lucide-react";
+import { motion } from "framer-motion";
 import { formatTrackDuration } from "@/lib/music/spotify-catalog";
 import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlayback";
 
@@ -482,10 +483,13 @@ function TrackRow({
   onPlay: () => void;
 }) {
   return (
-    <button
+    <motion.button
       type="button"
       onClick={onPlay}
-      className="flex w-full items-center gap-3 rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
+      whileHover={{ x: 3, scale: 1.01 }}
+      whileTap={{ scale: 0.97 }}
+      transition={{ type: "spring", stiffness: 400, damping: 20 }}
+      className="flex w-full items-center gap-3 rounded-[20px] bg-white/10 p-3 text-left transition-colors hover:bg-white/16"
     >
       <div className="h-11 w-11 shrink-0 overflow-hidden rounded-[12px] bg-white/10">
         {track.imageUrl ? (
@@ -502,6 +506,6 @@ function TrackRow({
       <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
         {formatTrackDuration(track.durationMs)}
       </span>
-    </button>
+    </motion.button>
   );
 }

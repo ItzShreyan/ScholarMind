@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@/components/ui/cn";
+import { motion, HTMLMotionProps } from "framer-motion";
 
 type Variant = "primary" | "secondary" | "ghost";
 type Size = "sm" | "md" | "lg";
@@ -16,10 +17,10 @@ export function buttonVariants({
   size?: Size;
 }) {
   const base =
-    "inline-flex cursor-pointer select-none touch-manipulation items-center justify-center gap-2 rounded-2xl font-medium transition-all duration-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60 active:scale-[0.98]";
+    "inline-flex cursor-pointer select-none touch-manipulation items-center justify-center gap-2 rounded-2xl font-medium transition-all duration-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-60";
   const variants: Record<Variant, string> = {
     primary:
-      "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold)_42%,var(--accent-sky))] text-slate-950 shadow-[0_18px_40px_rgba(255,125,89,0.28)] hover:-translate-y-0.5 hover:brightness-105",
+      "bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-gold)_42%,var(--accent-sky))] text-slate-950 shadow-[0_18px_40px_rgba(255,125,89,0.28)]",
     secondary:
       "glass border border-white/20 text-[color:var(--fg)] hover:border-white/35 hover:bg-white/12",
     ghost: "text-[color:var(--fg)] hover:bg-white/10"
@@ -38,10 +39,17 @@ export function Button({
   variant = "primary",
   size = "md",
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+}: HTMLMotionProps<"button"> & {
   variant?: Variant;
   size?: Size;
 }) {
-  return <button className={buttonVariants({ className, variant, size })} {...props} />;
+  return (
+    <motion.button 
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.96 }}
+      transition={{ type: "spring", stiffness: 400, damping: 17 }}
+      className={buttonVariants({ className, variant, size })} 
+      {...props} 
+    />
+  );
 }
-

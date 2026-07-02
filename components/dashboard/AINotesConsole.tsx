@@ -1,10 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { Atom, BookOpen, Download, FlaskConical, Waves } from "lucide-react";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { Button } from "@/components/ui/Button";
 import { extractStructuredOutput } from "@/lib/ai/strip-reasoning";
+
+const fadeInUp = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0 },
+  transition: { type: "spring", stiffness: 300, damping: 28 }
+};
 
 type FormulaBlock = {
   label?: string;
@@ -266,16 +273,19 @@ export function AINotesConsole({ content }: { content: string }) {
             </div>
             <div className="mt-4 space-y-2">
               {sections.map((section, index) => (
-                <button
+                <motion.button
                   key={`${section.heading}-${index}`}
                   type="button"
                   onClick={() => setActiveSection(index)}
+                  whileHover={{ x: 3 }}
+                  whileTap={{ scale: 0.97 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 20 }}
                   className={`w-full rounded-[18px] px-3 py-3 text-left text-xs transition ${
                     activeSection === index ? "bg-white/18 text-[var(--fg)]" : "text-[var(--muted)] hover:bg-white/10"
                   }`}
                 >
                   {index + 1}. {section.heading}
-                </button>
+                </motion.button>
               ))}
             </div>
           </div>
@@ -294,9 +304,11 @@ export function AINotesConsole({ content }: { content: string }) {
         <div className="hide-scrollbar max-h-[75vh] overflow-auto p-5 md:p-8">
           <div className="mx-auto max-w-4xl space-y-7">
             {sections.map((section, index) => (
-              <section
+              <motion.section
                 key={`${section.heading}-${index}`}
                 className={index === activeSection ? "scroll-mt-8" : ""}
+                {...fadeInUp}
+                transition={{ ...fadeInUp.transition, delay: index * 0.04 }}
               >
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-sky)]">
                   Chapter {index + 1}
@@ -328,7 +340,7 @@ export function AINotesConsole({ content }: { content: string }) {
                     </table>
                   </div>
                 ) : null}
-              </section>
+              </motion.section>
             ))}
 
             {safeItems(notes.callouts).map((callout, index) => (

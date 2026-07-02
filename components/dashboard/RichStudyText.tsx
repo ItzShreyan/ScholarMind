@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useId, useMemo, useState } from "react";
+import React, { memo, useEffect, useId, useMemo, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -23,8 +23,8 @@ function normalizeStudyContent(content: string) {
 function prepareMathContent(content: string) {
   let prepared = content;
 
-  prepared = prepared.replace(/\\\(([\s\S]+?)\\\)/g, (_, math) => `$${math.trim()}$`);
-  prepared = prepared.replace(/\\\[([\s\S]+?)\\\]/g, (_, math) => `$$${math.trim()}$$`);
+  prepared = prepared.replace(/\\\(([\\s\\S]+?)\\\)/g, (_, math) => `$${math.trim()}$`);
+  prepared = prepared.replace(/\\\[([\\s\\S]+?)\\\]/g, (_, math) => `$$${math.trim()}$$`);
 
   prepared = prepared.replace(/\(([^()\n]{1,180})\)/g, (match, inner: string) => {
     if (inner.includes("$")) return match;
@@ -37,7 +37,7 @@ function prepareMathContent(content: string) {
   return prepared;
 }
 
-function MermaidBlock({ chart }: { chart: string }) {
+const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
   const chartId = useId().replace(/:/g, "-");
   const [svg, setSvg] = useState("");
   const [failed, setFailed] = useState(false);
@@ -91,9 +91,9 @@ function MermaidBlock({ chart }: { chart: string }) {
       dangerouslySetInnerHTML={{ __html: svg }}
     />
   );
-}
+});
 
-export function RichStudyText({
+export const RichStudyText = memo(function RichStudyText({
   content,
   compact = false
 }: {
@@ -156,4 +156,4 @@ export function RichStudyText({
       </ReactMarkdown>
     </div>
   );
-}
+});
