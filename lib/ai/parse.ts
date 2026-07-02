@@ -10,7 +10,7 @@ export function parseFlashcards(text: string): FlashcardQA[] {
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
       if (Array.isArray(parsed) && parsed.length > 0 && ("front" in parsed[0] || "question" in parsed[0])) {
-        return parsed.map((card: any) => ({
+        return parsed.map((card: { front?: string; question?: string; back?: string; answer?: string }) => ({
           question: card.front || card.question || "",
           answer: card.back || card.answer || ""
         })).filter(c => c.question && c.answer);

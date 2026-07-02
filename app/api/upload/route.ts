@@ -128,7 +128,7 @@ export async function POST(req: Request) {
 
     const maxUploadFileSizeMb = Math.max(1, Number(process.env.MAX_UPLOAD_FILE_MB ?? defaultMaxUploadFileSizeMb));
     const maxUploadFileSizeBytes = maxUploadFileSizeMb * 1024 * 1024;
-    const uploaded: any[] = [];
+    const uploaded: unknown[] = [];
     const warnings: string[] = [];
     const rejectedFiles: { fileName: string; reason: string }[] = [];
 
