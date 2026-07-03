@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
-import { ChevronUp, Music, Search, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { motion } from "framer-motion";
+import { ChevronUp, LogOut, Music, Search, X } from "lucide-react";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 
@@ -16,12 +17,26 @@ const providerStatus = [
 
 export function FocusMusicDock() {
   const pathname = usePathname();
+  const router = useRouter();
   const loadedRef = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [spotifyConnected, setSpotifyConnected] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
   const spotifyLoginHref = `/api/music/spotify/login?returnTo=${encodeURIComponent(pathname || "/dashboard")}`;
+
+  const handleUnlink = useCallback(async () => {
+    if (unlinking) return;
+    setUnlinking(true);
+    try {
+      await fetch("/api/music/spotify/unlink", { method: "POST" });
+      router.refresh();
+      window.location.reload();
+    } catch {
+      setUnlinking(false);
+    }
+  }, [unlinking, router]);
 
   useEffect(() => {
     void fetch("/api/music/spotify/status")
@@ -97,9 +112,16 @@ export function FocusMusicDock() {
         }
 
         return (
-          <button key={provider.name} type="button" disabled className="cursor-not-allowed rounded-[18px] bg-white/6 px-3 py-3 text-left opacity-70">
+          <motion.button 
+            key={provider.name} 
+            type="button" 
+            disabled 
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="cursor-not-allowed rounded-[18px] bg-white/6 px-3 py-3 text-left opacity-70"
+          >
             {contents}
-          </button>
+          </motion.button>
         );
       }),
     [spotifyConnected, spotifyLoginHref]
@@ -115,21 +137,24 @@ export function FocusMusicDock() {
             compact
             onPlayingChange={setPlaying}
           />
-          <button
+          <motion.button
             type="button"
             onClick={() => setOpen((current) => !current)}
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            transition={{ type: "spring", stiffness: 400, damping: 17 }}
             className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
             aria-label="Open dashboard music dock"
           >
             {open ? <X className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </button>
+          </motion.button>
         </div>
 
         {open ? (
           <div className="border-t border-white/10 p-4">
             <div className="grid gap-2 sm:grid-cols-3">{providerCards}</div>
 
-            <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
+          <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
               <div className="flex items-center gap-2">
                 <Search className="h-4 w-4 text-[var(--accent-sky)]" />
                 <input
@@ -140,6 +165,21 @@ export function FocusMusicDock() {
                 />
               </div>
             </div>
+
+            {spotifyConnected ? (
+              <div className="mt-3 flex items-center justify-between rounded-[18px] bg-white/8 px-4 py-3">
+                <span className="text-[11px] text-white/50">Spotify account linked</span>
+                <button
+                  type="button"
+                  onClick={handleUnlink}
+                  disabled={unlinking}
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-coral)]/70 hover:text-[var(--accent-coral)] transition-colors disabled:opacity-50"
+                >
+                  <LogOut className="h-3 w-3" />
+                  {unlinking ? "Unlinking..." : "Unlink account"}
+                </button>
+              </div>
+            ) : null}
 
             <div className="mt-4">
               <SpotifyPlaybackPanel

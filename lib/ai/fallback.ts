@@ -114,8 +114,8 @@ function isBadResponse(text: string, input: AIRequest): boolean {
   if (normalized.toLowerCase() === "[object object]" || normalized === "{}") return true;
   if (looksLikeReasoningLeak(text, String(input.mode))) return true;
 
-  // ✅ IMPROVED: Only check grounding for summary when context is provided AND response is suspiciously short
-  if (String(input.mode) === "summary" && input.context && normalized.length < 50 && !isGroundedEnough(normalized.toLowerCase(), input)) {
+  // ✅ IMPROVED: Only check grounding for summaries when response is suspiciously short AND not grounded
+  if (String(input.mode) === "summary" && input.context && normalized.length < 30 && !isGroundedEnough(normalized.toLowerCase(), input)) {
     return true;
   }
 
@@ -125,11 +125,10 @@ function isBadResponse(text: string, input: AIRequest): boolean {
 export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
   const strictRemote = requiresRemoteAI(input);
-  // ✅ IMPROVED CACHE KEY: Include context + context hash to avoid stale outputs across sessions
   const contextHash = input.context ? createHash("md5").update(input.context).digest("hex").slice(0, 8) : "no-context";
   const cacheKey = JSON.stringify({ v: 9, mode: input.mode, examMode: input.examMode, message: input.message, contextHash });
   const cached = getCached(cacheKey);
-  if (cached) return { text: normalizeAIText(cached), provider: "cache" };
+  if (cached) return { text: normalizeAIText(cached), provider: "cache" as const };
 
   if (strictRemote && !hasRemoteProviderConfigured()) {
     throw new Error(
@@ -137,27 +136,26 @@ export async function generateWithFallback(rawInput: AIRequest) {
     );
   }
 
-  // ✅ SMART ROUTING (THIS IS THE MAIN UPGRADE)
   const selected = selectProvider(input);
   const primary = providers[selected];
-
   const failures: string[] = [];
 
-  try {
-    if (primary && !(strictRemote && primary.name === "local")) {
+  // Try primary provider first
+  if (primary && !(strictRemote && primary.name === "local")) {
+    try {
       const result = await primary.generate(input);
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
       if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
         return { ...result, text: normalizedText };
       }
-      failures.push(`${primary.name}: bad response`);
+      failures.push(`${primary.name}: bad/empty response`);
+    } catch (err) {
+      failures.push(`${primary?.name || "primary"}: ${normalizeErrorMessage(err)}`);
     }
-  } catch (err) {
-    failures.push(`${primary?.name || "primary"}: ${normalizeErrorMessage(err)}`);
   }
 
-  // 🔁 FALLBACK CHAIN
+  // Fallback chain
   const openrouterConfigured = hasOpenRouterKey();
   const openrouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat"]);
   const fallbackOrder =
@@ -199,9 +197,9 @@ export async function generateWithFallback(rawInput: AIRequest) {
     }
   }
 
-  const failureDetails = failures.slice(0, 3).join(" | ");
+  const failureDetails = failures.slice(0, 5).join(" | ");
   const errorMessage = strictRemote
-    ? `Study tools require a live AI response. All providers failed: ${failureDetails}. Try again in a moment or check your API keys.`
+    ? `Could not generate a response. All providers failed: ${failureDetails}. Try again in a moment.`
     : `All AI providers failed: ${failureDetails}. Try again or enable an AI provider in .env.local.`;
   
   throw new Error(errorMessage);

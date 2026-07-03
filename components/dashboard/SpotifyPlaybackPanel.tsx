@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowLeft, ListMusic, LoaderCircle, Pause, Play, Search, SkipBack, SkipForward, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, ListMusic, LoaderCircle, LogOut, Pause, Play, Radio, Search, SkipBack, SkipForward, X } from "lucide-react";
 import { motion } from "framer-motion";
 import { formatTrackDuration } from "@/lib/music/spotify-catalog";
 import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlayback";
@@ -17,19 +17,28 @@ type SystemAudioTrack = {
 
 function useSystemAudioTrack() {
   const [systemAudio, setSystemAudio] = useState<SystemAudioTrack | null>(null);
+  const systemAudioRef = useRef(systemAudio);
+  systemAudioRef.current = systemAudio;
 
   useEffect(() => {
-    if (typeof window === "undefined" || !navigator.mediaSession) return;
+    if (typeof window === "undefined") return;
+    let cancelled = false;
 
+    // Method 1: MediaSession metadata
     const updateMetadata = () => {
-      const metadata = navigator.mediaSession.metadata;
-      if (metadata?.title) {
-        setSystemAudio({
-          title: metadata.title || "Unknown track",
-          artist: metadata.artist || "Unknown artist",
-          source: metadata.album || "Browser audio",
-          isPlaying: true
-        });
+      if (cancelled) return;
+      try {
+        const metadata = navigator.mediaSession.metadata;
+        if (metadata?.title) {
+          setSystemAudio({
+            title: metadata.title || "Unknown track",
+            artist: metadata.artist || "Unknown artist",
+            source: metadata.album || "Browser audio",
+            isPlaying: navigator.mediaSession.playbackState !== "paused"
+          });
+        }
+      } catch {
+        // MediaSession not available
       }
     };
 
@@ -37,21 +46,86 @@ function useSystemAudioTrack() {
     const handlePause = () => setSystemAudio((current) => (current ? { ...current, isPlaying: false } : current));
 
     updateMetadata();
-    try {
-      navigator.mediaSession.setActionHandler("play", handlePlay);
-      navigator.mediaSession.setActionHandler("pause", handlePause);
-    } catch {
-      // Some browsers may not support custom handlers for background audio.
+
+    // Method 2: MediaSession action handlers (cross-tab detection)
+    if ("mediaSession" in navigator) {
+      const handleExternalAction = () => {
+        if (!systemAudioRef.current) {
+          setSystemAudio({
+            title: "Audio playing in another tab",
+            artist: "External tab",
+            source: "External tab",
+            isPlaying: true
+          });
+        }
+      };
+      try {
+        navigator.mediaSession.setActionHandler("play", handleExternalAction);
+        navigator.mediaSession.setActionHandler("pause", handleExternalAction);
+        navigator.mediaSession.setActionHandler("nexttrack", handleExternalAction);
+        navigator.mediaSession.setActionHandler("previoustrack", handleExternalAction);
+      } catch {
+        // Some browsers may not support all handlers
+      }
     }
 
-    const intervalId = window.setInterval(updateMetadata, 3000);
+    // Method 3: Document title heuristics
+    let lastTitle = document.title;
+    const titleCheck = setInterval(() => {
+      if (cancelled) return;
+      const title = document.title;
+      if (title !== lastTitle) {
+        lastTitle = title;
+        const indicators = ["♪", "▶", "♫", "Now Playing", "Spotify", "YouTube"];
+        const hasIndicator = indicators.some((ind) => title.includes(ind));
+        if (hasIndicator && !navigator.mediaSession.metadata?.title) {
+          setSystemAudio({
+            title: title.replace(/[♪▶♫]/g, "").trim() || "Audio playing",
+            artist: "Current page",
+            source: "Player embedded in page",
+            isPlaying: true
+          });
+        }
+      }
+    }, 3000);
+
+    // Method 4: Check for video/audio elements on our page
+    const checkMedia = () => {
+      if (cancelled) return;
+      try {
+        const videos = document.querySelectorAll<HTMLVideoElement>("video");
+        const audios = document.querySelectorAll<HTMLAudioElement>("audio");
+        for (const el of [...videos, ...audios]) {
+          if (!el.paused && el.currentTime > 0 && !el.muted) {
+            setSystemAudio({
+              title: el.title || document.title || "Media playing",
+              artist: el instanceof HTMLVideoElement ? "Embedded video" : "Embedded audio",
+              source: "This page",
+              isPlaying: true
+            });
+            return;
+          }
+        }
+      } catch {
+        // Cross-origin restrictions
+      }
+    };
+    const mediaInterval = setInterval(checkMedia, 2500);
+
+    const sessionInterval = setInterval(updateMetadata, 2000);
+
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
+      clearInterval(sessionInterval);
+      clearInterval(titleCheck);
+      clearInterval(mediaInterval);
       try {
         navigator.mediaSession.setActionHandler("play", null);
         navigator.mediaSession.setActionHandler("pause", null);
+        navigator.mediaSession.setActionHandler("nexttrack", null);
+        navigator.mediaSession.setActionHandler("previoustrack", null);
       } catch {
-        // Ignore cleanup failures.
+        // Ignore cleanup failures
       }
     };
   }, []);
@@ -111,6 +185,18 @@ function SpotifyPlaybackConnected({
   const systemAudio = useSystemAudioTrack();
   const [localSearch, setLocalSearch] = useState(searchQuery);
   const [view, setView] = useState<PanelView>("search");
+  const [unlinking, setUnlinking] = useState(false);
+
+  const handleUnlink = useCallback(async () => {
+    if (unlinking) return;
+    setUnlinking(true);
+    try {
+      await fetch("/api/music/spotify/unlink", { method: "POST" });
+      window.location.reload();
+    } catch {
+      setUnlinking(false);
+    }
+  }, [unlinking]);
 
   const { state } = playback;
   const isSystemAudioActive = !state.playing && !!systemAudio;
@@ -470,6 +556,20 @@ function SpotifyPlaybackConnected({
         <p className={`rounded-[16px] bg-[rgba(255,209,102,0.14)] px-3 py-2 text-xs ${compact ? "hidden" : ""}`}>
           Spotify Premium is required for full in-browser playback.
         </p>
+      ) : null}
+      {!compact ? (
+        <div className="mt-2 flex items-center justify-between rounded-[16px] bg-white/8 px-3 py-2">
+          <span className="text-[11px] text-white/50">Spotify connected</span>
+          <button
+            type="button"
+            onClick={handleUnlink}
+            disabled={unlinking}
+            className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[var(--accent-coral)]/70 hover:text-[var(--accent-coral)] transition-colors disabled:opacity-50"
+          >
+            <LogOut className="h-3 w-3" />
+            {unlinking ? "Unlinking..." : "Unlink account"}
+          </button>
+        </div>
       ) : null}
     </div>
   );

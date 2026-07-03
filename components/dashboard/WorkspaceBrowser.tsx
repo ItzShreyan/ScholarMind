@@ -233,7 +233,7 @@ export function WorkspaceBrowser({ url, title, onClose, onSaveAsNote }: Workspac
           src={currentUrl}
           title={title}
           className="w-full h-full border-none bg-white"
-          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-pointer-lock allow-top-navigation-by-user-activation"
+          sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-pointer-lock allow-top-navigation-by-user-activation allow-popups-to-escape-sandbox"
         />
       </div>
 

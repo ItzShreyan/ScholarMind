@@ -291,14 +291,35 @@ function SpotifyPlaybackProviderInner({
 
   const ensureDeviceReady = useCallback(async () => {
     if (deviceIdRef.current) return deviceIdRef.current;
-    await initializePlayer();
-
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      if (deviceIdRef.current) return deviceIdRef.current;
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    
+    // Initialize player if not already doing so
+    if (!initializingRef.current) {
+      await initializePlayer();
     }
 
-    throw new Error("Spotify player is still connecting. Try again in a moment.");
+    // Wait for device ID with exponential backoff (up to ~15s total)
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      if (deviceIdRef.current) return deviceIdRef.current;
+      const delay = Math.min(100 + attempt * 50, 1000);
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+    }
+
+    // If still no device, try one more explicit initialization
+    if (!deviceIdRef.current) {
+      initializingRef.current = false;
+      await initializePlayer();
+      
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        if (deviceIdRef.current) return deviceIdRef.current;
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+      }
+    }
+
+    if (!deviceIdRef.current) {
+      throw new Error("Spotify player is still connecting. Try again in a moment.");
+    }
+    
+    return deviceIdRef.current;
   }, [initializePlayer]);
 
   useEffect(() => {
