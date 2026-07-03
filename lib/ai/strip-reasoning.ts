@@ -2,52 +2,28 @@
  * Strip model chain-of-thought / planning text and extract student-facing payloads.
  */
 
-const reasoningLeadPatterns: RegExp[] = [
-  /^[\s\S]*?(?=\[\s*\{)/,
-  /^[\s\S]*?(?=\{\s*"(?:title|sections|front|question)":)/i,
-  /^[\s\S]*?(?=```json)/i,
-  /^[\s\S]*?(?=(?:^|\n)#+\s)/m
+// We only strip known reasoning preamble prefixes. The old aggressive
+// structural-marker approach was stripping valid content that happened
+// to contain a leading JSON-like character. Now we use simple prefix
+// removal and rely on extractStructuredOutput to find the payload.
+const reasoningPrefixes: RegExp[] = [
+  /^Let's craft flashcards:\s*/i,
+  /^Here (?:are|is) (?:the )?(?:flashcards?|quiz|notes?|summary):\s*/i,
+  /^I will (?:now )?generate\s*.*?\n/i,
+  /^based on uploaded sources\s*.*?\n/i,
 ];
-
-const reasoningMarkers =
-  /\b(we need to produce|let's craft|let us craft|i will (?:now )?generate|based on uploaded sources|however we only have|constraints:)\b/i;
 
 export function stripReasoningPreamble(text: string): string {
   let cleaned = (text || "").trim();
   if (!cleaned) return "";
 
-  // Try to strip reasoning preamble by finding the first structural marker
-  for (const pattern of reasoningLeadPatterns) {
-    const match = cleaned.match(pattern);
-    if (match && match.index && match.index > 0) {
-      const next = cleaned.slice(match.index).trim();
-      if (next && next.length < cleaned.length) {
-        cleaned = next;
-        break;
-      }
-    }
+  for (const prefix of reasoningPrefixes) {
+    const before = cleaned;
+    cleaned = cleaned.replace(prefix, "").trim();
+    if (cleaned !== before) break;
   }
 
-  // If reasoning markers found in first 900 chars, strip aggressively
-  if (reasoningMarkers.test(cleaned.slice(0, Math.min(cleaned.length, 900)))) {
-    // Look for JSON start
-    const jsonStart = cleaned.search(/(\[\s*\{|\{\s*"(?:title|sections|front|question|subjects?)":)/i);
-    if (jsonStart > 0 && jsonStart < cleaned.length * 0.5) {
-      cleaned = cleaned.slice(jsonStart).trim();
-    }
-
-    // Look for markdown heading start
-    const mdStart = cleaned.search(/^#{1,3}\s/m);
-    if (mdStart > 0 && mdStart < cleaned.length * 0.5) {
-      cleaned = cleaned.slice(mdStart).trim();
-    }
-  }
-
-  // Clean up common preamble prefixes
-  return cleaned
-    .replace(/^Let's craft flashcards:\s*/i, "")
-    .replace(/^Here (?:are|is) (?:the )?(?:flashcards?|quiz|notes?|summary):\s*/i, "")
-    .trim();
+  return cleaned;
 }
 
 function tryParseJson(value: string) {
@@ -138,26 +114,26 @@ export function looksLikeReasoningLeak(text: string, mode?: string): boolean {
   const normalized = (text || "").toLowerCase().trim();
   if (!normalized) return true;
 
-  // Only check for reasoning markers if the text is predominantly planning rather than content
+  // For structured modes, check for actual content before flagging
   if (mode === "flashcards") {
     const hasCards = normalized.includes('"front"') || normalized.includes("front:") || normalized.includes("q:");
     if (hasCards) return false;
-    const reasoningThreshold = normalized.length > 200 || reasoningMarkers.test(normalized.slice(0, 1200));
-    return reasoningThreshold;
+    // Flag as leak only when the text is suspiciously short with no card-like content
+    return normalized.length < 40;
   }
 
   if (mode === "quiz") {
     const hasQuestions = normalized.includes('"question"') || /\bquestion\s*\d+/i.test(normalized);
     if (hasQuestions) return false;
-    return reasoningMarkers.test(normalized.slice(0, 1200));
+    return normalized.length < 40;
   }
 
   if (mode === "notes") {
     const hasSections = normalized.includes('"sections"') || normalized.includes('"title"');
     if (hasSections) return false;
-    return reasoningMarkers.test(normalized.slice(0, 1200));
+    return normalized.length < 40;
   }
 
-  // For summary, concepts, etc. - don't flag reasoning leaks unless it's pure planning gibberish
+  // For summary, concepts, etc. - don't flag reasoning leaks
   return false;
 }

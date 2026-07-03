@@ -41,6 +41,7 @@ import { motion } from "framer-motion";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
+import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
@@ -285,29 +286,47 @@ function createToolDraft(action: AIAction): ToolDraft {
 }
 
 function parseJsonBlock<T>(text: string): T | null {
-  const cleaned = extractStructuredOutput(text).replace(/^\uFEFF/, "").trim();
-  const candidates = [
-    cleaned,
-    cleaned.replace(/,\s*([\]}])/g, "$1")
-  ];
+  // Strip BOM, reasoning preamble, and clean up
+  let cleaned = extractStructuredOutput(text).replace(/^\uFEFF/, "").trim();
+  if (!cleaned) return null;
 
-  for (const candidate of candidates) {
+  // Recursively strip trailing commas: keep going until no more matches
+  const stripTrailingCommas = (s: string): string => {
+    const result = s.replace(/,\s*([\]}])/g, "$1");
+    return result === s ? result : stripTrailingCommas(result);
+  };
+  cleaned = stripTrailingCommas(cleaned);
+
+  // Try direct parse first
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    // fall through
+  }
+
+  // Try extracting from code fences
+  const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch) {
+    const jsonStr = stripTrailingCommas(fencedMatch[1].trim());
     try {
-      return JSON.parse(candidate) as T;
+      return JSON.parse(jsonStr) as T;
     } catch {
-      // try next candidate
+      // fall through
     }
   }
 
-  const match = cleaned.match(/```json\s*([\s\S]*?)```/i) || cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-  if (!match) return null;
-
-  const jsonText = match[1].replace(/,\s*([\]}])/g, "$1");
-  try {
-    return JSON.parse(jsonText) as T;
-  } catch {
-    return null;
+  // Try extracting balanced array or object from the raw text
+  const bracketMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if (bracketMatch) {
+    const jsonStr = stripTrailingCommas(bracketMatch[1]);
+    try {
+      return JSON.parse(jsonStr) as T;
+    } catch {
+      // fall through
+    }
   }
+
+  return null;
 }
 
 function cleanGeneratedText(text: string) {
@@ -835,15 +854,15 @@ function sanitizeFileBaseName(value: string) {
     .slice(0, 72) || "study-export";
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+// Escapes text for safe injection into raw HTML (used only in the PDF export
+// template where React is not available). Uses native DOM APIs instead of
+// a hand-rolled character escaper.
+function escapeHtml(value: string): string {
+  if (typeof document === "undefined") return value;
+  const div = document.createElement("div");
+  div.appendChild(document.createTextNode(value));
+  return div.innerHTML;
 }
-
 export function StudyWorkspace({
   sessions,
   initialSessionId,
@@ -6098,6 +6117,7 @@ export function StudyWorkspace({
       </footer>
 
       <SpotifyPlaybackProvider connected={spotifyConnected}>
+        <DynamicIslandMusicPlayer scrollContainerRef={workspaceScrollRef} />
       <div
         className={`fixed bottom-3 z-30 transition-all duration-300 ${
           musicDockCompact ? "right-3 left-auto w-[min(18rem,calc(100vw-1.5rem))]" : "left-3 right-3 mx-auto max-w-[1800px]"
