@@ -41,7 +41,6 @@ import { motion } from "framer-motion";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
-import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
@@ -940,7 +939,6 @@ export function StudyWorkspace({
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicPanelOpen, setMusicPanelOpen] = useState(false);
-  const [musicDockCompact, setMusicDockCompact] = useState(false);
   const [musicSearch, setMusicSearch] = useState("");
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [statusNote, setStatusNote] = useState("");
@@ -2209,10 +2207,7 @@ export function StudyWorkspace({
       const atBottom = y + container.clientHeight >= container.scrollHeight - 100;
 
       if (y < lastWorkspaceScrollYRef.current - 12) {
-        setMusicDockCompact(true);
         setMusicPanelOpen(false);
-      } else if (atBottom || y > lastWorkspaceScrollYRef.current + 12) {
-        setMusicDockCompact(false);
       }
 
       lastWorkspaceScrollYRef.current = y;
@@ -2692,7 +2687,7 @@ export function StudyWorkspace({
       const warnings: string[] = [];
       const rejectedFiles: { fileName: string; reason: string }[] = [];
 
-      // ✅ POLISHED: Batch upload all files in a single request with better progress tracking
+  // Batch upload all files in a single request
       const form = new FormData();
       allowedFiles.forEach((file) => form.append("files", file));
       form.append("sessionId", sessionId);
@@ -6116,11 +6111,9 @@ export function StudyWorkspace({
         </a>
       </footer>
 
-      <SpotifyPlaybackProvider connected={spotifyConnected}>
-        <DynamicIslandMusicPlayer scrollContainerRef={workspaceScrollRef} />
       <div
         className={`fixed bottom-3 z-30 transition-all duration-300 ${
-          musicDockCompact ? "right-3 left-auto w-[min(18rem,calc(100vw-1.5rem))]" : "left-3 right-3 mx-auto max-w-[1800px]"
+          false ? "right-3 left-auto w-[min(18rem,calc(100vw-1.5rem))]" : "left-3 right-3 mx-auto max-w-[1800px]"
         }`}
       >
         {musicPanelOpen ? (
@@ -6211,7 +6204,7 @@ export function StudyWorkspace({
 
         <div
           className={`panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] shadow-[0_18px_50px_rgba(2,6,23,0.28)] transition-all duration-300 ${
-            musicDockCompact
+            false
               ? "origin-bottom-right scale-[0.58] rounded-[18px] px-2 py-1 shadow-[0_10px_28px_rgba(2,6,23,0.22)]"
               : "origin-bottom px-3 py-2"
           }`}
@@ -6220,11 +6213,11 @@ export function StudyWorkspace({
             connected={spotifyConnected}
             loginHref={spotifyLoginHref}
             compact
-            ultraCompact={musicDockCompact}
+            ultraCompact={false}
             searchQuery={musicSearch}
             onPlayingChange={setMusicPlaying}
           />
-          {!musicDockCompact ? (
+          {!false ? (
             <button
               type="button"
               onClick={() => setMusicPanelOpen((current) => !current)}
@@ -6236,7 +6229,6 @@ export function StudyWorkspace({
           ) : null}
         </div>
       </div>
-      </SpotifyPlaybackProvider>
 
       {sourceModalOpen ? (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-[rgba(2,6,23,0.6)] px-4 py-6 backdrop-blur-sm">

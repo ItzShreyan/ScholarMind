@@ -132,77 +132,75 @@ export async function POST(req: Request) {
     const warnings: string[] = [];
     const rejectedFiles: { fileName: string; reason: string }[] = [];
 
-    await Promise.all(
-      files.map(async (file) => {
-        try {
-          if (file.size > maxUploadFileSizeBytes) {
-            rejectedFiles.push({
-              fileName: file.name,
-              reason: `${file.name} is larger than the ${maxUploadFileSizeMb} MB upload limit.`
-            });
-            return;
-          }
-
-          const signatureError = await validateFileSignature(file);
-          if (signatureError) {
-            rejectedFiles.push({
-              fileName: file.name,
-              reason: signatureError
-            });
-            return;
-          }
-
-          const extraction = await extractDocumentContent(file);
-          if (!extraction.readable) {
-            rejectedFiles.push({
-              fileName: file.name,
-              reason: extraction.rejectionReason || "This file could not be read."
-            });
-            return;
-          }
-
-          const arrayBuffer = await file.arrayBuffer();
-          const realStoragePath = `${user.id}/${sessionId}/${Date.now()}-${file.name}`;
-          let storagePath = realStoragePath;
-
-          const { error: storageError } = await supabase.storage
-            .from("study-files")
-            .upload(realStoragePath, arrayBuffer, {
-              contentType: file.type || "application/octet-stream",
-              upsert: false
-            });
-
-          if (storageError) {
-            storagePath = `inline://${user.id}/${sessionId}/${Date.now()}-${file.name}`;
-            warnings.push(
-              `Stored ${file.name} as an inline study source because Supabase storage rejected the raw file.`
-            );
-          }
-
-          const { data, error } = await supabase
-            .from("study_files")
-            .insert([
-              {
-                session_id: sessionId,
-                user_id: user.id,
-                file_name: file.name,
-                file_type: file.type,
-                storage_path: storagePath,
-                extracted_text: extraction.text
-              }
-            ])
-            .select("*")
-            .single();
-          if (error) throw error;
-          uploaded.push(data);
-        } catch (error) {
+    for (const file of files) {
+      try {
+        if (file.size > maxUploadFileSizeBytes) {
           rejectedFiles.push({
             fileName: file.name,
-            reason: (error as Error).message || "This file could not be read clearly enough. Reupload another copy of it."
+            reason: `${file.name} is larger than the ${maxUploadFileSizeMb} MB upload limit.`
           });
+          continue;
         }
-      })
-    );
+
+        const signatureError = await validateFileSignature(file);
+        if (signatureError) {
+          rejectedFiles.push({
+            fileName: file.name,
+            reason: signatureError
+          });
+          continue;
+        }
+
+        const extraction = await extractDocumentContent(file);
+        if (!extraction.readable) {
+          rejectedFiles.push({
+            fileName: file.name,
+            reason: extraction.rejectionReason || "This file could not be read."
+          });
+          continue;
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const realStoragePath = `${user.id}/${sessionId}/${Date.now()}-${file.name}`;
+        let storagePath = realStoragePath;
+
+        const { error: storageError } = await supabase.storage
+          .from("study-files")
+          .upload(realStoragePath, arrayBuffer, {
+            contentType: file.type || "application/octet-stream",
+            upsert: false
+          });
+
+        if (storageError) {
+          storagePath = `inline://${user.id}/${sessionId}/${Date.now()}-${file.name}`;
+          warnings.push(
+            `Stored ${file.name} as an inline study source because Supabase storage rejected the raw file.`
+          );
+        }
+
+        const { data, error } = await supabase
+          .from("study_files")
+          .insert([
+            {
+              session_id: sessionId,
+              user_id: user.id,
+              file_name: file.name,
+              file_type: file.type,
+              storage_path: storagePath,
+              extracted_text: extraction.text
+            }
+          ])
+          .select("*")
+          .single();
+        if (error) throw error;
+        uploaded.push(data);
+      } catch (error) {
+        rejectedFiles.push({
+          fileName: file.name,
+          reason: (error as Error).message || "This file could not be read clearly enough. Reupload another copy of it."
+        });
+      }
+    }
 
     if (!uploaded.length && rejectedFiles.length) {
       return NextResponse.json(

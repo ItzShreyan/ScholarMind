@@ -1,16 +1,20 @@
 /**
  * Strip model chain-of-thought / planning text and extract student-facing payloads.
+ * Relaxed to avoid stripping legitimate content.
  */
 
-// We only strip known reasoning preamble prefixes. The old aggressive
-// structural-marker approach was stripping valid content that happened
-// to contain a leading JSON-like character. Now we use simple prefix
-// removal and rely on extractStructuredOutput to find the payload.
 const reasoningPrefixes: RegExp[] = [
   /^Let's craft flashcards:\s*/i,
   /^Here (?:are|is) (?:the )?(?:flashcards?|quiz|notes?|summary):\s*/i,
   /^I will (?:now )?generate\s*.*?\n/i,
   /^based on uploaded sources\s*.*?\n/i,
+  /^Here is the\s+.*?\n/i,
+  /^I'll (?:create|generate|produce)\s+.*?\n/i,
+  /^Let me (?:create|generate|produce|build|write)\s+.*?\n/i,
+  /^Sure!?\s+Here\s+.*?\n/i,
+  /^Absolutely!?\s+Here\s+.*?\n/i,
+  /^Of course!?\s+Here\s+.*?\n/i,
+  /^Here's\s+.*?\n/i,
 ];
 
 export function stripReasoningPreamble(text: string): string {
@@ -21,6 +25,14 @@ export function stripReasoningPreamble(text: string): string {
     const before = cleaned;
     cleaned = cleaned.replace(prefix, "").trim();
     if (cleaned !== before) break;
+  }
+
+  const firstSubstantive = cleaned.match(/(```(?:json)?\s*|^#|^\{|^\[|^---)/m);
+  if (firstSubstantive && firstSubstantive.index !== undefined && firstSubstantive.index > 0) {
+    const beforeMatch = cleaned.slice(0, firstSubstantive.index).trim();
+    if (beforeMatch.length < 120 && /I\s+(?:will|shall|can|would|am|'ll)/i.test(beforeMatch)) {
+      cleaned = cleaned.slice(firstSubstantive.index).trim();
+    }
   }
 
   return cleaned;
@@ -34,10 +46,6 @@ function tryParseJson(value: string) {
   }
 }
 
-/**
- * Find a balanced JSON array or object in text.
- * Handles nested structures properly by tracking brace depth.
- */
 function findBalancedJson(text: string, open: "[" | "{") {
   const close = open === "[" ? "]" : "}";
   let depth = 0;
@@ -82,7 +90,7 @@ function findBalancedJson(text: string, open: "[" | "{") {
 
 /**
  * Extract the primary structured output from model text.
- * Handles: ```json blocks, raw JSON, balanced arrays/objects, and plain markdown.
+ * This is intentionally lenient — never strip content that could be valid output.
  */
 export function extractStructuredOutput(text: string): string {
   const cleaned = stripReasoningPreamble(text);
@@ -110,30 +118,15 @@ export function extractStructuredOutput(text: string): string {
   return cleaned;
 }
 
-export function looksLikeReasoningLeak(text: string, mode?: string): boolean {
+/**
+ * Lenient check for reasoning leaks — only flag when content is truly empty.
+ */
+export function looksLikeReasoningLeak(text: string, _mode?: string): boolean {
   const normalized = (text || "").toLowerCase().trim();
   if (!normalized) return true;
 
-  // For structured modes, check for actual content before flagging
-  if (mode === "flashcards") {
-    const hasCards = normalized.includes('"front"') || normalized.includes("front:") || normalized.includes("q:");
-    if (hasCards) return false;
-    // Flag as leak only when the text is suspiciously short with no card-like content
-    return normalized.length < 40;
-  }
+  // If the text has any substantial content, it's not a leak
+  if (normalized.length >= 10) return false;
 
-  if (mode === "quiz") {
-    const hasQuestions = normalized.includes('"question"') || /\bquestion\s*\d+/i.test(normalized);
-    if (hasQuestions) return false;
-    return normalized.length < 40;
-  }
-
-  if (mode === "notes") {
-    const hasSections = normalized.includes('"sections"') || normalized.includes('"title"');
-    if (hasSections) return false;
-    return normalized.length < 40;
-  }
-
-  // For summary, concepts, etc. - don't flag reasoning leaks
   return false;
 }

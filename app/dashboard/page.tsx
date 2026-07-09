@@ -5,6 +5,17 @@ import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { DashboardOverview } from "@/components/dashboard/DashboardOverview";
 import { FocusMusicDock } from "@/components/dashboard/FocusMusicDock";
 
+async function checkSpotifyConnected() {
+  try {
+    const { cookies } = await import("next/headers");
+    const cookieStore = await cookies();
+    const spotifySession = cookieStore.get("spotify_session");
+    return spotifySession?.value ? true : false;
+  } catch {
+    return false;
+  }
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient();
   const {
@@ -25,9 +36,7 @@ export default async function DashboardPage() {
         sessions={sessions.map((s) => ({ id: s.id, title: s.title, created_at: s.created_at }))}
         fileCount={fileCount}
       />
-      <div className="px-3 md:px-4">
-        <FocusMusicDock />
-      </div>
+      <FocusMusicDock />
     </>
   );
 }

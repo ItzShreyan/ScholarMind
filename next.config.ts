@@ -34,7 +34,7 @@ const nextConfig: NextConfig = {
       "img-src 'self' data: blob: https://*.supabase.co https://i.ytimg.com https://i.scdn.co https://i1.sndcdn.com",
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://openrouter.ai https://api.openrouter.ai https://api.spotify.com https://accounts.spotify.com https://*.spotify.com wss://*.spotify.com https://www.googleapis.com https://api.soundcloud.com https://generativelanguage.googleapis.com https://api.groq.com https://api.together.xyz https://api-inference.huggingface.co wss://api.groq.com",
       "media-src 'self' blob: https://*.sndcdn.com https://*.scdn.co",
-      "frame-src 'self' https://*.supabase.co blob: data: https://open.spotify.com https://www.youtube.com https://www.youtube-nocookie.com https://w.soundcloud.com",
+      "frame-src 'self' https://*.supabase.co blob: data: https://open.spotify.com https://www.youtube.com https://www.youtube-nocookie.com https://w.soundcloud.com http://* https://*",
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",
