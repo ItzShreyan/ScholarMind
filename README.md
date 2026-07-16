@@ -1,6 +1,6 @@
 # ScholarMind
 
-ScholarMind is a production-structured AI study companion built with Next.js App Router, TypeScript, TailwindCSS, Framer Motion, Three.js, Supabase Auth/Postgres/Storage, and multi-provider AI fallback logic.
+ScholarMind is a Open Source production-structured AI study companion Project built with Next.js App Router, TypeScript, TailwindCSS, Framer Motion, Three.js, Supabase Auth/Postgres/Storage, and multi-provider AI fallback logic. It is available for anyone to use and edit with Credit and as an AI Study Companion. The Steps To Use and Edit this are below.
 
 ## Features
 
