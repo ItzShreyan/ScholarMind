@@ -120,6 +120,24 @@ async function extractDocxDocument(buffer: Buffer) {
   return result.value || "";
 }
 
+/**
+ * Extracts styled HTML from a .docx file using mammoth.convertToHtml().
+ * This is a new addition for the rich preview renderer — it does not replace
+ * extractDocxDocument() which remains in use for AI-facing plain-text extraction.
+ */
+export async function extractDocxDocumentHtml(buffer: Buffer): Promise<{ html?: string; text?: string }> {
+  try {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.convertToHtml({ buffer });
+    return {
+      html: result.value || undefined,
+      text: result.value ? result.value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : undefined
+    };
+  } catch {
+    return {};
+  }
+}
+
 function stripXmlToReadableText(xml: string) {
   return decodeBasicHtmlEntities(
     xml

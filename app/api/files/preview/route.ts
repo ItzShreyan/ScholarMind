@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { cleanStudySourceText } from "@/lib/documents/clean";
 import { resolvePreviewKind } from "@/lib/documents/formats";
+import { extractDocxDocumentHtml } from "@/lib/documents/parser";
 
 export async function GET(req: Request) {
   const supabase = await createClient();
@@ -32,7 +33,27 @@ export async function GET(req: Request) {
   }
 
   const kind = resolvePreviewKind(file.file_name, file.file_type, file.storage_path);
-  const previewText = file.file_type === "text/web" ? cleanStudySourceText(file.extracted_text) : file.extracted_text;
+  let previewText = file.file_type === "text/web" ? cleanStudySourceText(file.extracted_text) : file.extracted_text;
+  let html: string | undefined;
+
+  // For Word documents, also extract HTML for rich preview
+  if (kind === "word" && !file.storage_path.startsWith("inline://")) {
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from("study-files")
+      .createSignedUrl(file.storage_path, 60 * 60);
+
+    if (!signedError && signedData?.signedUrl) {
+      try {
+        const response = await fetch(signedData.signedUrl);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const { html: htmlContent, text: plainText } = await extractDocxDocumentHtml(buffer);
+        if (htmlContent) html = htmlContent;
+        if (plainText) previewText = plainText;
+      } catch {
+        // Fall back to plain text
+      }
+    }
+  }
 
   if ((kind === "pdf" || kind === "image") && !file.storage_path.startsWith("inline://")) {
     const { data: signedData, error: signedError } = await supabase.storage
@@ -58,6 +79,7 @@ export async function GET(req: Request) {
   return NextResponse.json({
     kind,
     fileName: file.file_name,
-    text: previewText
+    text: previewText,
+    html
   });
 }

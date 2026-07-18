@@ -46,7 +46,7 @@ const nextConfig: NextConfig = {
       "object-src 'self' blob: data: https://*.supabase.co",
       "base-uri 'self'",
       "form-action 'self'",
-      "frame-ancestors 'none'",
+      "frame-ancestors 'self'",
       "upgrade-insecure-requests"
     ].join("; ");
 

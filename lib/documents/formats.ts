@@ -16,6 +16,7 @@ const docExtensions = ["docx"];
 const presentationExtensions = ["pptx", "odp"];
 const pdfExtensions = ["pdf"];
 const imageExtensions = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff", "heic", "heif"];
+const audioExtensions = ["mp3", "wav", "m4a", "ogg", "flac", "aac"];
 
 const textMimeSubstrings = [
   "text/",
@@ -48,6 +49,7 @@ const presentationMimeSubstrings = [
 
 const imageMimeSubstrings = ["image/"];
 const pdfMimeSubstrings = ["application/pdf"];
+const audioMimeSubstrings = ["audio/"];
 
 export const defaultMaxUploadFileSizeMb = 12;
 
@@ -86,6 +88,10 @@ export function isImageDocument(fileName: string, fileType?: string) {
   return imageExtensions.includes(getFileExtension(fileName)) || hasMimeMatch(fileType, imageMimeSubstrings);
 }
 
+export function isAudioDocument(fileName: string, fileType?: string) {
+  return audioExtensions.includes(getFileExtension(fileName)) || hasMimeMatch(fileType, audioMimeSubstrings);
+}
+
 export function resolvePreviewKind(fileName: string, fileType?: string, storagePath?: string) {
   if (isPdfDocument(fileName, fileType) && storagePath && !storagePath.startsWith("inline://")) {
     return "pdf" as const;
@@ -93,6 +99,14 @@ export function resolvePreviewKind(fileName: string, fileType?: string, storageP
 
   if (isImageDocument(fileName, fileType) && storagePath && !storagePath.startsWith("inline://")) {
     return "image" as const;
+  }
+
+  if (isAudioDocument(fileName, fileType) && storagePath && !storagePath.startsWith("inline://")) {
+    return "audio" as const;
+  }
+
+  if (isDocxDocument(fileName, fileType)) {
+    return "word" as const;
   }
 
   if (isSpreadsheetDocument(fileName, fileType)) {
@@ -130,6 +144,12 @@ export const uploadAcceptAttribute = [
   ".bmp",
   ".tif",
   ".tiff",
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".ogg",
+  ".flac",
+  ".aac",
   "text/plain",
   "text/markdown",
   "application/json",
@@ -152,5 +172,11 @@ export const uploadAcceptAttribute = [
   "image/bmp",
   "image/tiff",
   "image/heic",
-  "image/heif"
+  "image/heif",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/mp4",
+  "audio/ogg",
+  "audio/flac",
+  "audio/aac"
 ].join(",");

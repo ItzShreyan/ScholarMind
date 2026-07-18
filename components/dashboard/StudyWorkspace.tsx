@@ -51,7 +51,8 @@ import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPane
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
-import { CanvasPdfViewer } from "@/components/dashboard/CanvasPdfViewer";
+import { FileViewer } from "@/components/dashboard/FileViewer";
+import type { PreviewKind } from "@/components/dashboard/FileViewer";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
@@ -152,7 +153,7 @@ type WorkspaceDynamicTab = {
   action?: AIAction;
   output?: string;
   file?: FileItem;
-  previewKind?: "text" | "table" | "pdf" | "image";
+  previewKind?: "text" | "table" | "pdf" | "image" | "audio" | "word" | "presentation";
   text?: string;
   url?: string | null;
   query?: string;
@@ -163,7 +164,7 @@ type PreviewState = {
   open: boolean;
   loading: boolean;
   file: FileItem | null;
-  kind: "text" | "table" | "pdf" | "image";
+  kind: "text" | "table" | "pdf" | "image" | "audio" | "word" | "presentation";
   text: string;
   url: string | null;
   error: string;
@@ -444,9 +445,8 @@ function extractWebUrlFromSourceText(text: string) {
   return extractUrlFromText(text);
 }
 
-function getGoogleSearchUrl(query: string) {
-  // Using DuckDuckGo instead of Google because Google sets X-Frame-Options: SAMEORIGIN and cannot be embedded in an iframe.
-  return `https://duckduckgo.com/?q=${encodeURIComponent(query.trim())}`;
+function getSearchUrl(query: string) {
+  return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query.trim())}`;
 }
 
 function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {
@@ -904,6 +904,9 @@ export function StudyWorkspace({
   const [workspaceTab, setWorkspaceTab] = useState("home");
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
   const [browseReloadKeys, setBrowseReloadKeys] = useState<Record<string, number>>({});
+  const [browseHistory, setBrowseHistory] = useState<Record<string, string[]>>({});
+  const [browseHistoryIndex, setBrowseHistoryIndex] = useState<Record<string, number>>({});
+  const [browseUrlInputs, setBrowseUrlInputs] = useState<Record<string, string>>({});
   const [showTimerPopover, setShowTimerPopover] = useState(false);
   const [timerMode, setTimerMode] = useState<"regular" | "interval">("interval");
   const [timerMinutes, setTimerMinutes] = useState(60);
@@ -1668,13 +1671,17 @@ export function StudyWorkspace({
   const openBrowseInWorkspace = useCallback(
     (url: string, label: string) => {
       recordRecentWebsite(url, label);
+      const tabId = `browse-${Date.now()}`;
       upsertWorkspaceTab({
-        id: `browse-${Date.now()}`,
+        id: tabId,
         label: clipText(label, 24),
         kind: "browse",
         url,
         closable: true
       });
+      setBrowseHistory((current) => ({ ...current, [tabId]: [url] }));
+      setBrowseHistoryIndex((current) => ({ ...current, [tabId]: 0 }));
+      setBrowseUrlInputs((current) => ({ ...current, [tabId]: url }));
     },
     [recordRecentWebsite, upsertWorkspaceTab]
   );
@@ -2822,8 +2829,8 @@ export function StudyWorkspace({
         return;
       }
 
-      const googleUrl = getGoogleSearchUrl(query);
-      openBrowseInWorkspace(googleUrl, `DuckDuckGo: ${clipText(query, 28)}`);
+      const searchUrl = getSearchUrl(query);
+      openBrowseInWorkspace(searchUrl, `DuckDuckGo: ${clipText(query, 28)}`);
       setStatusNote(`Opened DuckDuckGo search for “${query}” inside this studio.`);
     } catch (error) {
       setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
@@ -3978,8 +3985,75 @@ export function StudyWorkspace({
         {isBrowse && workspaceItem.url ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2 rounded-[24px] border border-white/10 bg-white/8 px-4 py-3 text-xs">
-              <p className="min-w-0 flex-1 truncate font-semibold">{workspaceItem.url}</p>
-              <p className="muted text-[11px]">Live page inside your studio. Some sites block embedding — use Save as note or External if needed.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  const stack = browseHistory[workspaceItem.id] || [workspaceItem.url];
+                  const idx = (browseHistoryIndex[workspaceItem.id] ?? 0) - 1;
+                  if (idx < 0) return;
+                  const prevUrl = stack[idx];
+                  setBrowseHistoryIndex((cur) => ({ ...cur, [workspaceItem.id]: idx }));
+                  setBrowseUrlInputs((cur) => ({ ...cur, [workspaceItem.id]: prevUrl }));
+                  setBrowseReloadKeys((cur) => ({ ...cur, [workspaceItem.id]: (cur[workspaceItem.id] ?? 0) + 1 }));
+                }}
+                disabled={(browseHistoryIndex[workspaceItem.id] ?? 0) <= 0}
+                className="rounded-full bg-white/10 px-2 py-1 transition hover:bg-white/16 disabled:opacity-40"
+                aria-label="Back"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const stack = browseHistory[workspaceItem.id] || [workspaceItem.url];
+                  const idx = (browseHistoryIndex[workspaceItem.id] ?? 0) + 1;
+                  if (idx >= stack.length) return;
+                  const nextUrl = stack[idx];
+                  setBrowseHistoryIndex((cur) => ({ ...cur, [workspaceItem.id]: idx }));
+                  setBrowseUrlInputs((cur) => ({ ...cur, [workspaceItem.id]: nextUrl }));
+                  setBrowseReloadKeys((cur) => ({ ...cur, [workspaceItem.id]: (cur[workspaceItem.id] ?? 0) + 1 }));
+                }}
+                disabled={(browseHistoryIndex[workspaceItem.id] ?? 0) >= (browseHistory[workspaceItem.id]?.length ?? 1) - 1}
+                className="rounded-full bg-white/10 px-2 py-1 transition hover:bg-white/16 disabled:opacity-40"
+                aria-label="Forward"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const input = browseUrlInputs[workspaceItem.id] || workspaceItem.url || "";
+                  let normalizedUrl = input.trim();
+                  if (normalizedUrl && !/^https?:\/\//i.test(normalizedUrl)) {
+                    normalizedUrl = `https://${normalizedUrl}`;
+                  }
+                  if (!normalizedUrl) return;
+                  const stack = browseHistory[workspaceItem.id] || [workspaceItem.url || ""];
+                  const idx = (browseHistoryIndex[workspaceItem.id] ?? 0) + 1;
+                  const newStack = [...stack.slice(0, idx), normalizedUrl];
+                  setBrowseHistory((cur) => ({ ...cur, [workspaceItem.id]: newStack }));
+                  setBrowseHistoryIndex((cur) => ({ ...cur, [workspaceItem.id]: idx }));
+                  setBrowseReloadKeys((cur) => ({ ...cur, [workspaceItem.id]: (cur[workspaceItem.id] ?? 0) + 1 }));
+                  recordRecentWebsite(normalizedUrl, workspaceItem.label);
+                }}
+                className="flex min-w-0 flex-[3] items-center gap-1 rounded-full bg-black/10 px-3 py-1"
+              >
+                <input
+                  value={browseUrlInputs[workspaceItem.id] ?? workspaceItem.url ?? ""}
+                  onChange={(event) =>
+                    setBrowseUrlInputs((cur) => ({ ...cur, [workspaceItem.id]: event.target.value }))
+                  }
+                  className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                  placeholder="Enter a URL..."
+                />
+                <button
+                  type="submit"
+                  className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium transition hover:bg-white/16"
+                >
+                  Go
+                </button>
+              </form>
+              <p className="muted hidden text-[11px] md:inline">Some sites block embedding — use Save as note or External.</p>
             </div>
             <iframe
               key={`${workspaceItem.id}-${browseReloadKeys[workspaceItem.id] ?? 0}`}
@@ -4040,37 +4114,14 @@ export function StudyWorkspace({
               <RichStudyText content={workspaceItem.output || "No output found for this tab."} />
             </article>
           )
-        ) : workspaceItem.previewKind === "pdf" && workspaceItem.url ? (
-          <CanvasPdfViewer
+        ) : workspaceItem.previewKind === "pdf" || workspaceItem.previewKind === "image" || workspaceItem.previewKind === "table" || workspaceItem.previewKind === "presentation" || workspaceItem.previewKind === "text" ? (
+          <FileViewer
             url={workspaceItem.url}
             fileName={workspaceItem.file?.file_name || workspaceItem.label}
+            previewKind={workspaceItem.previewKind}
+            text={workspaceItem.text}
           />
-        ) : workspaceItem.previewKind === "image" && workspaceItem.url ? (
-          <div className={`${isCanvas ? "min-h-[68vh]" : "min-h-[42vh]"} grid place-items-center rounded-[24px] bg-black/20 p-4`}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={workspaceItem.url} alt={workspaceItem.label} className="max-h-[68vh] rounded-[20px] object-contain" />
-          </div>
-        ) : workspaceItem.previewKind === "table" ? (
-          <div className="overflow-auto rounded-[24px] border border-white/10 bg-white/8">
-            <table className="min-w-full text-left text-sm">
-              <tbody>
-                {parseTablePreview(workspaceItem.text || "").map((row, rowIndex) => (
-                  <tr key={`${workspaceItem.id}-${rowIndex}`} className="border-b border-white/8">
-                    {row.map((cell, cellIndex) => (
-                      <td key={`${rowIndex}-${cellIndex}`} className="px-4 py-3 align-top text-xs md:text-sm">
-                        {cell || "—"}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <pre className={`${isCanvas ? "min-h-[58vh]" : ""} whitespace-pre-wrap rounded-[24px] bg-white/10 p-5 text-sm leading-7`}>
-            {workspaceItem.text || "Preview text is not available for this source."}
-          </pre>
-        )}
+        ) : null}
       </motion.div>
     );
   };
@@ -6202,7 +6253,7 @@ export function StudyWorkspace({
                     <div className="rounded-[22px] border border-dashed border-white/12 bg-white/6 px-4 py-6 text-sm">
                       <p className="font-semibold">Search for a scholar-style source, trusted explainer, article, or reference page.</p>
                       <p className="muted mt-2">
-                        Scholar mode is the default, and you can switch to Google or DuckDuckGo if you want a wider search. Imported web sources become part of this studio just like uploaded notes, so chat and tools stay source-grounded.
+Scholar mode is the default, and you can switch to DuckDuckGo if you want a wider search. Imported web sources become part of this studio just like uploaded notes, so chat and tools stay source-grounded.
                       </p>
                     </div>
                   ) : null}
@@ -6454,41 +6505,14 @@ export function StudyWorkspace({
                   <LoaderCircle className="h-6 w-6 animate-spin text-[var(--accent-sky)]" />
                   Opening source preview...
                 </div>
-              ) : preview.kind === "pdf" && preview.url ? (
-                <CanvasPdfViewer
+              ) : preview.kind === "pdf" || preview.kind === "image" || preview.kind === "table" || preview.kind === "presentation" || preview.kind === "text" ? (
+                <FileViewer
                   url={preview.url}
                   fileName={preview.file?.file_name || undefined}
+                  previewKind={preview.kind}
+                  text={preview.text}
                 />
-              ) : preview.kind === "image" && preview.url ? (
-                <div className="flex min-h-[20rem] items-center justify-center rounded-[24px] bg-black/20 p-4">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={preview.url}
-                    alt={preview.file?.file_name || "Uploaded source"}
-                    className="max-h-[72vh] w-auto rounded-[20px] object-contain"
-                  />
-                </div>
-              ) : preview.kind === "table" ? (
-                <div className="overflow-auto rounded-[24px] border border-white/10 bg-white/8">
-                  <table className="min-w-full text-left text-sm">
-                    <tbody>
-                      {parseTablePreview(preview.text).map((row, rowIndex) => (
-                        <tr key={`${preview.file?.id || "row"}-${rowIndex}`} className="border-b border-white/8">
-                          {row.map((cell, cellIndex) => (
-                            <td key={`${rowIndex}-${cellIndex}`} className="px-4 py-3 align-top text-xs md:text-sm">
-                              {cell || "—"}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <pre className="whitespace-pre-wrap rounded-[24px] bg-white/10 p-4 text-sm leading-6">
-                  {preview.text || "Preview text is not available for this file."}
-                </pre>
-              )}
+              ) : null}
 
               {preview.error ? (
                 <div className="mt-4 rounded-[20px] bg-[rgba(255,125,89,0.14)] px-4 py-3 text-sm">

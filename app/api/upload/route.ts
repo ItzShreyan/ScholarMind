@@ -37,6 +37,7 @@ const blockedExtensions = new Set([
   "vbs"
 ]);
 
+const audioExtensions = new Set(["mp3", "wav", "m4a", "ogg", "flac", "aac"]);
 const textExtensions = new Set(["txt", "md", "markdown", "json", "yaml", "yml", "xml", "html", "htm", "rtf", "csv", "tsv"]);
 const zipDocumentExtensions = new Set(["docx", "xlsx", "pptx", "ods", "odp"]);
 const legacyOfficeExtensions = new Set(["doc", "xls", "ppt"]);
@@ -68,6 +69,11 @@ async function validateFileSignature(file: File) {
   const isTiff = startsWithBytes(header, [0x49, 0x49, 0x2a, 0x00]) || startsWithBytes(header, [0x4d, 0x4d, 0x00, 0x2a]);
   const isWebp = asciiAt(header, 0, 4) === "RIFF" && asciiAt(header, 8, 4) === "WEBP";
   const isHeic = asciiAt(header, 4, 4) === "ftyp" && /heic|heif|mif1|msf1/i.test(asciiAt(header, 8, 8));
+  const isMp3 = startsWithBytes(header, [0x49, 0x44, 0x33]); // ID3v2 tag
+  const isWav = startsWithBytes(header, [0x52, 0x49, 0x46, 0x46]) && asciiAt(header, 8, 4) === "WAVE";
+  const isFlac = startsWithBytes(header, [0x66, 0x4c, 0x61, 0x43]);
+  const isOgg = startsWithBytes(header, [0x4f, 0x67, 0x67, 0x53]);
+  const isM4a = asciiAt(header, 4, 4) === "ftyp" && asciiAt(header, 8, 4) === "M4A ";
   const isZip = startsWithBytes(header, [0x50, 0x4b, 0x03, 0x04]) || startsWithBytes(header, [0x50, 0x4b, 0x05, 0x06]) || startsWithBytes(header, [0x50, 0x4b, 0x07, 0x08]);
   const isLegacyOffice = startsWithBytes(header, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
   const hasNullByte = header.includes(0);
@@ -89,6 +95,11 @@ async function validateFileSignature(file: File) {
     return isLegacyOffice ? "" : "This legacy Office file could not be verified. Re-export it as PDF, DOCX, or XLSX.";
   }
 
+  if (audioExtensions.has(extension) || type.startsWith("audio/")) {
+    const validAudio = isMp3 || isWav || isFlac || isOgg || isM4a;
+    return validAudio ? "" : "This audio file could not be verified. Reupload it as MP3, WAV, M4A, OGG, or FLAC.";
+  }
+
   if (textExtensions.has(extension) || type.startsWith("text/") || type.includes("json") || type.includes("xml")) {
     if (isPdf || isZip || isLegacyOffice || isPng || isJpeg || isGif || isBmp || isTiff || isWebp || isHeic || hasNullByte) {
       return "This text file appears to contain binary data. Reupload a clean text, CSV, markdown, or PDF copy.";
@@ -96,7 +107,7 @@ async function validateFileSignature(file: File) {
     return "";
   }
 
-  return "Unsupported file type. Upload a PDF, image, DOCX, PPTX, ODP, spreadsheet, CSV, markdown, or plain text source.";
+  return "Unsupported file type. Upload a PDF, image, DOCX, PPTX, ODP, spreadsheet, CSV, markdown, plain text, or audio source.";
 }
 
 export async function POST(req: Request) {

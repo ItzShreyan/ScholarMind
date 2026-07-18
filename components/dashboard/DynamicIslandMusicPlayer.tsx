@@ -35,6 +35,20 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   const [unlinking, setUnlinking] = useState(false);
   const systemAudioRef = useRef(systemAudio);
   const [localSearch, setLocalSearch] = useState("");
+
+  // Uploaded audio track state
+  const [uploadedTrack, setUploadedTrack] = useState<{
+    url: string;
+    name: string;
+    fileId: string;
+    isPlaying: boolean;
+  } | null>(null);
+  const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadedTrackDuration, setUploadedTrackDuration] = useState(0);
+  const [uploadedTrackCurrentTime, setUploadedTrackCurrentTime] = useState(0);
   const [panelView, setPanelView] = useState<PanelView>("now-playing");
   const [showPanel, setShowPanel] = useState(false);
   systemAudioRef.current = systemAudio;
@@ -191,21 +205,143 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     }
   }, [unlinking]);
 
+  // Uploaded audio upload handler — reuses the existing /api/files/preview signed-URL path
+  const handleUploadAudio = useCallback(async (file: File) => {
+    setIsUploadingAudio(true);
+    setUploadError(null);
+    try {
+      // Upload the audio file via the existing upload endpoint
+      const uploadForm = new FormData();
+      uploadForm.append("files", file);
+      // Use the dashboard session ID from URL if available
+      const pathParts = window.location.pathname.split("/").filter(Boolean);
+      const sessionId = pathParts.length >= 2 && pathParts[0] === "dashboard" ? pathParts[1] : "default";
+      // If no session found, create a placeholder; the upload route will reject if unauthorized anyway
+      uploadForm.append("sessionId", sessionId !== "default" ? sessionId : "global");
+
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: uploadForm });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({ error: "Upload failed" }));
+        setUploadError(err.error || "Upload failed — file may be too large or unsupported.");
+        setIsUploadingAudio(false);
+        return;
+      }
+      const uploadData = await uploadRes.json();
+      const savedFile = uploadData.files?.[0];
+      if (!savedFile?.id) {
+        setUploadError("File uploaded but could not be located. Try again.");
+        setIsUploadingAudio(false);
+        return;
+      }
+
+      // Get a signed URL via the existing preview route
+      const previewRes = await fetch(`/api/files/preview?fileId=${savedFile.id}`);
+      if (!previewRes.ok) {
+        setUploadError("Could not generate playback URL for the uploaded file.");
+        setIsUploadingAudio(false);
+        return;
+      }
+      const previewData = await previewRes.json();
+      const audioUrl = previewData.url;
+      if (!audioUrl) {
+        setUploadError("No playback URL available for this audio file.");
+        setIsUploadingAudio(false);
+        return;
+      }
+
+      // Create a new Audio element
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.addEventListener("loadedmetadata", () => {
+        setUploadedTrackDuration(audio.duration);
+      });
+      audio.addEventListener("timeupdate", () => {
+        setUploadedTrackCurrentTime(audio.currentTime);
+      });
+      audio.addEventListener("ended", () => {
+        setUploadedTrack((prev) => prev ? { ...prev, isPlaying: false } : null);
+      });
+      audio.addEventListener("error", () => {
+        setUploadError("Failed to load audio file for playback.");
+        setIsUploadingAudio(false);
+      });
+
+      await audio.play();
+      setUploadedTrack({
+        url: audioUrl,
+        name: savedFile.file_name || file.name,
+        fileId: savedFile.id,
+        isPlaying: true,
+      });
+      setIsUploadingAudio(false);
+    } catch (err) {
+      setUploadError((err as Error).message || "Failed to upload audio file.");
+      setIsUploadingAudio(false);
+    }
+  }, []);
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const selectedFile = e.target.files?.[0];
+      if (selectedFile) {
+        void handleUploadAudio(selectedFile);
+      }
+      // Reset input so re-selecting the same file triggers again
+      e.target.value = "";
+    },
+    [handleUploadAudio]
+  );
+
+  const handleToggleUploadedPlayback = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !uploadedTrack) return;
+    if (audio.paused) {
+      void audio.play();
+      setUploadedTrack((prev) => prev ? { ...prev, isPlaying: true } : null);
+    } else {
+      audio.pause();
+      setUploadedTrack((prev) => prev ? { ...prev, isPlaying: false } : null);
+    }
+  }, [uploadedTrack]);
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+    };
+  }, []);
+
+  const hasUploadedTrack = uploadedTrack !== null;
   const spotifyState = spotifyContext?.state;
   const hasSpotify = spotifyState?.connected && (spotifyState?.track || spotifyState?.playing);
-  const currentTrack = hasSpotify ? spotifyState?.track : systemAudio;
-  const isPlaying = hasSpotify ? spotifyState?.playing : !!systemAudio?.isPlaying;
-  const source = hasSpotify
-    ? spotifyState?.playbackSource || "Spotify"
-    : systemAudio?.source || "No music";
+  // Prefer uploaded track over other sources when active
+  const currentTrack = hasUploadedTrack ? uploadedTrack : (hasSpotify ? spotifyState?.track : systemAudio);
+  const isPlaying = hasUploadedTrack ? uploadedTrack.isPlaying : (hasSpotify ? spotifyState?.playing : !!systemAudio?.isPlaying);
+  const source = hasUploadedTrack
+    ? "Uploaded track"
+    : hasSpotify
+      ? spotifyState?.playbackSource || "Spotify"
+      : systemAudio?.source || "No music";
   const currentTrackTitle =
-    currentTrack && "name" in currentTrack
-      ? (currentTrack as { name: string }).name
-      : currentTrack?.title ?? "Music Player";
+    hasUploadedTrack
+      ? uploadedTrack.name
+      : currentTrack && "name" in (currentTrack as Record<string, unknown>)
+        ? (currentTrack as { name: string }).name
+        : (currentTrack as SystemAudioTrack | null)?.title ?? "Music Player";
   const currentTrackArtist =
-    currentTrack && "artist" in currentTrack
-      ? (currentTrack as { artist: string }).artist
-      : "Unknown Artist";
+    hasUploadedTrack
+      ? "Uploaded audio"
+      : currentTrack && "artist" in (currentTrack as Record<string, unknown>)
+        ? (currentTrack as { artist: string }).artist
+        : "Unknown Artist";
 
   const {
     searchResults,
@@ -371,6 +507,15 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
             </div>
           ) : null}
 
+          {/* Hidden file input for audio upload */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac"
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+
           {/* Now Playing Content */}
           {panelView === "now-playing" ? (
             <>
@@ -384,7 +529,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
                   >
                     <p className="font-semibold text-white line-clamp-2">{currentTrackTitle}</p>
                     <p className="text-xs text-white/60 mt-1">{currentTrackArtist}</p>
-                    {systemAudio && !hasSpotify ? (
+                    {systemAudio && !hasSpotify && !hasUploadedTrack ? (
                       <p className="text-[10px] text-white/40 mt-1 flex items-center gap-1">
                         <ExternalLink className="h-3 w-3" />
                         Playing from: {systemAudio.source}
@@ -395,41 +540,88 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
               ) : (
                 <div className="mb-3 text-center py-2">
                   <p className="text-sm text-white/60">No music playing</p>
-                  {spotifyState?.connected ? (
-                    <p className="text-[10px] text-white/40 mt-1">Spotify connected — search tracks or open a playlist</p>
-                  ) : (
-                    <a
-                      href={`/api/music/spotify/login?returnTo=${encodeURIComponent(window.location.pathname)}`}
-                      className="mt-2 inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/16"
+                  <div className="mt-2 flex flex-col gap-2 items-center">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingAudio}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/16 disabled:opacity-50"
                     >
                       <Music className="h-3 w-3" />
-                      Connect Spotify
-                    </a>
-                  )}
+                      {isUploadingAudio ? "Uploading..." : "Upload a song"}
+                    </button>
+                    {!spotifyState?.connected ? (
+                      <a
+                        href={`/api/music/spotify/login?returnTo=${encodeURIComponent(window.location.pathname)}`}
+                        className="inline-flex items-center gap-1 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold transition hover:bg-white/16"
+                      >
+                        <Music className="h-3 w-3" />
+                        Connect Spotify
+                      </a>
+                    ) : null}
+                  </div>
+                  {spotifyState?.connected ? (
+                    <p className="text-[10px] text-white/40 mt-2">Spotify connected — search tracks or open a playlist</p>
+                  ) : null}
                 </div>
               )}
 
-              {/* Playback Controls – only for Spotify */}
-              {hasSpotify && !spotifyState?.premiumRequired ? (
+              {/* Upload error */}
+              {uploadError ? (
+                <div className="mb-3 rounded-[12px] bg-[var(--accent-coral)]/10 border border-[var(--accent-coral)]/20 p-2.5 text-center">
+                  <p className="text-[11px] text-[var(--accent-coral)]">{uploadError}</p>
+                </div>
+              ) : null}
+
+              {/* Upload progress bar for uploaded tracks */}
+              {hasUploadedTrack && uploadedTrackDuration > 0 ? (
+                <div className="mb-2">
+                  <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-gradient-to-r from-[var(--accent-sky)] to-[var(--accent-mint)]"
+                      initial={false}
+                      animate={{ width: `${(uploadedTrackCurrentTime / uploadedTrackDuration) * 100}%` }}
+                      transition={{ duration: 0.3, ease: "linear" }}
+                    />
+                  </div>
+                  <div className="flex justify-between mt-1 text-[10px] text-white/40">
+                    <span>{formatTrackDuration(uploadedTrackCurrentTime * 1000)}</span>
+                    <span>{formatTrackDuration(uploadedTrackDuration * 1000)}</span>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Playback Controls – for Spotify or uploaded track */}
+              {(hasSpotify && !spotifyState?.premiumRequired) || hasUploadedTrack ? (
                 <div className="flex items-center justify-center gap-3 mb-3">
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => previousTrack()}
-                    disabled={actionLoading}
-                    className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
-                  >
-                    <SkipBack className="h-4 w-4 text-white/80" />
-                  </motion.button>
+                  {/* Only show skip buttons for Spotify (uploaded tracks have no playlist) */}
+                  {hasSpotify ? (
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => previousTrack()}
+                      disabled={actionLoading}
+                      className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
+                    >
+                      <SkipBack className="h-4 w-4 text-white/80" />
+                    </motion.button>
+                  ) : (
+                    <div className="w-9 h-9" />
+                  )}
 
                   <motion.button
                     whileHover={{ scale: 1.15 }}
                     whileTap={{ scale: 0.9 }}
-                    onClick={() => togglePlay()}
-                    disabled={actionLoading}
+                    onClick={() => {
+                      if (hasUploadedTrack) {
+                        handleToggleUploadedPlayback();
+                      } else {
+                        togglePlay();
+                      }
+                    }}
+                    disabled={hasSpotify ? actionLoading : false}
                     className="p-3 bg-gradient-to-r from-[var(--accent-sky)] to-[var(--accent-mint)] rounded-full"
                   >
-                    {actionLoading ? (
+                    {(hasSpotify && actionLoading) || isUploadingAudio ? (
                       <div className="h-5 w-5 animate-spin rounded-full border-2 border-black border-t-transparent" />
                     ) : isPlaying ? (
                       <Pause className="h-5 w-5 text-black" />
@@ -438,15 +630,19 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
                     )}
                   </motion.button>
 
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => nextTrack()}
-                    disabled={actionLoading}
-                    className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
-                  >
-                    <SkipForward className="h-4 w-4 text-white/80" />
-                  </motion.button>
+                  {hasSpotify ? (
+                    <motion.button
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => nextTrack()}
+                      disabled={actionLoading}
+                      className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
+                    >
+                      <SkipForward className="h-4 w-4 text-white/80" />
+                    </motion.button>
+                  ) : (
+                    <div className="w-9 h-9" />
+                  )}
                 </div>
               ) : null}
 

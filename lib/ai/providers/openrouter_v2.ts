@@ -32,7 +32,7 @@ export const openrouterProviderV2: AIProvider = {
               Authorization: `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-              model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
+              model: process.env.OPENROUTER_MODEL || "openai/gpt-oss-20b:free",
               messages,
               temperature: input.action === "notes" ? 0.35 : input.action === "quiz" || input.action === "flashcards" ? 0.25 : 0.4,
               max_tokens:

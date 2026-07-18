@@ -206,9 +206,11 @@ async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 150
 
 async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]> {
   const response = await fetch(
-    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`,
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
     {
-      headers: { Accept: "application/json" },
+      headers: {
+        "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
+      },
       next: { revalidate: 60 * 30 }
     }
   );
@@ -217,43 +219,36 @@ async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]>
     return [];
   }
 
-  const data = await readJsonSafely<{
-    AbstractText?: string;
-    AbstractURL?: string;
-    AbstractSource?: string;
-    RelatedTopics?: unknown[];
-  }>(response);
+  const html = await response.text();
 
-  if (!data) {
-    return [];
-  }
-
+  // Parse HTML result rows from DuckDuckGo's static HTML endpoint.
+  // Each result is wrapped in a <div class="result">...</div> with:
+  //   - <a class="result__a" href="...">title</a>
+  //   - <a class="result__snippet">snippet text</a>
   const results: WebSourceResult[] = [];
+  const resultBlocks = html.match(/<div[^>]*class="[^"]*\bresult\b[^"]*"[^>]*>[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/gi) ?? [];
 
-  if (data.AbstractText && data.AbstractURL) {
+  for (const block of resultBlocks) {
+    const linkMatch = block.match(/<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
+    const snippetMatch = block.match(/<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
+
+    const url = linkMatch?.[1] || "";
+    const rawTitle = linkMatch?.[2] || "";
+    const rawSnippet = snippetMatch?.[1] || "";
+
+    if (!url) continue;
+
     results.push({
-      id: makeId(data.AbstractURL),
-      title: hostnameFrom(data.AbstractURL),
-      url: data.AbstractURL,
-      snippet: clipText(normalizeWhitespace(data.AbstractText), 280),
-      source: data.AbstractSource || hostnameFrom(data.AbstractURL),
-      trustLabel: trustLabelFor(data.AbstractURL, data.AbstractSource)
+      id: makeId(url),
+      title: clipText(normalizeWhitespace(stripHtml(rawTitle)), 120),
+      url,
+      snippet: clipText(normalizeWhitespace(stripHtml(rawSnippet)), 280),
+      source: hostnameFrom(url),
+      trustLabel: trustLabelFor(url)
     });
   }
 
-  const topicResults = flattenDuckTopics(data.RelatedTopics ?? [])
-    .filter((item) => item.FirstURL && item.Text)
-    .slice(0, 12)
-    .map((item) => ({
-      id: makeId(item.FirstURL || item.Text || ""),
-      title: (item.Text || "").split(" - ")[0] || hostnameFrom(item.FirstURL || ""),
-      url: item.FirstURL || "",
-      snippet: clipText(normalizeWhitespace(item.Text || ""), 280),
-      source: hostnameFrom(item.FirstURL || ""),
-      trustLabel: trustLabelFor(item.FirstURL || "")
-    }));
-
-  return [...results, ...topicResults];
+  return results.slice(0, 16);
 }
 
 async function fetchWikipediaResults(query: string): Promise<WebSourceResult[]> {
