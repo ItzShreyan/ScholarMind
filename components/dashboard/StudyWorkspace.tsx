@@ -2829,9 +2829,36 @@ export function StudyWorkspace({
         return;
       }
 
-      const searchUrl = getSearchUrl(query);
-      openBrowseInWorkspace(searchUrl, `DuckDuckGo: ${clipText(query, 28)}`);
-      setStatusNote(`Opened DuckDuckGo search for “${query}” inside this studio.`);
+      // Use the server-side search API which properly handles DuckDuckGo parsing,
+      // instead of trying to iframe DuckDuckGo's HTML page (which gets blocked by anti-bot measures).
+      const response = await fetch("/api/sources/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: query, engine: "duckduckgo" })
+      });
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to search."));
+      }
+
+      const results: WebSourceItem[] = Array.isArray(json.results) ? json.results : [];
+      if (!results.length) {
+        setWorkspaceSearchError("No results found for that query. Try different wording.");
+        setWorkspaceSearchLoading(false);
+        return;
+      }
+
+      // Open the results in a search workspace tab
+      const tabId = `search-${Date.now()}`;
+      upsertWorkspaceTab({
+        id: tabId,
+        label: `Search: ${clipText(query, 28)}`,
+        kind: "search",
+        query,
+        results,
+        closable: true
+      });
+      setStatusNote(`Found ${results.length} result(s) for “${query}”.`);
     } catch (error) {
       setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
     } finally {

@@ -17,6 +17,15 @@ const reasoningPrefixes: RegExp[] = [
   /^Here's\s+.*?\n/i,
 ];
 
+/**
+ * Recursively strip trailing commas from JSON strings.
+ * AI models frequently emit trailing commas in arrays/objects (e.g. "item",] or "value",}).
+ */
+function stripTrailingCommas(s: string): string {
+  const result = s.replace(/,\s*([\]}])/g, "$1");
+  return result === s ? result : stripTrailingCommas(result);
+}
+
 export function stripReasoningPreamble(text: string): string {
   let cleaned = (text || "").trim();
   if (!cleaned) return "";
@@ -39,8 +48,10 @@ export function stripReasoningPreamble(text: string): string {
 }
 
 function tryParseJson(value: string) {
+  // Strip trailing commas before every parse attempt — AI models commonly emit them
+  const cleaned = stripTrailingCommas(value);
   try {
-    return JSON.parse(value) as unknown;
+    return JSON.parse(cleaned) as unknown;
   } catch {
     return null;
   }
@@ -99,11 +110,12 @@ export function extractStructuredOutput(text: string): string {
   // Try ```json fenced blocks first
   const fenced = cleaned.match(/```json\s*([\s\S]*?)```/i);
   if (fenced?.[1]) {
-    const parsed = tryParseJson(fenced[1].trim());
-    if (parsed) return fenced[1].trim();
+    const stripped = stripTrailingCommas(fenced[1].trim());
+    const parsed = tryParseJson(stripped);
+    if (parsed) return stripped;
   }
 
-  // Try direct JSON parse
+  // Try direct JSON parse (with trailing comma cleanup)
   const direct = tryParseJson(cleaned);
   if (direct) return cleaned;
 

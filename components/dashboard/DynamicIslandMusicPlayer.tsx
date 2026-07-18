@@ -205,56 +205,27 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     }
   }, [unlinking]);
 
-  // Uploaded audio upload handler — reuses the existing /api/files/preview signed-URL path
+  // Uploaded audio upload handler — uses URL.createObjectURL for local playback,
+  // avoiding the need for server-side file storage which requires a valid session UUID.
+  // This fixes the "invalid input syntax for type uuid: 'workspace'" error that occurred
+  // when the dashboard pathname (/dashboard/workspace) was used as a session ID.
   const handleUploadAudio = useCallback(async (file: File) => {
     setIsUploadingAudio(true);
     setUploadError(null);
     try {
-      // Upload the audio file via the existing upload endpoint
-      const uploadForm = new FormData();
-      uploadForm.append("files", file);
-      // Use the dashboard session ID from URL if available
-      const pathParts = window.location.pathname.split("/").filter(Boolean);
-      const sessionId = pathParts.length >= 2 && pathParts[0] === "dashboard" ? pathParts[1] : "default";
-      // If no session found, create a placeholder; the upload route will reject if unauthorized anyway
-      uploadForm.append("sessionId", sessionId !== "default" ? sessionId : "global");
+      // Create a local object URL for the audio file. This avoids the need to
+      // upload to the server (which requires a valid study session UUID).
+      const objectUrl = URL.createObjectURL(file);
 
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: uploadForm });
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json().catch(() => ({ error: "Upload failed" }));
-        setUploadError(err.error || "Upload failed — file may be too large or unsupported.");
-        setIsUploadingAudio(false);
-        return;
-      }
-      const uploadData = await uploadRes.json();
-      const savedFile = uploadData.files?.[0];
-      if (!savedFile?.id) {
-        setUploadError("File uploaded but could not be located. Try again.");
-        setIsUploadingAudio(false);
-        return;
-      }
-
-      // Get a signed URL via the existing preview route
-      const previewRes = await fetch(`/api/files/preview?fileId=${savedFile.id}`);
-      if (!previewRes.ok) {
-        setUploadError("Could not generate playback URL for the uploaded file.");
-        setIsUploadingAudio(false);
-        return;
-      }
-      const previewData = await previewRes.json();
-      const audioUrl = previewData.url;
-      if (!audioUrl) {
-        setUploadError("No playback URL available for this audio file.");
-        setIsUploadingAudio(false);
-        return;
-      }
-
-      // Create a new Audio element
+      // Clean up any previous audio
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = "";
+        URL.revokeObjectURL(audioRef.current.dataset.sourceUrl || "");
       }
-      const audio = new Audio(audioUrl);
+
+      const audio = new Audio(objectUrl);
+      audio.dataset.sourceUrl = objectUrl;
       audioRef.current = audio;
 
       audio.addEventListener("loadedmetadata", () => {
@@ -266,21 +237,30 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
       audio.addEventListener("ended", () => {
         setUploadedTrack((prev) => prev ? { ...prev, isPlaying: false } : null);
       });
-      audio.addEventListener("error", () => {
-        setUploadError("Failed to load audio file for playback.");
+      audio.addEventListener("error", (e) => {
+        const mediaError = (e.target as HTMLAudioElement).error;
+        let message = "Failed to load audio file for playback.";
+        if (mediaError) {
+          switch (mediaError.code) {
+            case MediaError.MEDIA_ERR_NETWORK: message = "Network error loading the audio file."; break;
+            case MediaError.MEDIA_ERR_DECODE: message = "Audio format not supported by your browser."; break;
+            case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED: message = "This audio format is not supported."; break;
+          }
+        }
+        setUploadError(message);
         setIsUploadingAudio(false);
       });
 
       await audio.play();
       setUploadedTrack({
-        url: audioUrl,
-        name: savedFile.file_name || file.name,
-        fileId: savedFile.id,
+        url: objectUrl,
+        name: file.name,
+        fileId: "",
         isPlaying: true,
       });
       setIsUploadingAudio(false);
     } catch (err) {
-      setUploadError((err as Error).message || "Failed to upload audio file.");
+      setUploadError((err as Error).message || "Failed to load audio file.");
       setIsUploadingAudio(false);
     }
   }, []);
@@ -313,6 +293,8 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   useEffect(() => {
     return () => {
       if (audioRef.current) {
+        const url = audioRef.current.dataset.sourceUrl;
+        if (url) URL.revokeObjectURL(url);
         audioRef.current.pause();
         audioRef.current.src = "";
       }
@@ -384,7 +366,6 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   return (
     <AnimatePresence mode="wait">
       {isMinimized ? (
-        // ✅ MINIMIZED: Tiny pill at bottom
         <motion.div
           key="minimized"
           initial={{ opacity: 0, y: 20, scale: 0.9 }}
@@ -423,7 +404,6 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
           </motion.div>
         </motion.div>
       ) : (
-        // ✅ EXPANDED: Full music player at bottom-center
         <motion.div
           key="expanded"
           initial={{ opacity: 0, y: 20, scale: 0.95 }}
