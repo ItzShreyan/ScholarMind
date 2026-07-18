@@ -37,7 +37,8 @@ import {
   WandSparkles,
   X
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
+import confetti from "canvas-confetti";
 import dynamic from "next/dynamic";
 import type { SourceModalProps } from "@/components/dashboard/SourceModal";
 
@@ -918,6 +919,7 @@ export function StudyWorkspace({
   const [breakPopupOpen, setBreakPopupOpen] = useState(false);
   const [chatFullscreen, setChatFullscreen] = useState(false);
   const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
+  const [workspaceExpanded, setWorkspaceExpanded] = useState(false);
   const [screenAwarePulse, setScreenAwarePulse] = useState(false);
   const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
   const [workspaceSearchLoading, setWorkspaceSearchLoading] = useState(false);
@@ -935,6 +937,7 @@ export function StudyWorkspace({
   const [activeCanvasStroke, setActiveCanvasStroke] = useState<CanvasStroke | null>(null);
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
+  const [musicRainbowEnabled, setMusicRainbowEnabled] = useState(false);
   const [musicPanelOpen, setMusicPanelOpen] = useState(false);
   const [musicSearch, setMusicSearch] = useState("");
   const [spotifyConnected, setSpotifyConnected] = useState(false);
@@ -991,6 +994,8 @@ export function StudyWorkspace({
     error: ""
   });
   const [, setDragDepth] = useState(0);
+  const [askAIPopup, setAskAIPopup] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [showQuizResults, setShowQuizResults] = useState(false);
 
   const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
     try {
@@ -1017,6 +1022,48 @@ export function StudyWorkspace({
       return next;
     });
   }, [activeSessionId, messages, persistChatThreads]);
+
+  useEffect(() => {
+    const handleSelection = () => {
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed) {
+        setAskAIPopup(null);
+        return;
+      }
+      const text = selection.toString().trim();
+      if (text.length < 3) {
+        setAskAIPopup(null);
+        return;
+      }
+      
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+      
+      // Do not show popup if selection is hidden/zero-sized
+      if (rect.width === 0 || rect.height === 0) {
+        setAskAIPopup(null);
+        return;
+      }
+
+      setAskAIPopup({
+        text,
+        x: rect.left + rect.width / 2,
+        y: Math.max(10, rect.top - 46)
+      });
+    };
+
+    const handleMouseDown = () => setAskAIPopup(null);
+
+    document.addEventListener("mouseup", handleSelection);
+    document.addEventListener("keyup", handleSelection);
+    document.addEventListener("mousedown", handleMouseDown);
+
+    return () => {
+      document.removeEventListener("mouseup", handleSelection);
+      document.removeEventListener("keyup", handleSelection);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -1388,11 +1435,12 @@ export function StudyWorkspace({
     try {
       const raw = localStorage.getItem(focusMusicStateStorageKey);
       if (raw) {
-        const parsed = JSON.parse(raw) as { playing?: boolean; trackIndex?: number };
+        const parsed = JSON.parse(raw) as { playing?: boolean; trackIndex?: number; rainbow?: boolean };
         if (typeof parsed.playing === "boolean") setMusicPlaying(parsed.playing);
         if (typeof parsed.trackIndex === "number" && focusTracks.length) {
           setSelectedTrackIndex(Math.max(0, Math.min(focusTracks.length - 1, parsed.trackIndex)));
         }
+        if (typeof parsed.rainbow === "boolean") setMusicRainbowEnabled(parsed.rainbow);
       }
     } catch {
       // Music state is optional, so a bad localStorage value should not break Studio.
@@ -1402,10 +1450,38 @@ export function StudyWorkspace({
   }, []);
 
   useEffect(() => {
+    const restore = (value?: unknown) => {
+      try {
+        const parsed =
+          value && typeof value === "object"
+            ? (value as { rainbow?: boolean; playing?: boolean })
+            : JSON.parse(localStorage.getItem(focusMusicStateStorageKey) || "{}");
+        if (typeof parsed.rainbow === "boolean") setMusicRainbowEnabled(parsed.rainbow);
+        if (typeof parsed.playing === "boolean") setMusicPlaying(parsed.playing);
+      } catch {
+        // ignore
+      }
+    };
+
+    const onCustom = (e: Event) => restore((e as CustomEvent).detail);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === focusMusicStateStorageKey) restore();
+    };
+
+    window.addEventListener("scholarmind:music-state", onCustom);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("scholarmind:music-state", onCustom);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!musicStateLoadedRef.current) return;
     const state = {
       playing: musicPlaying,
       trackIndex: selectedTrackIndex,
+      rainbow: musicRainbowEnabled,
       updatedAt: Date.now()
     };
     try {
@@ -1414,7 +1490,7 @@ export function StudyWorkspace({
     } catch {
       // Ignore private browsing/storage failures.
     }
-  }, [musicPlaying, selectedTrackIndex]);
+  }, [musicPlaying, selectedTrackIndex, musicRainbowEnabled]);
 
   useEffect(() => {
     void fetch("/api/music/spotify/status")
@@ -2069,6 +2145,7 @@ export function StudyWorkspace({
     setRevealedFlashcards({});
     setExamAnswers({});
     setToolCardIndex(0);
+    setShowQuizResults(false);
   }, [activeAction, output]);
 
   useEffect(() => {
@@ -3195,7 +3272,20 @@ export function StudyWorkspace({
       }
       setOutput(finalText);
       saveToolResult(action, finalText, action === toolDraft.action ? toolDraft.focus : "");
-      openGeneratedResultInWorkspaceTab(action, finalText, action === toolDraft.action ? toolDraft.focus : "");
+      // Auto-open in canvas workspace — no manual Open button needed
+      const autoLabel = actionButtons.find((item) => item.key === action)?.label || "AI Output";
+      const autoFocusLabel = action === toolDraft.action ? toolDraft.focus.trim() : "";
+      const autoTabId = `canvas-output-${action}-${Date.now()}`;
+      upsertWorkspaceTab({
+        id: autoTabId,
+        label: autoFocusLabel ? `${autoLabel}: ${clipText(autoFocusLabel, 24)}` : autoLabel,
+        kind: "canvas-output",
+        action,
+        output: finalText,
+        closable: true
+      });
+      setWorkspaceTab(autoTabId);
+      setTab("tools");
       updateMetrics((current) => ({
 
         ...current,
@@ -3226,7 +3316,7 @@ export function StudyWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [activeSessionId, buildContextForPrompt, openGeneratedResultInWorkspaceTab, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.examMode, toolDraft.focus, updateMetrics]);
+  }, [activeSessionId, buildContextForPrompt, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.examMode, toolDraft.focus, upsertWorkspaceTab, updateMetrics]);
 
   const applyCanvasAssist = useCallback(
     (question: string) => {
@@ -3358,20 +3448,42 @@ export function StudyWorkspace({
       return true;
     }
 
-    if (playMusicCommand || pauseMusicCommand) {
-      setMusicPlaying(playMusicCommand);
+    const nextMusicCommand = /\b(next|skip|skip track|skip song|next song|next track)\b/.test(lowerQuestion);
+    const prevMusicCommand = /\b(previous|prev|back|previous track|previous song|go back)\b/.test(lowerQuestion);
+
+    if (playMusicCommand || pauseMusicCommand || nextMusicCommand || prevMusicCommand) {
       setMessages((current) => [
         ...current,
         { role: "user", content: question },
-        {
-          role: "ai",
-          content: playMusicCommand
-            ? "Open the music panel to connect Spotify."
-            : "Focus music is paused."
-        }
+        { role: "ai", content: "Okay — updating playback now." }
       ]);
-      setTab("tools");
-      return true;
+
+      const action = playMusicCommand ? "resume" : pauseMusicCommand ? "pause" : nextMusicCommand ? "next" : "previous";
+      try {
+        const response = await fetch("/api/music/spotify/playback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action })
+        });
+
+        if (!response.ok) {
+          const json = await readJsonResponse(response);
+          const message = normalizeErrorMessage(json.error, "Unable to change playback.");
+          setMessages((current) => [...current, { role: "ai", content: message }]);
+          return false;
+        }
+
+        // Update local UI state optimistically
+        if (action === "pause") setMusicPlaying(false);
+        if (action === "resume") setMusicPlaying(true);
+
+        setTab("tools");
+        return true;
+      } catch (error) {
+        const message = sanitizeDisplayText(error, "Unable to control playback.");
+        setMessages((current) => [...current, { role: "ai", content: message }]);
+        return false;
+      }
     }
 
     if (executeWorkspaceNavigation(question)) {
@@ -3807,12 +3919,6 @@ export function StudyWorkspace({
                 Open
               </Button>
             ) : null}
-            {isOutput && workspaceItem.kind === "output" ? (
-              <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm">
-                <Maximize2 className="h-4 w-4" />
-                Open
-              </Button>
-            ) : null}
             {isBrowse && workspaceItem.url ? (
               <>
                 <Button
@@ -4202,6 +4308,98 @@ export function StudyWorkspace({
       const correctOption = item.answer || "";
       const answeredCount = quizResultRows.filter((row) => row.selected).length;
       const correctCount = quizResultRows.filter((row) => row.isCorrect).length;
+      const scorePercentage = Math.round((correctCount / parsedQuiz.length) * 100);
+
+      const triggerConfetti = () => {
+        confetti({
+          particleCount: 150,
+          spread: 80,
+          origin: { y: 0.6 }
+        });
+      };
+
+      if (showQuizResults) {
+        return (
+          <div className="space-y-6 fade-in">
+            <div className={`rounded-[30px] p-8 text-center border ${scorePercentage >= 80 ? "border-[rgba(121,247,199,0.3)] bg-[rgba(121,247,199,0.06)]" : "border-white/10 bg-white/5"}`}>
+              <p className={`text-sm font-semibold uppercase tracking-[0.22em] ${scorePercentage >= 80 ? "text-[var(--accent-mint)]" : "text-white/60"}`}>Quiz Complete</p>
+              <h2 className={`mt-4 text-6xl font-bold ${scorePercentage >= 80 ? "text-[var(--accent-mint)] drop-shadow-[0_0_12px_rgba(121,247,199,0.4)]" : "text-white"}`}>
+                {scorePercentage}%
+              </h2>
+              <p className="mt-4 text-sm text-white/70">
+                You scored {correctCount} out of {parsedQuiz.length} correct.
+              </p>
+              <div className="mt-6">
+                <Button onClick={() => setShowQuizResults(false)} variant="secondary" size="sm">
+                  Review questions
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-[24px] bg-white/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold">Quiz results table</p>
+                  <p className="muted mt-1 text-xs">Review what you missed and ask AI for help.</p>
+                </div>
+                <div className="rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
+                  {correctCount} / {answeredCount || 0} correct
+                </div>
+              </div>
+              <div className="mt-4 overflow-auto rounded-[20px] border border-white/10">
+                <table className="min-w-full text-left text-xs md:text-sm">
+                  <thead className="bg-white/10">
+                    <tr>
+                      <th className="px-3 py-2">#</th>
+                      <th className="px-3 py-2">Question</th>
+                      <th className="px-3 py-2">Your answer</th>
+                      <th className="px-3 py-2">Correct</th>
+                      <th className="px-3 py-2">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {quizResultRows.map((row) => (
+                      <tr key={`quiz-row-${row.number}`} className="border-t border-white/10">
+                        <td className="px-3 py-2 align-top">{row.number}</td>
+                        <td className="px-3 py-2 align-top">{clipText(row.question, 120)}</td>
+                        <td className="px-3 py-2 align-top">{row.selected || "Pending"}</td>
+                        <td className="px-3 py-2 align-top">{row.correct || "—"}</td>
+                        <td className="px-3 py-2 align-top">
+                          {row.isCorrect ? (
+                            <span className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] bg-[rgba(121,247,199,0.16)] text-[var(--accent-mint)]">
+                              Correct
+                            </span>
+                          ) : row.selected ? (
+                            <Button
+                              onClick={() => {
+                                setChat((current) => {
+                                  const quote = `> **Question:** ${row.question}\n> **My answer:** ${row.selected}\n> **Correct answer:** ${row.correct}\n\nExplain why my answer is wrong and how to get to the correct answer.`;
+                                  return current ? `${quote}\n\n${current}` : quote;
+                                });
+                                setTab("chat");
+                              }}
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 py-1 text-[10px] text-[var(--accent-sky)] hover:bg-[rgba(57,208,255,0.1)]"
+                            >
+                              <WandSparkles className="mr-1.5 h-3 w-3" />
+                              Explain
+                            </Button>
+                          ) : (
+                            <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
+                              Pending
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      }
 
       return (
         <div className="space-y-3">
@@ -4284,9 +4482,23 @@ export function StudyWorkspace({
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 {isOpen ? "Hide answer" : "Check answer"}
               </Button>
-              <Button onClick={() => shiftToolCard(1)} variant="ghost" size="sm">
-                Next question
-              </Button>
+              {currentIndex === parsedQuiz.length - 1 ? (
+                <Button 
+                  onClick={() => {
+                    setShowQuizResults(true);
+                    if (scorePercentage >= 80) triggerConfetti();
+                  }} 
+                  variant="ghost" 
+                  size="sm"
+                  className="bg-[rgba(121,247,199,0.1)] text-[var(--accent-mint)]"
+                >
+                  See Results
+                </Button>
+              ) : (
+                <Button onClick={() => shiftToolCard(1)} variant="ghost" size="sm">
+                  Next question
+                </Button>
+              )}
             </div>
             {isOpen ? (
               <div className="mt-4 rounded-[22px] bg-white/12 p-4 text-sm">
@@ -4299,57 +4511,6 @@ export function StudyWorkspace({
               </div>
             ) : null}
           </motion.article>
-          <div className="rounded-[24px] bg-white/10 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold">Quiz results table</p>
-                <p className="muted mt-1 text-xs">Track what you answered, what was right, and what still needs a second pass.</p>
-              </div>
-              <div className="rounded-full bg-white/10 px-3 py-2 text-xs font-medium">
-                {correctCount} / {answeredCount || 0} correct
-              </div>
-            </div>
-            <div className="mt-4 overflow-auto rounded-[20px] border border-white/10">
-              <table className="min-w-full text-left text-xs md:text-sm">
-                <thead className="bg-white/10">
-                  <tr>
-                    <th className="px-3 py-2">#</th>
-                    <th className="px-3 py-2">Question</th>
-                    <th className="px-3 py-2">Your answer</th>
-                    <th className="px-3 py-2">Correct</th>
-                    <th className="px-3 py-2">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {quizResultRows.map((row) => (
-                    <tr key={`quiz-row-${row.number}`} className="border-t border-white/10">
-                      <td className="px-3 py-2 align-top">{row.number}</td>
-                      <td className="px-3 py-2 align-top">{clipText(row.question, 120)}</td>
-                      <td className="px-3 py-2 align-top">{row.selected || "Pending"}</td>
-                      <td className="px-3 py-2 align-top">{row.correct || "—"}</td>
-                      <td className="px-3 py-2 align-top">
-                        {row.selected ? (
-                          <span
-                            className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${
-                              row.isCorrect
-                                ? "bg-[rgba(121,247,199,0.16)] text-[var(--accent-mint)]"
-                                : "bg-[rgba(255,125,89,0.16)] text-[var(--accent-coral)]"
-                            }`}
-                          >
-                            {row.isCorrect ? "Correct" : "Review"}
-                          </span>
-                        ) : (
-                          <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
-                            Pending
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       );
     }
@@ -5185,6 +5346,10 @@ export function StudyWorkspace({
                 <p className="muted text-xs">Open sources, notes, practice, and saved study results without losing your place.</p>
               </div>
               <div className="flex flex-wrap gap-2">
+                <Button onClick={() => setWorkspaceExpanded((current) => !current)} variant="ghost" size="sm">
+                  {workspaceExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  {workspaceExpanded ? "Collapse" : "Expand"}
+                </Button>
                 <Button onClick={() => setWorkspaceFullscreen((current) => !current)} variant="ghost" size="sm">
                   {workspaceFullscreen ? <X className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
                   {workspaceFullscreen ? "Exit workspace" : "Fullscreen"}
@@ -5374,7 +5539,7 @@ export function StudyWorkspace({
                 </motion.div>
               ) : null}
 
-              <div ref={workspaceScrollRef} className="hide-scrollbar min-h-[38rem] max-h-[72vh] overflow-auto p-5">
+              <div ref={workspaceScrollRef} className={`hide-scrollbar overflow-auto p-5 ${workspaceExpanded ? "min-h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)]" : "min-h-[38rem] max-h-[72vh]"}`}>
                 {workspaceTab === "home" ? (
                   <div className="space-y-5">
                     <div className="rounded-[30px] bg-[radial-gradient(circle_at_18%_20%,rgba(255,143,107,0.24),transparent_32%),radial-gradient(circle_at_86%_20%,rgba(107,221,255,0.2),transparent_30%),rgba(255,255,255,0.08)] p-6">
@@ -5479,9 +5644,7 @@ export function StudyWorkspace({
                     <div className="rounded-[26px] bg-white/8 p-4">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <p className="font-semibold">Recent outputs</p>
-                        <button type="button" onClick={openCurrentResultInWorkspaceTab} disabled={!output} className="muted text-xs hover:text-[var(--fg)] disabled:cursor-not-allowed disabled:opacity-50">
-                          Open latest
-                        </button>
+                        <span className="muted text-xs">Tap a card to reopen</span>
                       </div>
                       <div className="grid gap-3 md:grid-cols-2">
                         {currentToolHistory.length ? (
@@ -5604,16 +5767,9 @@ export function StudyWorkspace({
                         <p className="text-sm font-semibold">
                           {output ? actionButtons.find((item) => item.key === activeAction)?.label || "Generated result" : "AI Output"}
                         </p>
-                        <p className="muted text-xs">Generated study results open here and can be reopened as workspace tabs.</p>
+                        <p className="muted text-xs">Results open automatically in the workspace canvas panel.</p>
                       </div>
                       <div className="flex gap-2">
-                        <Button onClick={openCurrentResultInWorkspaceTab} variant="ghost" size="sm" disabled={!output}>
-                          Open tab
-                        </Button>
-                        <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm" disabled={!output}>
-                          <Maximize2 className="h-4 w-4" />
-                          Open
-                        </Button>
                         <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm" disabled={!output}>
                           Export JSON
                         </Button>
@@ -5725,10 +5881,16 @@ export function StudyWorkspace({
                   Exit
                 </Button>
               ) : (
-                <Button onClick={() => setChatFullscreen(true)} variant="ghost" size="sm">
-                  <Maximize2 className="h-4 w-4" />
-                  Fullscreen
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={() => setWorkspaceExpanded((current) => !current)} variant="ghost" size="sm">
+                    {workspaceExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    {workspaceExpanded ? "Collapse" : "Expand"}
+                  </Button>
+                  <Button onClick={() => setChatFullscreen(true)} variant="ghost" size="sm">
+                    <Maximize2 className="h-4 w-4" />
+                    Fullscreen
+                  </Button>
+                </div>
               )}
             </div>
 
@@ -5775,7 +5937,7 @@ export function StudyWorkspace({
             <div
               ref={chatViewportRef}
               className={`hide-scrollbar mt-4 space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4 ${
-                chatFullscreen ? "min-h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)]" : "min-h-[34rem] lg:max-h-[calc(100vh-18rem)]"
+                chatFullscreen || workspaceExpanded ? "min-h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)]" : "min-h-[34rem] lg:max-h-[calc(100vh-18rem)]"
               }`}
             >
               {!sourceEnabledCount ? (
@@ -6061,6 +6223,24 @@ export function StudyWorkspace({
         </a>
       </footer>
 
+      {/* Optional subtle rainbow aura — controlled by FocusMusicDock and persisted in localStorage. */}
+      {musicRainbowEnabled && !workspaceFullscreen && !timerRunning ? (
+        <div
+          aria-hidden
+          style={{
+            position: "fixed",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 40,
+            mixBlendMode: "screen",
+            opacity: musicPlaying ? 0.08 : 0.03,
+            transition: "opacity 450ms linear",
+            background: "conic-gradient(from 0deg, rgba(255,99,132,0.06), rgba(255,195,75,0.06), rgba(120,219,255,0.06), rgba(180,102,255,0.06), rgba(255,99,132,0.06))",
+            filter: "blur(40px) saturate(1.05)"
+          }}
+        />
+      ) : null}
+
       <SpotifyPlaybackProvider connected={spotifyConnected}>
         <DynamicIslandMusicPlayer />
       </SpotifyPlaybackProvider>
@@ -6319,13 +6499,9 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold">Generated inside this studio</p>
-                      <p className="muted mt-1 text-xs">The result below is tied to your current uploaded sources.</p>
+                      <p className="muted mt-1 text-xs">The result has been opened automatically in your workspace canvas.</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button onClick={openCurrentResultInCanvas} variant="secondary" size="sm">
-                        <Maximize2 className="h-4 w-4" />
-                        Open
-                      </Button>
                       <Button onClick={exportCurrentResultAsJson} variant="ghost" size="sm">
                         Export JSON
                       </Button>
@@ -6487,6 +6663,38 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
             </div>
           </div>
         </div>
+      ) : null}
+
+      {askAIPopup ? (
+        <motion.div
+          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          style={{
+            position: "fixed",
+            left: askAIPopup.x,
+            top: askAIPopup.y,
+            transform: "translate(-50%, 0)",
+            zIndex: 9999
+          }}
+        >
+          <Button
+            onClick={() => {
+              setChat((current) => {
+                const quote = `> ${askAIPopup.text.replace(/\n/g, "\n> ")}\n\n`;
+                return current ? `${quote}${current}` : quote;
+              });
+              setTab("chat");
+              setAskAIPopup(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            size="sm"
+            className="rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] px-4 py-2 font-semibold text-black shadow-xl"
+          >
+            <WandSparkles className="mr-2 h-4 w-4" />
+            Ask AI
+          </Button>
+        </motion.div>
       ) : null}
 
       {preview.open ? (

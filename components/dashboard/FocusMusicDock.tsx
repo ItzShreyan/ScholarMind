@@ -17,6 +17,7 @@ export function FocusMusicDock() {
   const [playing, setPlaying] = useState(false);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [rainbow, setRainbow] = useState(false);
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
   const spotifyLoginHref = `/api/music/spotify/login?returnTo=${encodeURIComponent(pathname || "/dashboard")}`;
@@ -48,6 +49,7 @@ export function FocusMusicDock() {
             ? (value as { playing?: boolean })
             : JSON.parse(localStorage.getItem(focusMusicStateStorageKey) || "{}");
         if (typeof parsed.playing === "boolean") setPlaying(parsed.playing);
+        if (typeof parsed.rainbow === "boolean") setRainbow(parsed.rainbow);
       } catch {
         // The focus dock should never block the dashboard.
       }
@@ -74,14 +76,14 @@ export function FocusMusicDock() {
 
   useEffect(() => {
     if (!loadedRef.current) return;
-    const state = { playing, updatedAt: Date.now() };
+    const state = { playing, rainbow, updatedAt: Date.now() };
     try {
       localStorage.setItem(focusMusicStateStorageKey, JSON.stringify(state));
       window.dispatchEvent(new CustomEvent("scholarmind:music-state", { detail: state }));
     } catch {
       // Ignore storage failures.
     }
-  }, [playing]);
+  }, [playing, rainbow]);
 
   const providerCards = useMemo(
     () => (
@@ -159,6 +161,19 @@ export function FocusMusicDock() {
                 searchQuery={search}
                 onPlayingChange={setPlaying}
               />
+            </div>
+            <div className="mt-3 flex items-center justify-between">
+              <span className="text-[12px] muted">Rainbow aura</span>
+              <button
+                type="button"
+                onClick={() => setRainbow((c) => !c)}
+                className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  rainbow ? "bg-[rgba(121,247,199,0.12)] text-[var(--accent-mint)]" : "bg-white/8 text-[var(--muted)] hover:bg-white/12"
+                }`}
+                aria-pressed={rainbow}
+              >
+                {rainbow ? "On" : "Off"}
+              </button>
             </div>
           </div>
         ) : null}

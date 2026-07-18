@@ -17,6 +17,8 @@
     "@mozilla/readability": "^0.6.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.49.8",
+    "@types/canvas-confetti": "^1.9.0",
+    "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.17",
     "jsdom": "^29.0.1",

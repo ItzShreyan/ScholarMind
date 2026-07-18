@@ -49,17 +49,29 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
       try {
         const mermaidModule = await import("mermaid");
         const mermaid = mermaidModule.default;
+        
+        // Ensure robust initialization
         mermaid.initialize({
           startOnLoad: false,
-          theme: document.documentElement.dataset.theme === "light" ? "default" : "dark",
-          securityLevel: "loose"
+          theme: document.documentElement.classList.contains("light") ? "default" : "dark",
+          securityLevel: "loose",
+          suppressErrorRendering: true
         });
+
+        // Mermaid may sometimes throw during render
         const { svg } = await mermaid.render(`mermaid-${chartId}`, chart);
+        
         if (!ignore) {
           setSvg(svg);
           setFailed(false);
         }
-      } catch {
+      } catch (err) {
+        // Clean up orphaned error nodes that mermaid might have appended to the body
+        const errorNode = document.getElementById(`dmermaid-${chartId}`);
+        if (errorNode) {
+          errorNode.remove();
+        }
+        
         if (!ignore) {
           setFailed(true);
         }
@@ -75,9 +87,16 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
 
   if (failed) {
     return (
-      <pre className="overflow-x-auto rounded-[20px] bg-black/20 p-4 text-sm leading-7">
-        <code>{chart}</code>
-      </pre>
+      <div className="my-4 overflow-hidden rounded-[22px] border border-white/10 bg-black/20 shadow-sm">
+        <div className="flex items-center justify-between border-b border-white/10 bg-white/5 px-4 py-2">
+          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">
+            Diagram (Syntax Error)
+          </span>
+        </div>
+        <pre className="overflow-x-auto p-4 text-sm leading-7 text-slate-300">
+          <code className="font-mono">{chart}</code>
+        </pre>
+      </div>
     );
   }
 
@@ -137,6 +156,47 @@ export const RichStudyText = memo(function RichStudyText({
               </code>
             </pre>
           </div>
+        );
+      },
+      blockquote: (props: React.ComponentPropsWithoutRef<"blockquote"> & { node?: unknown }) => {
+        // Extract text to check for callout types
+        const children = props.children as React.ReactNode | undefined;
+        let text = "";
+        const extractText = (child: unknown): string => {
+          if (typeof child === "string") return child;
+          if (Array.isArray(child)) return child.map(extractText).join("");
+          if (typeof child === "object" && child !== null) {
+            const maybe = child as { props?: { children?: unknown } };
+            if (maybe.props && maybe.props.children) return extractText(maybe.props.children);
+          }
+          return "";
+        };
+        text = extractText(children);
+        
+        const match = text.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
+        if (match) {
+          const type = match[1].toUpperCase();
+          const colors: Record<string, string> = {
+            NOTE: "border-l-blue-500 bg-blue-500/10 text-blue-100",
+            TIP: "border-l-green-500 bg-green-500/10 text-green-100",
+            IMPORTANT: "border-l-purple-500 bg-purple-500/10 text-purple-100",
+            WARNING: "border-l-yellow-500 bg-yellow-500/10 text-yellow-100",
+            CAUTION: "border-l-red-500 bg-red-500/10 text-red-100"
+          };
+          const colorClass = colors[type] || colors.NOTE;
+          
+          return (
+            <blockquote {...props} className={`my-4 overflow-hidden rounded-[18px] border border-white/5 border-l-4 px-5 py-3 ${colorClass}`}>
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-wider opacity-80">{type}</div>
+              <div className="[&>p:first-child]:inline">{children}</div>
+            </blockquote>
+          );
+        }
+
+        return (
+          <blockquote {...props} className="my-4 overflow-hidden rounded-[18px] border border-white/5 border-l-4 border-l-white/20 bg-white/5 px-5 py-3 italic text-white/80">
+            {children}
+          </blockquote>
         );
       }
     }),
