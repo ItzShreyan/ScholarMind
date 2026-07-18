@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from "lucide-react";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 
 interface CanvasPdfViewerProps {
   url: string;
@@ -15,7 +16,7 @@ export function CanvasPdfViewer({ url, fileName }: CanvasPdfViewerProps) {
   const [numPages, setNumPages] = useState(0);
   const [pageNum, setPageNum] = useState(1);
   const [scale, setScale] = useState(1);
-  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +47,7 @@ export function CanvasPdfViewer({ url, fileName }: CanvasPdfViewerProps) {
     return () => { cancelled = true; };
   }, [url]);
 
-  const renderPage = useCallback(async (doc: any, pageNumber: number, currentScale: number) => {
+  const renderPage = useCallback(async (doc: PDFDocumentProxy, pageNumber: number, currentScale: number) => {
     try {
       const page = await doc.getPage(pageNumber);
       const viewport = page.getViewport({ scale: currentScale });
@@ -55,11 +56,9 @@ export function CanvasPdfViewer({ url, fileName }: CanvasPdfViewerProps) {
 
       canvas.width = viewport.width;
       canvas.height = viewport.height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
 
       await page.render({
-        canvasContext: ctx,
+        canvas: canvas,
         viewport,
       }).promise;
     } catch {
