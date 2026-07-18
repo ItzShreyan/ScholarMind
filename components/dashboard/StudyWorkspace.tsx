@@ -51,6 +51,7 @@ import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPane
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
+import { CanvasPdfViewer } from "@/components/dashboard/CanvasPdfViewer";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
@@ -2822,8 +2823,8 @@ export function StudyWorkspace({
       }
 
       const googleUrl = getGoogleSearchUrl(query);
-      openBrowseInWorkspace(googleUrl, `Google: ${clipText(query, 28)}`);
-      setStatusNote(`Opened Google search for “${query}” inside this studio.`);
+      openBrowseInWorkspace(googleUrl, `DuckDuckGo: ${clipText(query, 28)}`);
+      setStatusNote(`Opened DuckDuckGo search for “${query}” inside this studio.`);
     } catch (error) {
       setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
     } finally {
@@ -3143,7 +3144,12 @@ export function StudyWorkspace({
       });
       const json = await readJsonResponse(response);
       if (!response.ok) {
-        const errorMessage = normalizeErrorMessage(json.error, "No response");
+        // When response.ok is false but json.error is empty, the platform
+        // likely killed the function before it sent its own error JSON.
+        // This normally means the AI took longer than the platform timeout.
+        const errorMessage = json.error
+          ? normalizeErrorMessage(json.error, "No response")
+          : "The AI took too long to respond. Try again — the first provider attempt is usually faster.";
         throw new Error(errorMessage);
       }
 
@@ -3754,7 +3760,7 @@ export function StudyWorkspace({
               {isBrowse
                 ? "Browse, annotate, and save pages as notes inside this studio."
                 : isSearch
-                ? "Google-style results stay inside this studio. Add useful sources so the tutor can read them."
+                ? "DuckDuckGo results stay inside this studio. Add useful sources so the tutor can read them."
                 : isCanvas
                 ? "Open fullscreen, annotate, highlight, draw, and erase inside the workspace."
                 : "Quick preview tab. Use Open for the full workspace view."}
@@ -3977,7 +3983,7 @@ export function StudyWorkspace({
             </div>
             <iframe
               key={`${workspaceItem.id}-${browseReloadKeys[workspaceItem.id] ?? 0}`}
-              src={workspaceItem.url}
+              src={`/api/browse-proxy?url=${encodeURIComponent(workspaceItem.url)}`}
               title={workspaceItem.label}
               loading="lazy"
               className="h-[min(72vh,900px)] w-full rounded-[24px] border border-white/10 bg-white"
@@ -3987,7 +3993,7 @@ export function StudyWorkspace({
         ) : isSearch ? (
           <div className="space-y-4">
             <div className="rounded-[24px] border border-white/10 bg-white/8 p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-sky)]">Google-style results</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-sky)]">DuckDuckGo results</p>
               <p className="mt-2 text-lg font-semibold">{workspaceItem.query || "Search"}</p>
               <p className="muted mt-1 text-xs">Results open inside this studio. Import a page to make it tutor-readable.</p>
             </div>
@@ -4035,11 +4041,9 @@ export function StudyWorkspace({
             </article>
           )
         ) : workspaceItem.previewKind === "pdf" && workspaceItem.url ? (
-          <iframe
-            src={workspaceItem.url}
-            title={workspaceItem.file?.file_name || workspaceItem.label}
-            loading="lazy"
-            className={`${isCanvas ? "h-[68vh]" : "h-[58vh]"} w-full rounded-[24px] border border-white/10 bg-white`}
+          <CanvasPdfViewer
+            url={workspaceItem.url}
+            fileName={workspaceItem.file?.file_name || workspaceItem.label}
           />
         ) : workspaceItem.previewKind === "image" && workspaceItem.url ? (
           <div className={`${isCanvas ? "min-h-[68vh]" : "min-h-[42vh]"} grid place-items-center rounded-[24px] bg-black/20 p-4`}>
@@ -5336,7 +5340,7 @@ export function StudyWorkspace({
                         <div className="min-w-0 flex-1">
                           <p className="font-semibold">Search the web inside this studio</p>
                           <p className="muted mt-1 text-xs">
-                            Search Google-style results or paste a URL. Everything opens as a workspace tab inside this studio.
+                            Search the web via DuckDuckGo or paste a URL. Everything opens as a workspace tab inside this studio.
                           </p>
                         </div>
                         <div className="flex flex-[1.2] items-center gap-2 rounded-[22px] border border-white/10 bg-black/10 px-3 py-2">
@@ -5350,7 +5354,7 @@ export function StudyWorkspace({
                                 void searchWorkspaceSources();
                               }
                             }}
-                            placeholder="Search Google or paste a URL..."
+                            placeholder="Search DuckDuckGo or paste a URL..."
                             className="w-full bg-transparent text-sm outline-none"
                           />
                           <Button onClick={searchWorkspaceSources} size="sm" disabled={workspaceSearchLoading}>
@@ -6451,11 +6455,9 @@ export function StudyWorkspace({
                   Opening source preview...
                 </div>
               ) : preview.kind === "pdf" && preview.url ? (
-                <iframe
-                  src={preview.url}
-                  title={preview.file?.file_name || "PDF preview"}
-                  loading="lazy"
-                  className="h-[72vh] w-full rounded-[24px] border border-white/10 bg-white"
+                <CanvasPdfViewer
+                  url={preview.url}
+                  fileName={preview.file?.file_name || undefined}
                 />
               ) : preview.kind === "image" && preview.url ? (
                 <div className="flex min-h-[20rem] items-center justify-center rounded-[24px] bg-black/20 p-4">

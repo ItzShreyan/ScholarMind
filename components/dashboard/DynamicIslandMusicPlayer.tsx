@@ -242,14 +242,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     }
   }, [panelView, loadPlaylists]);
 
-  // Show nothing if no track, no Spotify, and no external audio
-  if (!currentTrack && !spotifyState?.connected && !externalAudioActive && !showPanel) {
-    return null;
-  }
-
-  const shouldShow = hasSpotify || systemAudio || externalAudioActive || spotifyState?.connected || showPanel;
-  if (!shouldShow && !showPanel) return null;
-
+  // Always mounted — show a minimal minimized pill when idle
   const activePlaylist = spotifyState?.activePlaylist;
 
   return (
@@ -262,7 +255,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.9 }}
           transition={{ duration: 0.3, type: "spring", stiffness: 400, damping: 25 }}
-          className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2"
+          className="fixed bottom-6 right-6 z-40"
           onClick={() => setIsMinimized(false)}
         >
           <motion.div
@@ -301,7 +294,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.95 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
-          className="fixed bottom-6 left-1/2 z-40 w-[min(32rem,calc(100vw-1.5rem))] -translate-x-1/2 rounded-[24px] bg-gradient-to-br from-[rgba(255,255,255,0.1)] to-[rgba(255,255,255,0.05)] border border-white/20 p-4 backdrop-blur-xl shadow-2xl"
+          className="fixed bottom-6 right-6 z-40 w-[min(32rem,calc(100vw-1.5rem))] rounded-[24px] bg-gradient-to-br from-[rgba(255,255,255,0.1)] to-[rgba(255,255,255,0.05)] border border-white/20 p-4 backdrop-blur-xl shadow-2xl"
         >
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
@@ -357,9 +350,10 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
               ) : null}
               <button
                 onClick={() => setIsMinimized(true)}
-                className="p-1 hover:bg-white/10 rounded-full transition-colors"
+                title="Minimise music player"
+                className="p-1.5 bg-white/10 hover:bg-white/16 rounded-full transition-colors"
               >
-                <X className="h-4 w-4 text-white/60" />
+                <X className="h-4 w-4 text-white/80" />
               </button>
             </div>
           </div>

@@ -14,7 +14,10 @@ import {
 } from "@/lib/ai/limits";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Netlify Starter (free) plan: functions are killed at 10 seconds regardless of
+// what the code declares. The per-provider timeout in lib/ai/fallback.ts caps
+// each attempt at 10 seconds, so a single slow provider can't waste the budget.
+export const maxDuration = 10;
 
 const schema = z.object({
   action: z.enum([

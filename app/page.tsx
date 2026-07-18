@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/Badge";
 import { buttonVariants } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
+import { Logo } from "@/components/ui/Logo";
 import {
   defaultExamGeneratorWeeklyLimit,
   defaultFreePreviewDailyLimit,
@@ -418,15 +419,9 @@ export default function LandingPage() {
 
       <footer className="border-t border-white/10 py-8">
         <Container className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[radial-gradient(circle_at_30%_20%,#fff7d6,transparent_28%),linear-gradient(135deg,var(--accent-coral),var(--accent-gold),var(--accent-sky))] text-base font-black text-slate-950 shadow-[0_14px_40px_rgba(57,208,255,0.22)]">
-              S
-            </div>
-            <div>
-              <p className="text-sm font-semibold">ScholarMind</p>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--accent-coral)]">by Mind</p>
-              <p className="muted text-xs">Scholar-first sources in. Clearer revision, diagrams, and mock exams out.</p>
-            </div>
+          <Logo variant="full" size={40} />
+          <div>
+            <p className="muted text-xs">Scholar-first sources in. Clearer revision, diagrams, and mock exams out.</p>
           </div>
           <div className="flex flex-wrap items-center gap-4 text-xs">
             <SecurityBadge compact />

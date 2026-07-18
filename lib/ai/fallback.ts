@@ -24,6 +24,17 @@ const providers: Record<string, AIProvider> = {
   together: togetherProvider
 };
 
+/** Wraps a promise with a hard timeout via AbortController-style race.
+ *  Prevents a single hanging provider call from consuming the entire
+ *  request budget. */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function hasRemoteProviderConfigured() {
   return (
     hasOpenRouterKey() ||
@@ -133,7 +144,11 @@ export async function generateWithFallback(rawInput: AIRequest) {
   // Try primary provider first
   if (primary && !(strictRemote && primary.name === "local")) {
     try {
-      const result = await primary.generate(input);
+      const result = await withTimeout(
+        primary.generate(input),
+        10000,
+        primary.name
+      );
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
       if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
@@ -175,7 +190,11 @@ export async function generateWithFallback(rawInput: AIRequest) {
     if (strictRemote && provider.name === "local") continue;
 
     try {
-      const result = await provider.generate(input);
+      const result = await withTimeout(
+        provider.generate(input),
+        10000,
+        provider.name
+      );
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
       if (normalizedText && !isBadResponse(normalizedText, input)) {
         setCached(cacheKey, normalizedText);
