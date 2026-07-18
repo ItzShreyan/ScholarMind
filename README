@@ -1,0 +1,187 @@
+# ScholarMind
+
+**AI Study Companion** — Upload notes, PDFs, and screenshots, then turn them into grounded chat, quizzes, flashcards, mock exams, and revision plans.
+
+Built with Next.js 15 App Router, TypeScript, TailwindCSS, Framer Motion, Three.js, Supabase (Auth / Postgres / Storage), and multi-provider AI fallback logic.
+
+---
+
+## Features
+
+### Study Workspace
+- **Session-based studios** — keep notes, chat history, and generated outputs grouped per topic
+- **Multi-format upload** — PDF, DOCX, images (OCR), TXT, CSV, XLSX, Markdown
+- **AI Notes** — textbook-quality long-form notes with formulas, worked examples, simulations
+- **Interactive Quiz Deck** — multiple-choice with instant grading and results table
+- **Flashcard Deck** — swipeable cards with flip animation and keyboard shortcuts
+- **Exam Generator** — full mock papers (GCSE / A-Level / custom) with online answer sheet and PDF export
+- **AI Chat (tutor)** — source-grounded step-by-step explanations with streaming
+- **Canvas annotations** — highlight, draw, text boxes, and eraser on source previews
+- **Workspace browser** — embedded DuckDuckGo search and web-page iframes routed through the `browse-proxy` (strips X-Frame-Options/CSP)
+
+### Multi-Provider AI Fallback (`lib/ai/fallback.ts`)
+Each provider call is wrapped in a **hard 10-second timeout** (`withTimeout`). The fallback chain tries providers sequentially until one returns a valid response:
+
+| Provider | Timeout | Key |
+|---|---|---|
+| Gemini (configurable primary) | 10s (fallback layer) | `GEMINI_API_KEY` |
+| Groq (v1) | 10s (shared layer) + own 10s | `GROQ_API_KEY` |
+| Groq (v2, streaming) | 10s (shared layer) + own 20–45s | `GROQ_API_KEY` |
+| OpenRouter (v2) | 10s (shared layer) + own 25–45s | `OPENROUTER_API_KEY` |
+| Together | 10s (shared layer) | `TOGETHER_API_KEY` |
+| HuggingFace | 10s (shared layer) | `HUGGINGFACE_API_KEY` |
+| Local (rule-based fallback) | synchronous | none needed |
+
+- Response caching via MD5 context hash reduces repeated AI costs.
+- Bad-response detection (empty, too short, reasoning leaks, not grounded) triggers automatic fallback.
+
+### PDF Viewing (`components/dashboard/CanvasPdfViewer.tsx`)
+- Uses `pdfjs-dist` (v5.6.205) with worker at `/public/pdf.worker.min.mjs`
+- Renders each page to an HTML `<canvas>` — paginated with prev/next + zoom controls
+- Replaces the old `<iframe src={url}>` approach for consistent cross-device PDF display
+- Same dark-glass UI styling as the rest of the dashboard
+
+### Revision Schedule
+- Separate planning workspace (`/schedule`) with exam-date-based daily/weekly plans
+- Linked to a studio — each day opens as a personalised tutor session
+- Progress, autosave, and completion tracking synced to account
+
+### Music Player
+- **DynamicIslandMusicPlayer** — always-mounted bottom-right floating pill/panel
+- Spotify Web Playback SDK integration (search tracks, browse playlists, control playback)
+- Cross-tab system-audio detection via MediaSession API
+- Minimize/expand with smooth animation
+
+### Security
+- **Mind Security Engine** — dedicated landing page at `/security`
+- Security headers (CSP, HSTS, X-Frame-Options) on every response
+- Suspicious-request scoring and human-verification challenge
+- Upload validation (type, size, content safety)
+- API throttling with hourly/daily AI usage limits
+- Optional Arcjet integration (bot detection, VPN blocking, IP reputation)
+- Supabase Row-Level Security scopes users to their own data
+
+### Brand
+- **Reusable Logo component** (`components/ui/Logo.tsx`) — SVG brain/thought-node mark in the app's accent gradient palette
+  - `variant="icon"` — standalone 32px+ icon
+  - `variant="full"` — icon + "ScholarMind / by Mind" wordmark
+  - `variant="inline"` — icon-only wrapper
+- Used consistently across `BrandLink`, landing page footer, and all headers
+
+---
+
+## Local Setup
+
+1. **Node.js 20+** and **npm**.
+2. Copy environment file:
+   ```bash
+   cp .env.example .env.local
+   ```
+3. Fill all required variables in `.env.local` (see below).
+4. Install dependencies:
+   ```bash
+   npm install
+   ```
+5. Run the dev server:
+   ```bash
+   npm run dev
+   ```
+6. Open **http://localhost:3000**
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key |
+| `GEMINI_API_KEY` | Recommended | Primary AI provider (fallback to others if unset) |
+| `GROQ_API_KEY` | No | Groq fallback provider |
+| `HUGGINGFACE_API_KEY` | No | HuggingFace fallback |
+| `OPENROUTER_API_KEY` | No | OpenRouter fallback |
+| `TOGETHER_API_KEY` | No | Together fallback |
+| `AI_PRIMARY_PROVIDER` | No | `gemini`, `groq`, `openrouter_v2`, `together`, `local` |
+| `ARCJET_KEY` | No | Arcjet threat-detection key |
+
+---
+
+## Supabase Setup
+
+1. Create a new Supabase project.
+2. In **SQL Editor**, run `supabase/schema.sql`.
+   - Creates `study_sessions`, `study_files`, `study_reminders`, `study_site_events`, `study_preferences`, `revision_plans`, chat-history tables, the `study-files` storage bucket, and all RLS policies.
+3. In **Authentication → URL Configuration**:
+   - Site URL: `http://localhost:3000`
+   - Redirect URLs: `http://localhost:3000/auth/callback` + production equivalent
+4. In **Authentication → Providers → Google**: enable and paste OAuth client ID/secret.
+5. In **Google Cloud Console**: create Web OAuth client with:
+   - Authorized JavaScript origins: `http://localhost:3000` + production
+   - Authorized redirect URI: `https://<project-ref>.supabase.co/auth/v1/callback`
+
+---
+
+## Deployment
+
+### Netlify (free tier)
+- Synchronous function timeout: **10 seconds** (Starter plan)
+- The `maxDuration` export in API routes matches this limit
+- Per-provider timeouts in `lib/ai/fallback.ts` are set to 10s to stay within budget
+- If you upgrade to Pro (60s limit), increase `maxDuration` and the `withTimeout` value
+
+### Vercel
+1. Push to GitHub and import in Vercel.
+2. Add all environment variables from `.env.example`.
+3. Deploy.
+4. Add the deployed domain to Supabase Auth redirect URLs.
+
+---
+
+## Architecture
+
+```text
+app/
+  api/          — Next.js API routes (AI, auth, files, chat, upload, etc.)
+  auth/         — Sign-in / callback / sign-out
+  dashboard/    — Main study workspace + studios
+  security/     — Mind Security Engine landing page
+  privacy/      — Privacy policy
+  page.tsx      — Landing page
+components/
+  common/       — BrandLink, SecurityBadge, ThemeToggle, GlobalSecurityBadge
+  dashboard/    — StudyWorkspace, CanvasPdfViewer, DynamicIslandMusicPlayer, …
+  landing/      — ScrollShowcase, ThreeHero, SeoStudyPage
+  ui/           — Button, Card, Container, Badge, Logo, cn
+  providers/    — AuthProvider, TelemetryTracker
+lib/
+  ai/
+    fallback.ts — Multi-provider orchestration with 10s per-provider timeout
+    providers/  — gemini, groq, groq_v2, huggingface, openrouter_v2, together, local
+    router.ts   — Primary-provider selection
+    limits.ts   — Usage-limit reservation/release
+  db/           — Supabase queries
+  documents/    — OCR, parsing, text extraction, format detection
+  music/        — Spotify catalog helpers
+  supabase/     — Server/client helpers
+public/
+  scholarmind-icon.svg  — Favicon / app icon
+  pdf.worker.min.mjs    — pdfjs-dist worker
+types/
+supabase/schema.sql     — Full database schema + RLS policies
+```
+
+---
+
+## Key Technical Decisions
+
+- **`"use client"`** is used sparingly — most page shells are server components; interactivity is isolated in client leaf components.
+- **pdfjs-dist** worker is served from `/public/` (not bundled) to avoid Webpack worker-loader issues in Next.js App Router.
+- **Browse proxy** (`/api/browse-proxy`) strips `X-Frame-Options` and `Content-Security-Policy` headers from external pages so they render inside iframes. The proxy also injects a `<base>` tag and cleanup styles.
+- **Per-provider timeout** uses `Promise.race` between the provider promise and a `setTimeout` rejection — clean, no AbortController needed at the fallback layer (some providers use their own AbortController internally).
+- **Logo** is a pure SVG component (no external assets) so it works in both server and client contexts, scales without quality loss, and stays consistent across all surfaces by referencing `var(--accent-*)` CSS custom properties.
+
+---
+
+## License
+
+Open source with credit required. See the source files for details.
