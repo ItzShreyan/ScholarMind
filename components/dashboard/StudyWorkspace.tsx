@@ -49,6 +49,7 @@ const WorkspaceTimer = dynamic(() => import("@/components/dashboard/WorkspaceTim
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
+import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
@@ -243,23 +244,7 @@ type RecentWebsite = {
 const focusTracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
 
 const musicProviders = [
-  { key: "spotify", name: "Spotify", logo: "S", href: "/api/music/spotify/login", note: "Connect account • Free accounts have limited playback", unavailable: false },
-  {
-    key: "youtube",
-    name: "YouTube Music",
-    logo: "YT",
-    href: null,
-    note: "Unavailable in preview",
-    unavailable: true
-  },
-  {
-    key: "soundcloud",
-    name: "SoundCloud",
-    logo: "SC",
-    href: null,
-    note: "Account linking unavailable",
-    unavailable: true
-  }
+  { key: "spotify", name: "Spotify", logo: "S", href: "/api/music/spotify/login", note: "Connect account • Free accounts have limited playback", unavailable: false }
 ];
 
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
@@ -3341,7 +3326,7 @@ export function StudyWorkspace({
         {
           role: "ai",
           content: playMusicCommand
-            ? `Open the music panel to connect Spotify. YouTube Music and SoundCloud account linking are unavailable in this preview.`
+            ? "Open the music panel to connect Spotify."
             : "Focus music is paused."
         }
       ]);
@@ -4804,13 +4789,6 @@ export function StudyWorkspace({
                   >
                     {spotifyConnected ? "Spotify connected" : "Connect Spotify"}
                   </a>
-                  <button
-                    type="button"
-                    disabled
-                    className="flex-1 cursor-not-allowed rounded-[16px] bg-white/6 px-3 py-2 text-center text-xs font-medium text-white/45"
-                  >
-                    YT Music unavailable
-                  </button>
                 </div>
               </motion.div>
             </div>
@@ -6002,124 +5980,7 @@ export function StudyWorkspace({
       </footer>
 
       <SpotifyPlaybackProvider connected={spotifyConnected}>
-      <div
-        className={`fixed bottom-3 z-30 transition-all duration-300 ${
-          false ? "right-3 left-auto w-[min(18rem,calc(100vw-1.5rem))]" : "left-3 right-3 mx-auto max-w-[1800px]"
-        }`}
-      >
-        {musicPanelOpen ? (
-          <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            className="panel panel-border mb-3 ml-auto max-h-[min(34rem,calc(100vh-8rem))] w-full max-w-[32rem] overflow-hidden rounded-[28px] shadow-[0_22px_70px_rgba(2,6,23,0.36)]"
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--accent-gold)]">
-                  Focus music
-                </p>
-                <h3 className="mt-1 text-lg font-semibold">
-                  {spotifyConnected ? "Spotify connected" : "Browse playlists and connect accounts"}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setMusicPanelOpen(false)}
-                className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
-                aria-label="Close music panel"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="hide-scrollbar max-h-[28rem] overflow-auto p-4">
-              <div className="grid grid-cols-2 gap-2">
-                {musicProviders.map((provider) => {
-                  const providerCard = (
-                    <>
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-9 w-9 place-items-center rounded-[14px] bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] text-xs font-black text-slate-950">
-                        {provider.logo}
-                      </span>
-                      <span className="text-sm font-semibold">{provider.name}</span>
-                    </div>
-                    <p className="muted mt-2 text-xs">{provider.note}</p>
-                    </>
-                  );
-                  return provider.href && !provider.unavailable ? (
-                    <a
-                      key={provider.key}
-                      href={provider.key === "spotify" ? spotifyLoginHref : provider.href}
-                      className="rounded-[20px] bg-white/10 p-3 text-left transition hover:bg-white/16"
-                    >
-                      {providerCard}
-                      {provider.key === "spotify" && spotifyConnected ? (
-                        <p className="mt-2 text-[11px] font-semibold text-[var(--accent-mint)]">Account linked</p>
-                      ) : null}
-                    </a>
-                  ) : (
-                    <button
-                      key={provider.key}
-                      type="button"
-                      disabled
-                      className="cursor-not-allowed rounded-[20px] bg-white/6 p-3 text-left opacity-70"
-                    >
-                      {providerCard}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
-                <div className="flex items-center gap-2">
-                  <Search className="h-4 w-4 text-[var(--accent-sky)]" />
-                  <input
-                    value={musicSearch}
-                    onChange={(event) => setMusicSearch(event.target.value)}
-                    placeholder="Search Spotify tracks, artists, albums..."
-                    className="w-full bg-transparent text-sm outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-2">
-                <SpotifyPlaybackPanel
-                  connected={spotifyConnected}
-                  loginHref={spotifyLoginHref}
-                  searchQuery={musicSearch}
-                  onPlayingChange={setMusicPlaying}
-                />
-              </div>
-            </div>
-          </motion.div>
-        ) : null}
-
-        <div
-          className={`panel panel-border flex flex-wrap items-center gap-3 rounded-[24px] shadow-[0_18px_50px_rgba(2,6,23,0.28)] transition-all duration-300 ${
-            false
-              ? "origin-bottom-right scale-[0.58] rounded-[18px] px-2 py-1 shadow-[0_10px_28px_rgba(2,6,23,0.22)]"
-              : "origin-bottom px-3 py-2"
-          }`}
-        >
-          <SpotifyPlaybackPanel
-            connected={spotifyConnected}
-            loginHref={spotifyLoginHref}
-            compact
-            ultraCompact={false}
-            searchQuery={musicSearch}
-            onPlayingChange={setMusicPlaying}
-          />
-          {!false ? (
-            <button
-              type="button"
-              onClick={() => setMusicPanelOpen((current) => !current)}
-              className="rounded-full bg-white/10 p-2 transition hover:bg-white/16"
-              aria-label="Open music browser"
-            >
-              {musicPanelOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-            </button>
-          ) : null}
-        </div>
-      </div>
+        <DynamicIslandMusicPlayer />
       </SpotifyPlaybackProvider>
 
       {sourceModalOpen ? (
