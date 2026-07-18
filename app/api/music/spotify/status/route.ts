@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getValidSpotifyTokens, spotifySessionCookie } from "@/lib/music/spotify";
+import { attachRefreshedSpotifySession, getValidSpotifyTokens, spotifySessionCookie } from "@/lib/music/spotify";
 
 export async function GET(req: Request) {
   const cookieValue = req.headers
@@ -12,8 +12,9 @@ export async function GET(req: Request) {
     .join("=");
 
   const tokens = await getValidSpotifyTokens(cookieValue);
-  return NextResponse.json({
+  const payload = NextResponse.json({
     connected: Boolean(tokens?.accessToken),
     scope: tokens?.scope ?? null
   });
+  return attachRefreshedSpotifySession(payload, tokens);
 }

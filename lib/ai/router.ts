@@ -17,7 +17,7 @@ export function normalizeAIRequest(input: AIRequest): AIRequest {
 }
 
 export function selectProvider(_input: AIRequest): string {
-  const openRouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat"]);
+  const openRouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat", "concepts", "hard_mode", "study_plan", "insights"]);
   if (openRouterFirstActions.has(String(_input.action || _input.mode || "")) && hasOpenRouterKey()) {
     return "openrouter_v2";
   }

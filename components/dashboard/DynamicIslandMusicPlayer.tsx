@@ -24,9 +24,7 @@ interface DynamicIslandMusicPlayerProps {
 }
 
 const providerStatus = [
-  { name: "Spotify", status: "Connect available • Premium recommended", key: "spotify", disabled: false },
-  { name: "YouTube Music", status: "Unavailable in preview", key: "youtube", disabled: true },
-  { name: "SoundCloud", status: "Account link unavailable", key: "soundcloud", disabled: true }
+  { name: "Spotify", status: "Connect available • Premium recommended", key: "spotify", disabled: false }
 ];
 
 export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerRef }: DynamicIslandMusicPlayerProps) {
@@ -366,6 +364,19 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
             </div>
           </div>
 
+          {/* Premium Required Warning */}
+          {spotifyState?.premiumRequired ? (
+            <div className="mb-3 rounded-[16px] bg-[var(--accent-coral)]/10 border border-[var(--accent-coral)]/20 p-3 text-center">
+              <p className="text-xs font-semibold text-[var(--accent-coral)] flex items-center justify-center gap-1.5">
+                <Music className="h-3 w-3" />
+                Spotify Premium Required
+              </p>
+              <p className="text-[10px] text-[var(--accent-coral)]/80 mt-1">
+                Free accounts cannot control playback via the web player.
+              </p>
+            </div>
+          ) : null}
+
           {/* Now Playing Content */}
           {panelView === "now-playing" ? (
             <>
@@ -405,7 +416,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
               )}
 
               {/* Playback Controls – only for Spotify */}
-              {hasSpotify ? (
+              {hasSpotify && !spotifyState?.premiumRequired ? (
                 <div className="flex items-center justify-center gap-3 mb-3">
                   <motion.button
                     whileHover={{ scale: 1.1 }}

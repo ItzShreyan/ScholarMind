@@ -5,7 +5,7 @@ export async function GET(req: Request) {
   const { tokens, response } = await spotifyApiFetch(req, "/me/player/currently-playing");
 
   if (!tokens) {
-    return response;
+    return NextResponse.json({ playing: false, track: null });
   }
 
   if (response.status === 204) {
@@ -14,10 +14,7 @@ export async function GET(req: Request) {
   }
 
   if (!response.ok) {
-    const payload = NextResponse.json(
-      { playing: false, track: null, error: "Unable to read Spotify playback state." },
-      { status: response.status }
-    );
+    const payload = NextResponse.json({ playing: false, track: null });
     return attachRefreshedSpotifySession(payload, tokens);
   }
 

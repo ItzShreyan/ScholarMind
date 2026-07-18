@@ -25,6 +25,7 @@ export async function GET(req: Request) {
     "user-read-private",
     "user-read-playback-state",
     "user-modify-playback-state",
+    "user-read-currently-playing",
     "playlist-read-private",
     "playlist-read-collaborative",
     "streaming"

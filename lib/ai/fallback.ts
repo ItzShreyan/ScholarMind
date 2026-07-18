@@ -34,6 +34,22 @@ function hasRemoteProviderConfigured() {
   );
 }
 
+const remoteOnlyToolActions = new Set([
+  "summary",
+  "flashcards",
+  "quiz",
+  "notes",
+  "exam",
+  "concepts",
+  "hard_mode",
+  "study_plan",
+  "insights"
+]);
+
+function requiresRemoteAI(input: AIRequest) {
+  return remoteOnlyToolActions.has(String(input.action || input.mode || ""));
+}
+
 function normalizeInput(input: AIRequest): AIRequest {
   const message = input.message || input.prompt || input.content || "";
   const mode = input.mode || input.action;
@@ -90,6 +106,7 @@ function isBadResponse(text: string, input: AIRequest): boolean {
 
 export async function generateWithFallback(rawInput: AIRequest) {
   const input = normalizeInput(rawInput);
+  const strictRemote = requiresRemoteAI(input);
   const contextHash = input.context
     ? createHash("md5").update(input.context).digest("hex").slice(0, 8)
     : "no-context";
@@ -103,12 +120,18 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const cached = getCached(cacheKey);
   if (cached) return { text: normalizeAIText(cached), provider: "cache" as const };
 
+  if (strictRemote && !hasRemoteProviderConfigured()) {
+    throw new Error(
+      "Study tools require a configured AI provider. Add OPENROUTER_API_KEY, GEMINI_API_KEY, or GROQ_API_KEY in .env.local, then restart the app."
+    );
+  }
+
   const selected = selectProvider(input);
   const primary = providers[selected];
   const failures: string[] = [];
 
   // Try primary provider first
-  if (primary) {
+  if (primary && !(strictRemote && primary.name === "local")) {
     try {
       const result = await primary.generate(input);
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
@@ -123,18 +146,33 @@ export async function generateWithFallback(rawInput: AIRequest) {
   }
 
   // Fallback chain — try all available providers including local
-  const fallbackOrder = [
-    providers.openrouter_v2,
-    providers.groq_v2,
-    providers.groq,
-    providers.gemini,
-    providers.together,
-    providers.huggingface,
-    providers.local
-  ];
+  const openrouterConfigured = hasOpenRouterKey();
+  const openrouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat", "concepts", "hard_mode", "study_plan", "insights"]);
+  const fallbackOrder =
+    strictRemote
+      ? [
+          providers.openrouter_v2,
+          providers.groq_v2,
+          providers.groq,
+          providers.gemini,
+          providers.together,
+          providers.huggingface
+        ]
+      : openrouterConfigured && openrouterFirstActions.has(String(input.action))
+      ? [providers.openrouter_v2, providers.local]
+      : [
+          providers.groq_v2,
+          providers.groq,
+          providers.gemini,
+          providers.openrouter_v2,
+          providers.together,
+          providers.huggingface,
+          providers.local
+        ];
 
   for (const provider of fallbackOrder) {
     if (!provider || provider.name === primary?.name) continue;
+    if (strictRemote && provider.name === "local") continue;
 
     try {
       const result = await provider.generate(input);
@@ -150,7 +188,8 @@ export async function generateWithFallback(rawInput: AIRequest) {
   }
 
   const failureDetails = failures.slice(0, 5).join(" | ");
-  throw new Error(
-    `All AI providers failed: ${failureDetails}. Try again or enable an AI provider in .env.local.`
-  );
+  const errorMessage = strictRemote
+    ? `Study tools require a live AI response. All providers failed: ${failureDetails}. Try again in a moment or check your API keys.`
+    : `All AI providers failed: ${failureDetails}. Try again or enable an AI provider in .env.local.`;
+  throw new Error(errorMessage);
 }

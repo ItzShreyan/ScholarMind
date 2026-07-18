@@ -348,7 +348,10 @@ function SpotifyPlaybackProviderInner({
     const syncNowPlaying = async () => {
       try {
         const response = await fetch("/api/music/spotify/now-playing");
-        if (!response.ok) return;
+        if (!response.ok) {
+          setState((current) => ({ ...current, playing: false, track: null }));
+          return;
+        }
         const json = await readJson<{
           playing?: boolean;
           track?: SpotifyTrackItem | null;

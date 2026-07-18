@@ -9,11 +9,6 @@ import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayba
 
 const focusMusicStateStorageKey = "scholarmind_focus_music_state";
 
-const providerStatus = [
-  { name: "Spotify", status: "Connect available • Premium recommended", key: "spotify", disabled: false },
-  { name: "YouTube Music", status: "Unavailable in preview", key: "youtube", disabled: true },
-  { name: "SoundCloud", status: "Account link unavailable", key: "soundcloud", disabled: true }
-];
 
 export function FocusMusicDock() {
   const pathname = usePathname();
@@ -89,41 +84,17 @@ export function FocusMusicDock() {
   }, [playing]);
 
   const providerCards = useMemo(
-    () =>
-      providerStatus.map((provider) => {
-        const contents = (
-          <>
-            <p className="inline-flex items-center gap-2 text-xs font-semibold">
-              <Music className="h-3.5 w-3.5 text-[var(--accent-gold)]" />
-              {provider.name}
-            </p>
-            <p className="muted mt-1 text-[11px]">
-              {provider.key === "spotify" && spotifyConnected ? "Account linked" : provider.status}
-            </p>
-          </>
-        );
-
-        if (provider.key === "spotify" && !provider.disabled) {
-          return (
-            <a key={provider.name} href={spotifyLoginHref} className="rounded-[18px] bg-white/8 px-3 py-3 transition hover:bg-white/14">
-              {contents}
-            </a>
-          );
-        }
-
-        return (
-          <motion.button 
-            key={provider.name} 
-            type="button" 
-            disabled 
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="cursor-not-allowed rounded-[18px] bg-white/6 px-3 py-3 text-left opacity-70"
-          >
-            {contents}
-          </motion.button>
-        );
-      }),
+    () => (
+      <a key="Spotify" href={spotifyLoginHref} className="rounded-[18px] bg-white/8 px-3 py-3 transition hover:bg-white/14">
+        <p className="inline-flex items-center gap-2 text-xs font-semibold">
+          <Music className="h-3.5 w-3.5 text-[var(--accent-gold)]" />
+          Spotify
+        </p>
+        <p className="muted mt-1 text-[11px]">
+          {spotifyConnected ? "Account linked" : "Connect available • Premium recommended"}
+        </p>
+      </a>
+    ),
     [spotifyConnected, spotifyLoginHref]
   );
 
@@ -152,7 +123,7 @@ export function FocusMusicDock() {
 
         {open ? (
           <div className="border-t border-white/10 p-4">
-            <div className="grid gap-2 sm:grid-cols-3">{providerCards}</div>
+            <div className="grid gap-2">{providerCards}</div>
 
           <div className="mt-4 rounded-[20px] border border-white/10 bg-black/10 px-3 py-3">
               <div className="flex items-center gap-2">
