@@ -2,12 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: [
-    "@napi-rs/canvas",
     "@mozilla/readability",
     "jsdom",
     "mammoth",
     "pdf-parse",
-    "pdfjs-dist",
     "tesseract.js",
     "xlsx",
     "jszip"
@@ -22,10 +20,8 @@ const nextConfig: NextConfig = {
   },
   outputFileTracingIncludes: {
     "/api/upload": [
-      "./node_modules/@napi-rs/canvas/**/*",
       "./node_modules/tesseract.js/**/*",
       "./node_modules/tesseract.js-core/**/*",
-      "./node_modules/pdfjs-dist/**/*",
       "./node_modules/mammoth/**/*",
       "./node_modules/xlsx/**/*",
       "./node_modules/jszip/**/*",
