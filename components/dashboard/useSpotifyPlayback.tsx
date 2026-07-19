@@ -25,6 +25,10 @@ type SpotifyPlaybackState = {
   externalDevice: { name: string; type: string } | null;
   error: string;
   premiumRequired: boolean;
+  /** Last-known playback position in milliseconds (from now-playing poll). */
+  progressMs: number;
+  /** Date.now() timestamp when progressMs was recorded — used for interpolation. */
+  progressTimestamp: number;
 };
 
 type SpotifyPlaybackContextValue = {
@@ -159,7 +163,9 @@ function SpotifyPlaybackProviderInner({
     playbackSource: "No music playing",
     externalDevice: null,
     error: "",
-    premiumRequired: false
+    premiumRequired: false,
+    progressMs: 0,
+    progressTimestamp: 0
   });
   const [searchResults, setSearchResults] = useState<SpotifyTrackItem[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -352,15 +358,21 @@ function SpotifyPlaybackProviderInner({
           setState((current) => ({ ...current, playing: false, track: null }));
           return;
         }
-        const json = await readJson<{
+      const json = await readJson<{
           playing?: boolean;
+          progressMs?: number | null;
           track?: SpotifyTrackItem | null;
           device?: { name?: string; type?: string } | null;
         }>(response);
 
         setState((current) => {
           if (current.ready && current.playing && current.track?.id === json.track?.id) {
-            return current;
+            // Still same track — just update position
+            return {
+              ...current,
+              progressMs: json.progressMs ?? current.progressMs,
+              progressTimestamp: Date.now()
+            };
           }
 
           const externalDevice = json.device?.name
@@ -371,6 +383,8 @@ function SpotifyPlaybackProviderInner({
             ...current,
             playing: Boolean(json.playing),
             track: json.track ?? current.track,
+            progressMs: json.progressMs ?? 0,
+            progressTimestamp: Date.now(),
             externalDevice: json.playing ? externalDevice : null,
             playbackSource: json.playing
               ? current.ready

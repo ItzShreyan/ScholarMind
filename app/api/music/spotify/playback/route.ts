@@ -3,12 +3,16 @@ import { z } from "zod";
 import { attachRefreshedSpotifySession, spotifyApiFetch } from "@/lib/music/spotify";
 
 const schema = z.object({
-  action: z.enum(["play", "pause", "resume", "next", "previous", "transfer"]),
+  action: z.enum(["play", "pause", "resume", "next", "previous", "transfer", "repeat", "shuffle"]),
   uri: z.string().optional(),
   contextUri: z.string().optional(),
   deviceId: z.string().optional(),
   positionMs: z.number().int().nonnegative().optional(),
-  offsetPosition: z.number().int().nonnegative().optional()
+  offsetPosition: z.number().int().nonnegative().optional(),
+  /** repeat: "track" | "context" | "off" */
+  repeatState: z.enum(["track", "context", "off"]).optional(),
+  /** shuffle: true | false */
+  shuffleState: z.boolean().optional()
 });
 
 export async function POST(req: Request) {
@@ -66,6 +70,18 @@ export async function POST(req: Request) {
           })
         };
         break;
+      case "repeat": {
+        const state = body.repeatState ?? "off";
+        path = `/me/player/repeat?state=${encodeURIComponent(state)}${body.deviceId ? `&device_id=${encodeURIComponent(body.deviceId)}` : ""}`;
+        init = { method: "PUT" };
+        break;
+      }
+      case "shuffle": {
+        const shuffleOn = body.shuffleState ?? false;
+        path = `/me/player/shuffle?state=${shuffleOn}${body.deviceId ? `&device_id=${encodeURIComponent(body.deviceId)}` : ""}`;
+        init = { method: "PUT" };
+        break;
+      }
     }
 
     const { tokens, response } = await spotifyApiFetch(req, path, init);

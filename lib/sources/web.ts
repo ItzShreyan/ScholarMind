@@ -204,6 +204,21 @@ async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 150
   });
 }
 
+function unwrapDuckDuckGoRedirect(href: string): string {
+  try {
+    const absolute = href.startsWith("//")
+      ? `https:${href}`
+      : href.startsWith("/")
+        ? `https://duckduckgo.com${href}`
+        : href;
+    const parsed = new URL(absolute);
+    const uddg = parsed.searchParams.get("uddg");
+    return uddg ? decodeURIComponent(uddg) : absolute;
+  } catch {
+    return href;
+  }
+}
+
 async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]> {
   const response = await fetch(
     `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
@@ -232,7 +247,7 @@ async function fetchDuckDuckGoResults(query: string): Promise<WebSourceResult[]>
     const linkMatch = block.match(/<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i);
     const snippetMatch = block.match(/<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
 
-    const url = linkMatch?.[1] || "";
+    const url = unwrapDuckDuckGoRedirect(linkMatch?.[1] || "");
     const rawTitle = linkMatch?.[2] || "";
     const rawSnippet = snippetMatch?.[1] || "";
 

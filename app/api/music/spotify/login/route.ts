@@ -28,6 +28,12 @@ export async function GET(req: Request) {
     "user-read-currently-playing",
     "playlist-read-private",
     "playlist-read-collaborative",
+    // New: allows saving/creating playlists on the user's real Spotify account.
+    // IMPORTANT: any user who connected before this change must re-authorise
+    // (visit /api/music/spotify/login again) — existing tokens do NOT include
+    // these scopes and Spotify will return 403 for calls that require them.
+    "playlist-modify-public",
+    "playlist-modify-private",
     "streaming"
   ];
   const authUrl = new URL("https://accounts.spotify.com/authorize");

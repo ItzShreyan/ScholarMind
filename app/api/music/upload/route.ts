@@ -4,6 +4,9 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+/** Maximum audio tracks a single user may upload. Adjust here to change the limit. */
+const MAX_AUDIO_UPLOADS_PER_USER = 20;
+
 function isUploadedFile(entry: FormDataEntryValue): entry is File {
   return (
     typeof entry === "object" &&
@@ -24,10 +27,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // ── Upload cap check ─────────────────────────────────────────────────
+    const { count: existingCount, error: countError } = await supabase
+      .from("user_audio_tracks")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+
+    if (countError) {
+      return NextResponse.json({ error: "Failed to check upload limit." }, { status: 500 });
+    }
+
+    if (existingCount !== null && existingCount >= MAX_AUDIO_UPLOADS_PER_USER) {
+      return NextResponse.json(
+        {
+          error: `You've reached the upload limit of ${MAX_AUDIO_UPLOADS_PER_USER} songs. Delete some tracks to upload more.`,
+          limit: MAX_AUDIO_UPLOADS_PER_USER,
+          current: existingCount
+        },
+        { status: 429 }
+      );
+    }
+
     const form = await req.formData();
     const files = form.getAll("files").filter(isUploadedFile);
     if (files.length === 0) {
       return NextResponse.json({ error: "No audio files provided" }, { status: 400 });
+    }
+
+    const errors: string[] = [];
+
+    // Don't allow uploading more files than remaining capacity
+    const remaining = existingCount !== null ? MAX_AUDIO_UPLOADS_PER_USER - existingCount : files.length;
+    const filesToProcess = files.slice(0, remaining);
+    if (filesToProcess.length < files.length) {
+      errors.push(
+        `Upload limit reached. Only ${remaining} of ${files.length} file(s) were processed. Delete some tracks to upload more.`
+      );
     }
 
     const allowedAudioTypes = [
@@ -44,9 +79,8 @@ export async function POST(req: Request) {
       storage_path: string;
       duration: number;
     }> = [];
-    const errors: string[] = [];
 
-    for (const file of files) {
+    for (const file of filesToProcess) {
       try {
         const mimeType = file.type || "audio/mpeg";
         if (!allowedAudioTypes.some((t) => mimeType.includes(t.toLowerCase().replace("audio/", "")))) {

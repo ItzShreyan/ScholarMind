@@ -6,11 +6,15 @@ import {
   Play, Pause, SkipBack, SkipForward, Volume2, X, Music, ExternalLink,
   LogOut, Radio, Search, ChevronUp, ListMusic, ArrowLeft, ChevronDown,
   Repeat, Repeat1, Plus, Trash2, Save, Upload, Forward, Rewind,
-  FolderOpen, ListOrdered
+  FolderOpen, ListOrdered, Zap
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlayback";
 import { formatTrackDuration } from "@/lib/music/spotify-catalog";
+import { BeatReactiveBorder } from "@/components/dashboard/BeatReactiveBorder";
+import { useBeatAnalyserNode } from "@/hooks/useBeatAnalyserNode";
+import { useSpotifyBeatClock, stringToHue } from "@/hooks/useSpotifyBeatClock";
+import type { BeatSignal } from "@/hooks/useSpotifyBeatClock";
 
 type SystemAudioTrack = {
   title: string;
@@ -47,6 +51,26 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   const systemAudioRef = useRef(systemAudio);
   const [localSearch, setLocalSearch] = useState("");
   const pathname = usePathname();
+
+  // ── Beat-reactive border toggle (persisted in localStorage) ─────────────────
+  const [beatReactiveEnabled, setBeatReactiveEnabled] = useState(false);
+  const beatReactiveLoadedRef = useRef(false);
+  const beatReactiveStorageKey = "scholarmind_beat_reactive_border";
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(beatReactiveStorageKey);
+      if (stored === "true") setBeatReactiveEnabled(true);
+      beatReactiveLoadedRef.current = true;
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (!beatReactiveLoadedRef.current) return;
+    try {
+      localStorage.setItem(beatReactiveStorageKey, beatReactiveEnabled ? "true" : "false");
+    } catch { /* ignore */ }
+  }, [beatReactiveEnabled]);
 
   // Uploaded audio track state
   const [uploadedTracks, setUploadedTracks] = useState<UploadedTrack[]>([]);
@@ -650,11 +674,108 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   }, [panelView, loadSpotifyPlaylists, hasSpotify, spotifyState?.ready]);
 
   const activePlaylist = spotifyState?.activePlaylist;
-  const progressPct = uploadedTrackDuration > 0
+const progressPct = uploadedTrackDuration > 0
     ? (uploadedTrackCurrentTime / uploadedTrackDuration) * 100 : 0;
 
+  // ── Beat-reactive animation: dual-path signal computation ──────────────
+  // Path 1: Local/uploaded tracks → Web Audio AnalyserNode
+  const { intensityRef: beatIntensityRef } = useBeatAnalyserNode(
+    audioRef,
+    beatReactiveEnabled && isUploadActive
+  );
+
+  // Path 2: Spotify tracks → audio-analysis API + beat clock
+  const spotifyTrackId = hasSpotify && spotifyState?.track?.id
+    ? spotifyState.track.id
+    : null;
+  const spotifyBeatSignal = useSpotifyBeatClock(
+    spotifyTrackId,
+    spotifyState?.progressMs ?? 0,
+    spotifyState?.progressTimestamp ?? Date.now(),
+    Boolean(spotifyState?.playing),
+    beatReactiveEnabled && hasSpotify && !isUploadActive
+  );
+
+  // Local rAF loop: read the analyser ref (never triggers re-render by itself)
+  // and bridge it into a stateful BeatSignal for the component.
+  const [uploadBeatSignal, setUploadBeatSignal] = useState<BeatSignal>({
+    intensity: 0,
+    hue: 180,
+    onBeat: false
+  });
+  const uploadBeatRafRef = useRef<number>(0);
+  const previousIntensityRef = useRef(0);
+  const beatFlashEndRef = useRef(0);
+
+  useEffect(() => {
+    if (uploadBeatRafRef.current) {
+      cancelAnimationFrame(uploadBeatRafRef.current);
+      uploadBeatRafRef.current = 0;
+    }
+
+    if (!beatReactiveEnabled || !isUploadActive || !isPlaying) {
+      setUploadBeatSignal((prev) =>
+        prev.intensity === 0 && !prev.onBeat
+          ? prev
+          : { intensity: 0, hue: prev.hue, onBeat: false }
+      );
+      return;
+    }
+
+    const currentTrackName = currentTrack?.name ?? "uploaded";
+    const trackHash = stringToHue(currentTrackName + (currentTrack?.id ?? ""));
+
+    const tick = () => {
+      const raw = beatIntensityRef.current;
+
+      if (raw > 0.005) {
+        // Detect beat onset: sudden jump in bass energy
+        if (raw > previousIntensityRef.current * 1.6 && raw > 0.08) {
+          beatFlashEndRef.current = performance.now() + 120;
+        }
+      }
+
+      const now = performance.now();
+      const onBeat = now < beatFlashEndRef.current;
+      const intensity = Math.min(1, raw * 1.2);
+      previousIntensityRef.current = raw;
+
+      setUploadBeatSignal({ intensity, hue: trackHash, onBeat });
+      uploadBeatRafRef.current = requestAnimationFrame(tick);
+    };
+
+    uploadBeatRafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (uploadBeatRafRef.current) {
+        cancelAnimationFrame(uploadBeatRafRef.current);
+        uploadBeatRafRef.current = 0;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [beatReactiveEnabled, isUploadActive, isPlaying, currentTrack?.id, currentTrack?.name]);
+
+  // Compose the final signal: upload (path 1) takes priority over Spotify (path 2)
+  const beatSignal: BeatSignal | null = beatReactiveEnabled
+    ? isUploadActive
+      ? uploadBeatSignal
+      : hasSpotify
+        ? spotifyBeatSignal
+        : null
+    : null;
+
+  // ── Visibility rule: render nothing when idle and no media is active ──
+  const shouldShowPlayer =
+    isUploadActive ||
+    (hasSpotify && (spotifyState?.track?.name || spotifyState?.playing)) ||
+    (systemAudio?.title && systemAudio.title !== "No music");
+
+  if (!shouldShowPlayer) return null;
+
   return (
-    <AnimatePresence mode="wait">
+    <>
+      <BeatReactiveBorder signal={beatSignal} enabled={beatReactiveEnabled} />
+      <AnimatePresence mode="wait">
       {isMinimized ? (
         <motion.div
           key="minimized"
@@ -775,6 +896,20 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
                   <LogOut className="h-3.5 w-3.5 text-[var(--accent-coral)]" />
                 </motion.button>
               ) : null}
+              {/* Beat-reactive border toggle */}
+              <motion.button
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => setBeatReactiveEnabled((c) => !c)}
+                className={`p-1.5 rounded-full transition-colors ${
+                  beatReactiveEnabled
+                    ? "bg-[var(--accent-mint)]/20 text-[var(--accent-mint)]"
+                    : "text-white/60 hover:bg-white/10"
+                }`}
+                title={beatReactiveEnabled ? "Disable beat-reactive border" : "Enable beat-reactive border"}
+              >
+                <Zap className="h-3.5 w-3.5" />
+              </motion.button>
               <button
                 onClick={() => setIsMinimized(true)}
                 title="Minimise music player"
@@ -1476,5 +1611,6 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
         </motion.div>
       )}
     </AnimatePresence>
+    </>
   );
 }

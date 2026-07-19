@@ -49,8 +49,6 @@ const SourceModal = dynamic<SourceModalProps>(
 const WorkspaceTimer = dynamic(() => import("@/components/dashboard/WorkspaceTimer").then((m) => ({ default: m.WorkspaceTimer })), { ssr: false });
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
-import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
-import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
 import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
 import { FileViewer } from "@/components/dashboard/FileViewer";
 import type { PreviewKind } from "@/components/dashboard/FileViewer";
@@ -1316,6 +1314,7 @@ export function StudyWorkspace({
   );
   const sourceEnabledCount = sourceEnabledFiles.length;
   const hasCurrentFiles = activeSessionId ? activeSessionId in filesBySession : false;
+  const hasCurrentToolHistory = activeSessionId ? activeSessionId in toolHistoryBySession : false;
   const currentSession = sessionList.find((session) => session.id === activeSessionId) ?? null;
   const currentToolHistory = useMemo(
     () => (activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : []),
@@ -2266,6 +2265,38 @@ export function StudyWorkspace({
   }, [activeSessionId, hasCurrentFiles]);
 
   useEffect(() => {
+    if (!activeSessionId || hasCurrentToolHistory) return;
+
+    let ignore = false;
+
+    const fetchToolResults = async () => {
+      try {
+        const response = await fetch(`/api/tool-results?sessionId=${activeSessionId}`);
+        const json = await readJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(normalizeErrorMessage(json.error, "Unable to load tool history."));
+        }
+        if (ignore) return;
+
+        setToolHistoryBySession((current) => ({
+          ...current,
+          [activeSessionId]: json.results ?? []
+        }));
+      } catch (error) {
+        if (!ignore) {
+          console.error("Error loading tool history:", error);
+        }
+      }
+    };
+
+    fetchToolResults();
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeSessionId, hasCurrentToolHistory]);
+
+  useEffect(() => {
     const viewport = chatViewportRef.current;
     if (!viewport) return;
 
@@ -2511,6 +2542,27 @@ export function StudyWorkspace({
         ...current,
         [activeSessionId]: [result, ...(current[activeSessionId] ?? [])].slice(0, 12)
       }));
+
+      void fetch("/api/tool-results", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: result.id,
+          sessionId: activeSessionId,
+          action: result.action,
+          title: result.title,
+          label: result.label,
+          preview: result.preview,
+          output: result.output
+        })
+      }).then(async (response) => {
+        if (!response.ok) {
+          const json = await readJsonResponse(response);
+          console.error("Failed to save tool result:", json.error);
+        }
+      }).catch((err) => {
+        console.error("Error saving tool result:", err);
+      });
     },
     [activeSessionId]
   );
@@ -6241,9 +6293,6 @@ export function StudyWorkspace({
         />
       ) : null}
 
-      <SpotifyPlaybackProvider connected={spotifyConnected}>
-        <DynamicIslandMusicPlayer />
-      </SpotifyPlaybackProvider>
 
       {sourceModalOpen ? (
         <SourceModal

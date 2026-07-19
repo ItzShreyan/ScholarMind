@@ -60,7 +60,15 @@ export async function GET(req: Request) {
   try {
     targetUrl = new URL(url);
   } catch {
-    return makeHtmlResponse('<h2>Invalid URL</h2><p>The URL could not be parsed.</p>');
+    if (url.startsWith("//")) {
+      try {
+        targetUrl = new URL("https:" + url);
+      } catch {
+        return makeHtmlResponse('<h2>Invalid URL</h2><p>The URL could not be parsed.</p>');
+      }
+    } else {
+      return makeHtmlResponse('<h2>Invalid URL</h2><p>The URL could not be parsed.</p>');
+    }
   }
 
   if (!["http:", "https:"].includes(targetUrl.protocol)) {

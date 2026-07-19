@@ -20,6 +20,7 @@ export async function GET(req: Request) {
 
   const json = (await response.json()) as {
     is_playing?: boolean;
+    progress_ms?: number;
     device?: {
       name?: string;
       type?: string;
@@ -57,6 +58,7 @@ export async function GET(req: Request) {
 
   const payload = NextResponse.json({
     playing: Boolean(json.is_playing),
+    progressMs: json.progress_ms ?? null,
     track,
     device
   });
