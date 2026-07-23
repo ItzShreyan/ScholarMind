@@ -1,0 +1,10 @@
+.next
+node_modules
+.env.local
+.env
+dist
+coverage
+*.log
+
+# Local Netlify folder
+.netlify

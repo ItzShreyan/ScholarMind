@@ -1,0 +1,406 @@
+create extension if not exists "uuid-ossp";
+
+create table if not exists public.study_sessions (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  title text not null,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.study_files (
+  id uuid primary key default uuid_generate_v4(),
+  session_id uuid not null references public.study_sessions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  file_name text not null,
+  file_type text not null,
+  storage_path text not null,
+  extracted_text text not null default '',
+  source_enabled boolean not null default true,
+  created_at timestamptz default now()
+);
+
+alter table public.study_files
+add column if not exists source_enabled boolean not null default true;
+
+create table if not exists public.study_reminders (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id uuid not null references public.study_sessions(id) on delete cascade,
+  reminder_at timestamptz not null,
+  message text not null,
+  done boolean default false,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.study_chat_messages (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id uuid not null references public.study_sessions(id) on delete cascade,
+  role text not null check (role in ('user', 'ai')),
+  content text not null,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.study_ai_usage (
+  id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  actor_key text not null,
+  scope text not null check (scope in ('general', 'exam', 'exam_practice', 'chat', 'tool')),
+  created_at timestamptz default now()
+);
+
+create table if not exists public.study_user_preferences (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  theme text not null default 'dark' check (theme in ('dark', 'light')),
+  playful_motion boolean not null default true,
+  remember_last_studio boolean not null default true,
+  last_studio_id uuid references public.study_sessions(id) on delete set null,
+  default_tool text not null default 'summary' check (default_tool in ('summary', 'flashcards', 'quiz', 'notes', 'exam', 'insights', 'hard_mode', 'study_plan', 'concepts')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+do $$
+declare
+  constraint_name text;
+begin
+  select con.conname into constraint_name
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'study_user_preferences'
+    and con.contype = 'c'
+    and pg_get_constraintdef(con.oid) like '%default_tool%';
+
+  if constraint_name is not null then
+    execute format('alter table public.study_user_preferences drop constraint %I', constraint_name);
+  end if;
+
+  alter table public.study_user_preferences
+  add constraint study_user_preferences_default_tool_check
+  check (default_tool in ('summary', 'flashcards', 'quiz', 'notes', 'exam', 'insights', 'hard_mode', 'study_plan', 'concepts'));
+end $$;
+
+create table if not exists public.study_user_onboarding (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  discovery_source text[] not null default '{}'::text[],
+  education_level text not null default '',
+  country text not null default '',
+  curriculum_stage text not null default '',
+  state_region text not null default '',
+  subjects text[] not null default '{}'::text[],
+  exam_boards jsonb not null default '{}'::jsonb,
+  subject_tiers jsonb not null default '{}'::jsonb,
+  university_subject text not null default '',
+  learning_style text[] not null default '{}'::text[],
+  goal text not null default '',
+  completed_at timestamptz,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.study_user_onboarding
+add column if not exists exam_boards jsonb not null default '{}'::jsonb;
+
+alter table public.study_user_onboarding
+add column if not exists subject_tiers jsonb not null default '{}'::jsonb;
+
+create table if not exists public.study_revision_plans (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_id uuid not null references public.study_sessions(id) on delete cascade,
+  exam_name text not null,
+  exam_date date not null,
+  cadence text not null check (cadence in ('daily', 'weekly')),
+  goals text not null default '',
+  plan_markdown text not null default '',
+  days jsonb not null default '[]'::jsonb,
+  current_day integer not null default 0,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.study_user_subscriptions (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  plan text not null default 'free' check (plan in ('free', 'pro')),
+  status text not null default 'active',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists public.study_site_events (
+  id uuid primary key default uuid_generate_v4(),
+  visitor_key text not null,
+  user_id uuid references auth.users(id) on delete set null,
+  user_email text,
+  event_type text not null check (event_type in ('page_view', 'feature_use', 'source_search', 'source_import')),
+  page text,
+  feature text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.study_site_settings (
+  id boolean primary key default true check (id = true),
+  ai_daily_limit integer not null default 20 check (ai_daily_limit >= 1 and ai_daily_limit <= 200),
+  ai_hourly_limit integer not null default 8 check (ai_hourly_limit >= 0 and ai_hourly_limit <= 100),
+  exam_weekly_limit integer not null default 1 check (exam_weekly_limit >= 1 and exam_weekly_limit <= 20),
+  research_mode_locked boolean not null default true,
+  maintenance_message text not null default '',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table public.study_sessions enable row level security;
+alter table public.study_files enable row level security;
+alter table public.study_reminders enable row level security;
+alter table public.study_chat_messages enable row level security;
+alter table public.study_ai_usage enable row level security;
+alter table public.study_user_preferences enable row level security;
+alter table public.study_user_onboarding enable row level security;
+alter table public.study_revision_plans enable row level security;
+alter table public.study_user_subscriptions enable row level security;
+alter table public.study_site_events enable row level security;
+alter table public.study_site_settings enable row level security;
+
+drop policy if exists "sessions owner read/write" on public.study_sessions;
+drop policy if exists "files owner read/write" on public.study_files;
+drop policy if exists "reminders owner read/write" on public.study_reminders;
+drop policy if exists "chat messages owner read/write" on public.study_chat_messages;
+drop policy if exists "ai usage owner read/write" on public.study_ai_usage;
+drop policy if exists "preferences owner read/write" on public.study_user_preferences;
+drop policy if exists "onboarding owner read/write" on public.study_user_onboarding;
+drop policy if exists "onboarding host read" on public.study_user_onboarding;
+drop policy if exists "subscriptions owner read" on public.study_user_subscriptions;
+drop policy if exists "revision plans owner read/write" on public.study_revision_plans;
+drop policy if exists "subscriptions host read/write" on public.study_user_subscriptions;
+drop policy if exists "site events public insert" on public.study_site_events;
+drop policy if exists "site events host read" on public.study_site_events;
+drop policy if exists "site settings public read" on public.study_site_settings;
+drop policy if exists "site settings host write" on public.study_site_settings;
+
+create policy "sessions owner read/write"
+on public.study_sessions for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "files owner read/write"
+on public.study_files for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "reminders owner read/write"
+on public.study_reminders for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "chat messages owner read/write"
+on public.study_chat_messages for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "ai usage owner read/write"
+on public.study_ai_usage for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "preferences owner read/write"
+on public.study_user_preferences for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "onboarding owner read/write"
+on public.study_user_onboarding for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "onboarding host read"
+on public.study_user_onboarding for select
+to authenticated
+using (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com');
+
+create policy "revision plans owner read/write"
+on public.study_revision_plans for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "subscriptions owner read"
+on public.study_user_subscriptions for select
+to authenticated
+using (auth.uid() = user_id);
+
+create policy "subscriptions host read/write"
+on public.study_user_subscriptions for all
+to authenticated
+using (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com')
+with check (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com');
+
+create policy "site events public insert"
+on public.study_site_events for insert
+to anon, authenticated
+with check (true);
+
+create policy "site events host read"
+on public.study_site_events for select
+to authenticated
+using (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com');
+
+create policy "site settings public read"
+on public.study_site_settings for select
+to anon, authenticated
+using (true);
+
+create policy "site settings host write"
+on public.study_site_settings for all
+to authenticated
+using (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com')
+with check (coalesce(auth.jwt() ->> 'email', '') = 'shreyanmadi@gmail.com');
+
+create index if not exists study_ai_usage_user_scope_created_at_idx
+on public.study_ai_usage (user_id, scope, created_at desc);
+
+create index if not exists study_chat_messages_session_created_at_idx
+on public.study_chat_messages (user_id, session_id, created_at);
+
+create index if not exists study_revision_plans_user_created_at_idx
+on public.study_revision_plans (user_id, created_at desc);
+
+create index if not exists study_user_onboarding_completed_at_idx
+on public.study_user_onboarding (completed_at desc);
+
+create index if not exists study_site_events_created_at_idx
+on public.study_site_events (created_at desc);
+
+create index if not exists study_site_events_type_created_at_idx
+on public.study_site_events (event_type, created_at desc);
+
+insert into public.study_site_settings (id, ai_daily_limit, ai_hourly_limit, exam_weekly_limit, research_mode_locked, maintenance_message)
+values (true, 20, 8, 1, true, '')
+on conflict (id) do nothing;
+
+alter table public.study_site_settings
+add column if not exists chat_daily_limit integer not null default 15 check (chat_daily_limit >= 1 and chat_daily_limit <= 200);
+
+alter table public.study_site_settings
+add column if not exists tool_daily_limit integer not null default 10 check (tool_daily_limit >= 1 and tool_daily_limit <= 200);
+
+alter table public.study_site_settings
+add column if not exists exam_practice_weekly_limit integer not null default 3 check (exam_practice_weekly_limit >= 1 and exam_practice_weekly_limit <= 20);
+
+do $$
+declare
+  constraint_name text;
+begin
+  select con.conname into constraint_name
+  from pg_constraint con
+  join pg_class rel on rel.oid = con.conrelid
+  join pg_namespace nsp on nsp.oid = rel.relnamespace
+  where nsp.nspname = 'public'
+    and rel.relname = 'study_ai_usage'
+    and con.contype = 'c'
+    and pg_get_constraintdef(con.oid) like '%scope%';
+
+  if constraint_name is not null then
+    execute format('alter table public.study_ai_usage drop constraint %I', constraint_name);
+  end if;
+
+  alter table public.study_ai_usage
+  add constraint study_ai_usage_scope_check
+  check (scope in ('general', 'exam', 'exam_practice', 'chat', 'tool'));
+exception
+  when duplicate_object then null;
+end $$;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'study-files',
+  'study-files',
+  false,
+  52428800,
+  array[
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/tiff',
+    'image/heic',
+    'image/heif'
+  ]
+)
+on conflict (id) do nothing;
+
+drop policy if exists "study files read own objects" on storage.objects;
+drop policy if exists "study files insert own objects" on storage.objects;
+drop policy if exists "study files update own objects" on storage.objects;
+drop policy if exists "study files delete own objects" on storage.objects;
+
+create policy "study files read own objects"
+on storage.objects for select
+to authenticated
+using (
+  bucket_id = 'study-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "study files insert own objects"
+on storage.objects for insert
+to authenticated
+with check (
+  bucket_id = 'study-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "study files update own objects"
+on storage.objects for update
+to authenticated
+using (
+  bucket_id = 'study-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+)
+with check (
+  bucket_id = 'study-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create policy "study files delete own objects"
+on storage.objects for delete
+to authenticated
+using (
+  bucket_id = 'study-files'
+  and (storage.foldername(name))[1] = auth.uid()::text
+);
+
+create table if not exists public.study_tool_results (
+  id text primary key,
+  session_id uuid not null references public.study_sessions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  action text not null,
+  title text not null,
+  label text not null,
+  preview text not null,
+  output text not null,
+  created_at timestamptz default now()
+);
+
+alter table public.study_tool_results enable row level security;
+
+drop policy if exists "tool results owner read/write" on public.study_tool_results;
+create policy "tool results owner read/write"
+on public.study_tool_results for all
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create index if not exists study_tool_results_session_user_idx
+on public.study_tool_results (user_id, session_id, created_at desc);

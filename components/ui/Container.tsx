@@ -1,0 +1,12 @@
+"use client";
+
+import * as React from "react";
+import { cn } from "@/components/ui/cn";
+
+export function Container({
+  className,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn("mx-auto max-w-7xl px-5 sm:px-6 lg:px-8", className)} {...props} />;
+}
+

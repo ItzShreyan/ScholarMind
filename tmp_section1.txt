@@ -1,0 +1,3000 @@
+"use client";
+
+import { DragEvent as ReactDragEvent, KeyboardEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  Brain,
+  BookOpen,
+  CalendarDays,
+  ChevronLeft,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  CheckCircle2,
+  Copy,
+  Eraser,
+  Eye,
+  ExternalLink,
+  FileText,
+  FolderOpen,
+  Globe2,
+  Highlighter,
+  LoaderCircle,
+  Lock,
+  Maximize2,
+  MousePointer2,
+  Music,
+  Pencil,
+  PenLine,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  SendHorizonal,
+  Timer,
+  Trash2,
+  Upload,
+  WandSparkles,
+  X
+} from "lucide-react";
+import { motion } from "framer-motion";
+import dynamic from "next/dynamic";
+import type { SourceModalProps } from "@/components/dashboard/SourceModal";
+
+const SourceModal = dynamic<SourceModalProps>(
+  () => import("@/components/dashboard/SourceModal").then((m) => ({ default: m.SourceModal })),
+  { ssr: false }
+);
+import { RichStudyText } from "@/components/dashboard/RichStudyText";
+import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
+import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
+import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
+import { SecurityBadge } from "@/components/common/SecurityBadge";
+import { Button } from "@/components/ui/Button";
+import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
+import { defaultUserPreferences } from "@/lib/preferences/defaults";
+import { buildStudyContext } from "@/lib/ai/source-context";
+import { onboardingSummary, type OnboardingRecord } from "@/lib/onboarding-profile";
+import { parseFlashcards } from "@/lib/ai/parse";
+import { extractStructuredOutput } from "@/lib/ai/strip-reasoning";
+import type { SiteSettings } from "@/lib/site-settings";
+import { formatSupabaseSetupError } from "@/lib/supabase/setup";
+import {
+  defaultMaxUploadFileSizeMb,
+  resolvePreviewKind,
+  uploadAcceptAttribute
+} from "@/lib/documents/formats";
+
+type Session = { id: string; title: string };
+type FileItem = {
+  id: string;
+  file_name: string;
+  extracted_text: string;
+  file_type: string;
+  storage_path: string;
+  source_enabled?: boolean;
+};
+type ChatMessage = { role: "user" | "ai"; content: string };
+type ChatThread = {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  updatedAt: number;
+};
+type AIAction =
+  | "summary"
+  | "flashcards"
+  | "quiz"
+  | "notes"
+  | "exam"
+  | "insights"
+  | "hard_mode"
+  | "study_plan"
+  | "concepts";
+
+type ToolDraft = {
+  action: AIAction;
+  count: number;
+  difficulty: "foundation" | "exam";
+  examMode?: "full" | "practice";
+  focus: string;
+};
+
+type QuizItem = {
+  question: string;
+  options?: string[];
+  answer?: string;
+  explanation?: string;
+};
+
+type FlashcardItem = {
+  front: string;
+  back: string;
+};
+
+type QuizResult = {
+  question: string;
+  selected: string;
+  correct: string;
+  isCorrect: boolean;
+  explanation: string;
+};
+
+type OutputCard = {
+  title: string;
+  body: string;
+};
+
+type ExamQuestion = {
+  number: string;
+  prompt: string;
+  marks: string;
+};
+
+type ToolHistoryItem = {
+  id: string;
+  action: AIAction;
+  title: string;
+  label: string;
+  preview: string;
+  output: string;
+  createdAt: number;
+};
+
+type WorkspaceDynamicTab = {
+  id: string;
+  label: string;
+  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search" | "browse" | "canvas-browse";
+  closable: true;
+  action?: AIAction;
+  output?: string;
+  file?: FileItem;
+  previewKind?: "text" | "table" | "pdf" | "image";
+  text?: string;
+  url?: string | null;
+  query?: string;
+  results?: WebSourceItem[];
+};
+
+type PreviewState = {
+  open: boolean;
+  loading: boolean;
+  file: FileItem | null;
+  kind: "text" | "table" | "pdf" | "image";
+  text: string;
+  url: string | null;
+  error: string;
+};
+
+type WebSourceItem = {
+  id: string;
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  trustLabel: string;
+};
+
+type StudyMetrics = {
+  quizAnswered: number;
+  quizCorrect: number;
+  flashcardsFlipped: number;
+  toolRuns: Record<AIAction, number>;
+  recentQuizResults: QuizResult[];
+};
+
+type RevisionScheduleItem = {
+  day: string;
+  focus: string;
+  task: string;
+  check: string;
+};
+
+type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
+type CopiedSourceClipboard = {
+  sourceSessionId: string;
+  sourceStudioTitle: string;
+  copiedAt: number;
+};
+type CanvasTool = "mouse" | "text" | "highlight" | "draw" | "eraser";
+type CanvasAnnotation = {
+  id: string;
+  tabId: string;
+  tool: Exclude<CanvasTool, "mouse">;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  createdAt: number;
+};
+type CanvasPoint = { x: number; y: number; pressure: number };
+type CanvasStroke = {
+  id: string;
+  tabId: string;
+  tool: "highlight" | "draw";
+  color: string;
+  width: number;
+  points: CanvasPoint[];
+  createdAt: number;
+};
+
+const desktopLeftPanelDefault = 360;
+const desktopRightPanelDefault = 520;
+const desktopLeftPanelMin = 300;
+const desktopLeftPanelMax = 520;
+const desktopRightPanelMin = 420;
+const desktopRightPanelMax = 760;
+const desktopCenterPanelMin = 460;
+const desktopResizeHandleWidth = 14;
+const sourceClipboardStorageKey = "scholarmind_source_clipboard";
+const focusMusicStateStorageKey = "scholarmind_focus_music_state";
+const chatThreadsStoragePrefix = "scholarmind_chat_threads:";
+const recentWebsitesStoragePrefix = "scholarmind_recent_websites:";
+const maxRecentWebsites = 6;
+
+type RecentWebsite = {
+  url: string;
+  label: string;
+  visitedAt: number;
+};
+
+const focusTracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
+
+const musicProviders = [
+  { key: "spotify", name: "Spotify", logo: "S", href: "/api/music/spotify/login", note: "Connect account • Free accounts have limited playback", unavailable: false },
+  {
+    key: "youtube",
+    name: "YouTube Music",
+    logo: "YT",
+    href: null,
+    note: "Unavailable in preview",
+    unavailable: true
+  },
+  {
+    key: "soundcloud",
+    name: "SoundCloud",
+    logo: "SC",
+    href: null,
+    note: "Account linking unavailable",
+    unavailable: true
+  }
+];
+
+const actionButtons: { key: AIAction; label: string; copy: string }[] = [
+  { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
+  { key: "notes", label: "AI Notes", copy: "Build long textbook-style notes with formulas, examples, questions, and science labs." },
+  { key: "flashcards", label: "Flashcards", copy: "Turn the notes into quick active-recall prompts." },
+  { key: "quiz", label: "Quiz", copy: "Generate multiple-choice questions from the uploaded sources." },
+  { key: "exam", label: "Exam Generator", copy: "Build a full GCSE, A-Level, or custom mock paper from the source stack." }
+];
+
+const toolTones: Record<AIAction, string> = {
+  summary: "border-[rgba(57,208,255,0.22)] bg-[rgba(57,208,255,0.1)]",
+  notes: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.1)]",
+  flashcards: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.1)]",
+  quiz: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.1)]",
+  exam: "border-[rgba(255,209,102,0.24)] bg-[rgba(255,209,102,0.08)]",
+  insights: "border-[rgba(255,125,89,0.24)] bg-[rgba(255,125,89,0.1)]",
+  hard_mode: "border-[rgba(255,125,89,0.26)] bg-[rgba(255,125,89,0.12)]",
+  study_plan: "border-[rgba(57,208,255,0.22)] bg-[rgba(57,208,255,0.08)]",
+  concepts: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.08)]"
+};
+
+function createToolDraft(action: AIAction): ToolDraft {
+  return {
+    action,
+    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 14 : action === "notes" ? 8 : 5,
+    difficulty: action === "hard_mode" || action === "exam" ? "exam" : "foundation",
+    examMode: action === "exam" ? "full" : undefined,
+    focus: ""
+  };
+}
+
+function parseJsonBlock<T>(text: string): T | null {
+  // Strip BOM, reasoning preamble, and clean up
+  let cleaned = extractStructuredOutput(text).replace(/^\uFEFF/, "").trim();
+  if (!cleaned) return null;
+
+  // Recursively strip trailing commas: keep going until no more matches
+  const stripTrailingCommas = (s: string): string => {
+    const result = s.replace(/,\s*([\]}])/g, "$1");
+    return result === s ? result : stripTrailingCommas(result);
+  };
+  cleaned = stripTrailingCommas(cleaned);
+
+  // Try direct parse first
+  try {
+    return JSON.parse(cleaned) as T;
+  } catch {
+    // fall through
+  }
+
+  // Try extracting from code fences
+  const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fencedMatch) {
+    const jsonStr = stripTrailingCommas(fencedMatch[1].trim());
+    try {
+      return JSON.parse(jsonStr) as T;
+    } catch {
+      // fall through
+    }
+  }
+
+  // Try extracting balanced array or object from the raw text
+  const bracketMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
+  if (bracketMatch) {
+    const jsonStr = stripTrailingCommas(bracketMatch[1]);
+    try {
+      return JSON.parse(jsonStr) as T;
+    } catch {
+      // fall through
+    }
+  }
+
+  return null;
+}
+
+function cleanGeneratedText(text: string) {
+  return extractStructuredOutput(text)
+    .replace(/^Local fallback response\s*/i, "")
+    .replace(/```(?:json)?/gi, "")
+    .trim();
+}
+
+function normalizeAIText(value: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed && trimmed !== "[object Object]" && trimmed !== "{}" ? trimmed : "";
+  }
+  if (value === null || value === undefined) return "";
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const preferred = [record.error, record.message, record.text, record.content];
+    for (const item of preferred) {
+      const normalized = normalizeAIText(item);
+      if (normalized) return normalized;
+    }
+    try {
+      const json = JSON.stringify(value);
+      return json === "{}" ? "" : json;
+    } catch {
+      return "";
+    }
+  }
+  return String(value).trim();
+}
+
+function normalizeErrorMessage(value: unknown, fallback = "Unexpected error") {
+  const normalized = normalizeAIText(value);
+  if (!normalized || normalized === "[object Object]" || normalized === "{}") {
+    return fallback;
+  }
+  return normalized;
+}
+
+function sanitizeDisplayText(value: unknown, fallback: string) {
+  const normalized = normalizeErrorMessage(value, fallback);
+  return normalized === "[object Object]" ? fallback : normalized;
+}
+
+function normalizeAIResponseText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(normalizeAIResponseText).filter(Boolean).join("\n");
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    const candidate = normalizeAIText(record.text ?? record.content ?? record.error ?? record.message);
+    return candidate || JSON.stringify(value);
+  }
+  return normalizeAIText(value);
+}
+
+function parseSSEChunk(chunk: string): string {
+  const lines = chunk.split(/\r?\n/);
+  let extracted = "";
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.replace(/^data:\s*/, "").trim();
+    if (payload === "[DONE]") continue;
+    try {
+      const data = JSON.parse(payload);
+      const delta = data?.choices?.[0]?.delta?.content;
+      extracted += normalizeAIText(delta);
+    } catch {
+      // not JSON: ignore
+    }
+  }
+  return extracted;
+}
+
+function normalizeLine(line: string) {
+  return line
+    .replace(/^[-*]\s+/, "")
+    .replace(/^\d+\.\s+/, "")
+    .trim();
+}
+
+function clipText(text: string, limit: number) {
+  return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
+}
+
+function summarizeGeneratedOutput(text: string) {
+  return clipText(
+    cleanGeneratedText(text)
+      .replace(/\n+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim(),
+    180
+  );
+}
+
+function isTutorSmallTalk(text: string) {
+  const normalized = text.trim().toLowerCase();
+  return /^(hi|hey|hello|yo|hiya|good morning|good afternoon|good evening)\b/.test(normalized) ||
+    /how are you( doing)?/i.test(normalized) ||
+    /what'?s up/i.test(normalized);
+}
+
+function detectChatToolRequest(text: string): AIAction | null {
+  const normalized = text.toLowerCase();
+  if (!/\b(make|build|create|generate|turn|give me)\b/.test(normalized)) return null;
+  if (/\bflashcards?\b/.test(normalized)) return "flashcards";
+  if (/\bquiz\b|\bmcq\b|\bmultiple[- ]choice\b/.test(normalized)) return "quiz";
+  if (/\bexam\b|\bmock paper\b|\btest paper\b/.test(normalized)) return "exam";
+  if (/\b(ai notes|long notes|textbook notes|study notes|detailed notes)\b/.test(normalized)) return "notes";
+  if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
+  return null;
+}
+
+function extractUrlFromText(text: string) {
+  const match = text.match(/https?:\/\/[^\s)]+/i);
+  return match?.[0]?.replace(/[.,;]+$/, "") || null;
+}
+
+function extractWebUrlFromSourceText(text: string) {
+  const labeled = text.match(/Source URL:\s*(https?:\/\/[^\s]+)/i);
+  if (labeled?.[1]) return labeled[1].trim();
+  return extractUrlFromText(text);
+}
+
+function getGoogleSearchUrl(query: string) {
+  // Using DuckDuckGo instead of Google because Google sets X-Frame-Options: SAMEORIGIN and cannot be embedded in an iframe.
+  return `https://duckduckgo.com/?q=${encodeURIComponent(query.trim())}`;
+}
+
+function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {
+  const lower = text.toLowerCase();
+  if (!/\b(highlight|annotate|annotation|mark up|markup|text box|add a note|mark this)\b/.test(lower)) {
+    return null;
+  }
+  if (/\bhighlight\b/.test(lower)) return "highlight";
+  return "text";
+}
+
+async function readJsonResponse(response: Response) {
+  const text = await response.text();
+
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    const statusMessage = response.status ? ` (${response.status})` : "";
+    throw new Error(
+      response.ok
+        ? `The server returned an unreadable response${statusMessage}. Restart the dev server and try again.`
+        : `The server returned an unexpected response${statusMessage}.`
+    );
+  }
+}
+
+function cleanCardText(text: string) {
+  return cleanGeneratedText(text)
+    .replace(/^question:\s*/i, "")
+    .replace(/^source:\s*[^\n]+/gim, "")
+    .replace(/^source title:\s*[^\n]+/gim, "")
+    .replace(/^source url:\s*[^\n]+/gim, "")
+    .replace(/^summary:\s*[^\n]+/gim, "")
+    .replace(/^trust:\s*[^\n]+/gim, "")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeFlashcards(items: FlashcardItem[] | null) {
+  if (!items?.length) return null;
+
+  const normalized = items
+    .map((item, index) => {
+      const front = clipText(cleanCardText(item.front || `Flashcard ${index + 1}`), 96);
+      const back = clipText(cleanCardText(item.back || ""), 220);
+      return {
+        front: front || `Flashcard ${index + 1}`,
+        back: back || "Review the uploaded sources and try generating this flashcard again."
+      };
+    })
+    .filter((item) => item.front || item.back);
+
+  return normalized.length ? normalized : null;
+}
+
+function parseFlashcardsFallback(text: string) {
+  const cleaned = cleanGeneratedText(text);
+  const matches = Array.from(
+    cleaned.matchAll(/(?:Flashcard\s*\d+)?\s*Front:\s*([\s\S]+?)\s*Back:\s*([\s\S]+?)(?=(?:Flashcard\s*\d+)?\s*Front:|$)/gi)
+  );
+
+  if (!matches.length) return null;
+
+  return matches.map((match) => ({
+    front: cleanCardText(match[1]),
+    back: cleanCardText(match[2])
+  }));
+}
+
+function normalizeQuizAnswer(answer: string | undefined, options: string[]) {
+  const rawAnswer = cleanCardText(answer || "");
+  if (!rawAnswer) return "";
+
+  const letterMatch = rawAnswer.match(/^[A-D]/i)?.[0]?.toUpperCase();
+  if (!letterMatch) return rawAnswer;
+
+  return options.find((option) => option.trim().toUpperCase().startsWith(letterMatch)) || rawAnswer;
+}
+
+function normalizeQuizItems(items: QuizItem[] | null) {
+  if (!items?.length) return null;
+
+  const normalized = items
+    .map((item) => {
+      const options = (item.options ?? []).map((option) => cleanCardText(option)).filter(Boolean).slice(0, 4);
+      return {
+        question: clipText(cleanCardText(item.question || ""), 220),
+        options,
+        answer: normalizeQuizAnswer(item.answer, options),
+        explanation: clipText(cleanCardText(item.explanation || ""), 220)
+      };
+    })
+    .filter((item) => item.question);
+
+  return normalized.length ? normalized : null;
+}
+
+function parseQuizFallback(text: string) {
+  const cleaned = cleanGeneratedText(text);
+  const blocks = cleaned
+    .split(/\n\s*\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  const questions: QuizItem[] = [];
+  let current: QuizItem | null = null;
+
+  const pushCurrent = () => {
+    if (!current?.question) return;
+    questions.push({
+      question: current.question,
+      options: current.options?.filter(Boolean) ?? [],
+      answer: current.answer,
+      explanation: current.explanation
+    });
+  };
+
+  for (const block of blocks) {
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const hasQuestion = lines.some((line) => /^(question\s*\d+|q\d+|\d+[.)])/i.test(line));
+    if (hasQuestion) {
+      pushCurrent();
+      current = { question: "", options: [] };
+    }
+
+    for (const line of lines) {
+      if (!current) {
+        current = { question: "", options: [] };
+      }
+
+      if (/^(question\s*\d+|q\d+|\d+[.)])/i.test(line)) {
+        current.question = cleanCardText(line.replace(/^(question\s*\d+|q\d+|\d+[.)])[:.)-\s]*/i, ""));
+        continue;
+      }
+
+      if (/^[A-D][.)-]/i.test(line)) {
+        current.options = [...(current.options ?? []), cleanCardText(line)];
+        continue;
+      }
+
+      if (/^answer:/i.test(line)) {
+        current.answer = cleanCardText(line.replace(/^answer:/i, ""));
+        continue;
+      }
+
+      if (/^explanation:/i.test(line)) {
+        current.explanation = cleanCardText(line.replace(/^explanation:/i, ""));
+        continue;
+      }
+
+      if (!current.question) {
+        current.question = cleanCardText(line);
+      } else if (!current.explanation) {
+        current.explanation = cleanCardText(line);
+      }
+    }
+  }
+
+  pushCurrent();
+  return questions.length ? questions : null;
+}
+
+function parseOutputCards(text: string, action: AIAction): OutputCard[] {
+  const cleaned = cleanGeneratedText(text);
+  if (!cleaned) return [];
+
+  const lines = cleaned
+    .split(/\n+/)
+    .map(normalizeLine)
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+
+  if (action === "study_plan") {
+    return lines.map((line, index) => {
+      const [title, ...rest] = line.split(/:\s+/);
+      if (/^day\b/i.test(title) && rest.length) {
+        return { title, body: rest.join(": ") };
+      }
+      return { title: `Step ${index + 1}`, body: line };
+    });
+  }
+
+  return lines.map((line, index) => {
+    const [title, ...rest] = line.split(/:\s+/);
+    if (rest.length && title.length < 42) {
+      return { title, body: rest.join(": ") };
+    }
+
+    return {
+      title:
+        action === "hard_mode"
+          ? `Challenge ${index + 1}`
+          : action === "concepts"
+            ? `Concept ${index + 1}`
+            : action === "summary"
+              ? `Key Point ${index + 1}`
+              : `Study Note ${index + 1}`,
+      body: line
+    };
+  });
+}
+
+function parseTablePreview(text: string) {
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+
+  const delimiter = lines.some((line) => line.includes("\t")) ? "\t" : ",";
+  return lines.slice(0, 30).map((line) => line.split(delimiter).map((cell) => cell.trim()));
+}
+
+function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
+  const count = Math.max(3, Math.min(draft.count, draft.action === "exam" ? 18 : 12));
+  const sourceList = files.map((file) => file.file_name).join(", ");
+  const focus = draft.focus.trim() || "the most important ideas across all uploaded files";
+  const difficulty = draft.difficulty === "exam" ? "exam-level" : "foundation-level";
+  const preface = `Use only the uploaded study sources. Base the output on these files: ${sourceList}. Focus on ${focus}. Keep the output ${difficulty}. Do not paste source metadata, filenames, URLs, AI context, or prompt instructions unless the user needs a citation. Do not output placeholders. Produce the final student-facing study material only.`;
+
+  switch (draft.action) {
+    case "quiz":
+      return `${preface} Generate ${count} high-quality multiple-choice questions like a real study platform. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Every question must test a specific fact, method, formula, misconception, source detail, or exam skill from the uploaded material. Avoid generic options like "source", "definition", "examples", or "types". Make distractors plausible, not silly. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief but useful. Return only a JSON array with this exact shape and no markdown: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
+    case "flashcards":
+      return `${preface} Generate ${count} strong active-recall flashcards. Each front must be a real term, question, formula, process, date, quote, rule, or recall cue from the sources, not a generic word. The back should be concise, accurate, and phrased like a student-friendly memory answer. Keep each front under 14 words and each back under 45 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
+    case "exam":
+      if (draft.examMode === "practice") {
+        return `${preface} Generate ${Math.max(4, Math.min(12, count))} original exam-style practice questions in markdown, not a full exam. Include mark allocations, space for working, and a compact mark scheme at the end. Questions must be source-specific, realistic, and useful for quick revision. If the material is mathematical, include method-based questions and formulas where helpful. Do not copy real past-paper questions.`;
+      }
+      return `${preface} Generate a long original ${focus} mock exam in markdown with around ${Math.max(36, count + 22)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the feel of a real GCSE, A-Level, school, university, or international mock paper rather than a short worksheet, while creating new questions instead of copying past papers. Use source-specific wording, not generic filler. If the material is mathematical, include method-based questions, multi-step problems, formulas, diagrams or tables when helpful, and require working.`;
+    case "notes":
+      return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, curriculum-aware, and much more detailed than a summary. Teach the topic like a patient tutor: clear chapter sections, short paragraphs, definitions, formulas, worked examples, common mistakes, callouts, diagrams/tables where useful, and practice questions with hints and answers. Include enough depth that a student can revise from it without needing the original source open. Include formulaBlocks only when formulas genuinely matter. Include scienceSimulation only when the source is clearly science/STEM and an interactive simulation would actually help understanding, such as particles, waves, circuits, forces, energy transfer, rates of reaction, diffusion, osmosis, or cells. Do not include any simulation for non-science or where a simulation would feel forced. Return JSON with title, subject, level, estimatedTime, sections, callouts, formulaBlocks, workedExamples, practiceQuestions, diagrams, scienceSimulation or simulationSpec, and sourceNotes.`;
+    case "summary":
+      return `${preface} Return a full revision summary in markdown. Use these sections in order: ## What this topic is about, ## Key points to remember, ## Step-by-step explanation, ## What to memorise, ## Quick self-check. Keep it concise but complete, use short paragraphs or bullets where helpful, and use a table only when the source naturally contains comparisons, formulas, or dates.`;
+    case "insights":
+      return `${preface} Return a short performance report with weak spots, misconceptions, and next-best study actions. Use a markdown table when it helps.`;
+    case "hard_mode":
+      return `${preface} Return a markdown table with ${count} likely exam traps. Use the columns Trap | Why students fall for it | Correct move | Self-check.`;
+    case "study_plan":
+      return `${preface} Return a ${count}-step study plan as a markdown table with the columns Day | Focus | Task | Check.`;
+    case "concepts":
+      return `${preface} Return either a concise markdown table or a mermaid diagram when it helps explain the topic links. If neither helps, return ${count} lines in the format "Concept: why it matters".`;
+    default:
+      return preface;
+  }
+}
+
+function looksRichOutput(text: string) {
+  return /```mermaid/i.test(text) || /\|.+\|/.test(text) || /^#{1,3}\s/m.test(text);
+}
+
+function trustBadgeTone(trustLabel: string) {
+  if (trustLabel === "Verified") {
+    return "bg-[rgba(121,247,199,0.18)] text-[var(--accent-mint)]";
+  }
+
+  if (trustLabel === "Scholar") {
+    return "bg-[rgba(57,208,255,0.18)] text-[var(--accent-sky)]";
+  }
+
+  if (trustLabel === "Trusted") {
+    return "bg-[rgba(255,209,102,0.18)] text-[var(--accent-gold)]";
+  }
+
+  return "bg-white/10 text-[var(--fg)]";
+}
+
+function createEmptyMetrics(): StudyMetrics {
+  return {
+    quizAnswered: 0,
+    quizCorrect: 0,
+    flashcardsFlipped: 0,
+    toolRuns: {
+      summary: 0,
+      notes: 0,
+      flashcards: 0,
+      quiz: 0,
+      exam: 0,
+      insights: 0,
+      hard_mode: 0,
+      study_plan: 0,
+      concepts: 0
+    },
+    recentQuizResults: []
+  };
+}
+
+function buildPerformanceSummary(metrics: StudyMetrics) {
+  const toolSummary = Object.entries(metrics.toolRuns)
+    .filter(([, count]) => count > 0)
+    .map(([action, count]) => `${action.replace(/_/g, " ")}: ${count}`)
+    .join(", ");
+
+  return [
+    `Quiz answers checked: ${metrics.quizAnswered}`,
+    `Quiz answers correct: ${metrics.quizCorrect}`,
+    `Flashcards flipped: ${metrics.flashcardsFlipped}`,
+    toolSummary ? `Tool usage: ${toolSummary}` : "",
+    metrics.recentQuizResults.length
+      ? `Recent quiz misses: ${metrics.recentQuizResults
+          .filter((item) => !item.isCorrect)
+          .slice(0, 3)
+          .map((item) => item.question)
+          .join(" | ")}`
+      : ""
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function parseMarkdownTableRows(text: string) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("|") && line.endsWith("|"));
+
+  if (lines.length < 3) return [];
+
+  const rows = lines
+    .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()))
+    .filter((row) => row.some(Boolean));
+
+  if (rows.length < 3) return [];
+  return rows;
+}
+
+function parseRevisionSchedule(text: string): RevisionScheduleItem[] {
+  const rows = parseMarkdownTableRows(text);
+
+  if (rows.length) {
+    const [header, divider, ...body] = rows;
+    const normalizedHeader = header.map((cell) => cell.toLowerCase());
+    if (divider.every((cell) => /^:?-{3,}:?$/.test(cell))) {
+      const dayIndex = normalizedHeader.findIndex((cell) => cell.includes("day") || cell.includes("week"));
+      const focusIndex = normalizedHeader.findIndex((cell) => cell.includes("focus"));
+      const taskIndex = normalizedHeader.findIndex((cell) => cell.includes("task") || cell.includes("study"));
+      const checkIndex = normalizedHeader.findIndex((cell) => cell.includes("check"));
+
+      if (dayIndex >= 0 && focusIndex >= 0) {
+        return body.map((row) => ({
+          day: row[dayIndex] || `Day ${body.indexOf(row) + 1}`,
+          focus: row[focusIndex] || "Focus",
+          task: row[taskIndex] || row[focusIndex] || "",
+          check: row[checkIndex] || "Do a quick recall check."
+        }));
+      }
+    }
+  }
+
+  return parseOutputCards(text, "study_plan").map((card, index) => ({
+    day: /^day|^week/i.test(card.title) ? card.title : `Day ${index + 1}`,
+    focus: card.title,
+    task: card.body,
+    check: "Summarise it aloud and self-test."
+  }));
+}
+
+function parseExamQuestions(text: string): ExamQuestion[] {
+  const cleaned = cleanGeneratedText(text);
+  if (!cleaned) return [];
+
+  const questionOnlySection = cleaned
+    .split(/\n#{1,6}\s*mark scheme\b/i)[0]
+    .split(/\nmark scheme\b/i)[0]
+    .trim();
+
+  const matches = Array.from(
+    questionOnlySection.matchAll(
+      /(?:^|\n)(?:question\s*)?(\d+[a-z]?)[.)]\s+([\s\S]*?)(?=(?:\n(?:question\s*)?\d+[a-z]?[.)]\s)|(?:\n#{1,6}\s)|$)/gim
+    )
+  );
+
+  return matches
+    .map((match) => {
+      const prompt = match[2].trim().replace(/\n{3,}/g, "\n\n");
+      const marksMatch = prompt.match(/(\d+\s*(?:marks?|pts?))/i);
+      return {
+        number: match[1],
+        prompt: prompt.replace(/\((\d+\s*(?:marks?|pts?))\)/i, "").trim(),
+        marks: marksMatch?.[1] || ""
+      };
+    })
+    .filter((item) => item.prompt);
+}
+
+function sanitizeFileBaseName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "study-export";
+}
+
+// Escapes text for safe injection into raw HTML (used only in the PDF export
+// template where React is not available). Uses native DOM APIs instead of
+// a hand-rolled character escaper.
+function escapeHtml(value: string): string {
+  if (typeof document === "undefined") return value;
+  const div = document.createElement("div");
+  div.appendChild(document.createTextNode(value));
+  return div.innerHTML;
+}
+export function StudyWorkspace({
+  sessions,
+  initialSessionId,
+  initialFiles,
+  siteSettings,
+  onboarding
+}: {
+  sessions: Session[];
+  initialSessionId: string | null;
+  initialFiles: FileItem[];
+  siteSettings?: SiteSettings;
+  onboarding?: OnboardingRecord | null;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const spotifyLoginHref = `/api/music/spotify/login?returnTo=${encodeURIComponent(pathname || "/studio")}`;
+  const searchParams = useSearchParams();
+  const workspaceGridRef = useRef<HTMLDivElement>(null);
+  const workspaceScrollRef = useRef<HTMLDivElement>(null);
+  const lastWorkspaceScrollYRef = useRef(0);
+  const chatViewportRef = useRef<HTMLDivElement>(null);
+  const quickImportInputRef = useRef<HTMLInputElement>(null);
+  const planLaunchAttemptRef = useRef<string | null>(null);
+  const defaultToolAppliedRef = useRef(false);
+  const musicStateLoadedRef = useRef(false);
+  const [sessionList, setSessionList] = useState<Session[]>(sessions);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId);
+  const [filesBySession, setFilesBySession] = useState<Record<string, FileItem[]>>(() =>
+    initialSessionId ? { [initialSessionId]: initialFiles } : {}
+  );
+  const [chat, setChat] = useState("");
+  const [output, setOutput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [fetchingFiles, setFetchingFiles] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [activeAction, setActiveAction] = useState<AIAction>("summary");
+  const [toolDraft, setToolDraft] = useState<ToolDraft>(createToolDraft("summary"));
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
+  const [showChatThreads, setShowChatThreads] = useState(false);
+  const [chatHistoryReadySession, setChatHistoryReadySession] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
+  const [workspaceTab, setWorkspaceTab] = useState("home");
+  const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
+  const [browseReloadKeys, setBrowseReloadKeys] = useState<Record<string, number>>({});
+  const [showTimerPopover, setShowTimerPopover] = useState(false);
+  const [timerMode, setTimerMode] = useState<"regular" | "interval">("interval");
+  const [timerMinutes, setTimerMinutes] = useState(60);
+  const [breakEveryMinutes, setBreakEveryMinutes] = useState(20);
+  const [breakMinutes, setBreakMinutes] = useState(5);
+  const [timerRemaining, setTimerRemaining] = useState(0);
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerPhase, setTimerPhase] = useState<"focus" | "break" | "done">("focus");
+  const [breakPopupOpen, setBreakPopupOpen] = useState(false);
+  const [chatFullscreen, setChatFullscreen] = useState(false);
+  const [workspaceFullscreen, setWorkspaceFullscreen] = useState(false);
+  const [screenAwarePulse, setScreenAwarePulse] = useState(false);
+  const [workspaceSearchQuery, setWorkspaceSearchQuery] = useState("");
+  const [workspaceSearchLoading, setWorkspaceSearchLoading] = useState(false);
+  const [workspaceSearchError, setWorkspaceSearchError] = useState("");
+  const [recentWebsites, setRecentWebsites] = useState<RecentWebsite[]>([]);
+  const [splitWorkspaceTabId, setSplitWorkspaceTabId] = useState<string | null>(null);
+  const [splitPickerOpen, setSplitPickerOpen] = useState(false);
+  const [splitRatio, setSplitRatio] = useState(50);
+  const [splitDragTabId, setSplitDragTabId] = useState<string | null>(null);
+  const [splitDropSide, setSplitDropSide] = useState<"left" | "right" | null>(null);
+  const [canvasTool, setCanvasTool] = useState<CanvasTool>("mouse");
+  const [canvasAnnotations, setCanvasAnnotations] = useState<CanvasAnnotation[]>([]);
+  const [canvasStrokes, setCanvasStrokes] = useState<CanvasStroke[]>([]);
+  const activeCanvasTabRef = useRef<string | null>(null);
+  const [activeCanvasStroke, setActiveCanvasStroke] = useState<CanvasStroke | null>(null);
+  const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  const [musicPanelOpen, setMusicPanelOpen] = useState(false);
+  const [musicSearch, setMusicSearch] = useState("");
+  const [spotifyConnected, setSpotifyConnected] = useState(false);
+  const [statusNote, setStatusNote] = useState("");
+  const [revealedQuiz, setRevealedQuiz] = useState<Record<number, boolean>>({});
+  const [selectedQuizOption, setSelectedQuizOption] = useState<Record<number, string>>({});
+  const [quizResults, setQuizResults] = useState<Record<number, QuizResult>>({});
+  const [revealedFlashcards, setRevealedFlashcards] = useState<Record<number, boolean>>({});
+  const [examAnswers, setExamAnswers] = useState<Record<number, string>>({});
+  const [toolCardIndex, setToolCardIndex] = useState(0);
+  const [toolHistoryBySession, setToolHistoryBySession] = useState<Record<string, ToolHistoryItem[]>>({});
+  const [metricsBySession, setMetricsBySession] = useState<Record<string, StudyMetrics>>({});
+  const [restoredStudio, setRestoredStudio] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  const [rememberLastStudioPref, setRememberLastStudioPref] = useState(defaultUserPreferences.rememberLastStudio);
+  const [accountLastStudioId, setAccountLastStudioId] = useState<string | null>(defaultUserPreferences.lastStudioId);
+  const [preferredDefaultTool, setPreferredDefaultTool] = useState<AIAction>(defaultUserPreferences.defaultTool);
+  const [showStudioBrowser, setShowStudioBrowser] = useState(false);
+  const [studioBrowserRefreshing, setStudioBrowserRefreshing] = useState(false);
+  const [copyingStudioId, setCopyingStudioId] = useState<string | null>(null);
+  const [copiedSourceClipboard, setCopiedSourceClipboard] = useState<CopiedSourceClipboard | null>(null);
+  const [renamingStudioId, setRenamingStudioId] = useState<string | null>(null);
+  const [deletingStudioId, setDeletingStudioId] = useState<string | null>(null);
+  const [toolModalOpen, setToolModalOpen] = useState(false);
+  const [toolModalView, setToolModalView] = useState<"setup" | "result">("setup");
+  const [sourceModalOpen, setSourceModalOpen] = useState(false);
+  const [sourceModalMode, setSourceModalMode] = useState<"upload" | "web">("upload");
+  const [sourceModalQuery, setSourceModalQuery] = useState("");
+  const [sourceSearchEngine, setSourceSearchEngine] = useState<SourceSearchEngine>("scholar");
+  const [sourceModalLoading, setSourceModalLoading] = useState(false);
+  const [sourceModalError, setSourceModalError] = useState("");
+  const [sourceSearchWarning, setSourceSearchWarning] = useState("");
+  const [sourceResultFilter, setSourceResultFilter] = useState<"all" | "verified" | "scholar" | "open_web">("all");
+  const [visibleSourceResults, setVisibleSourceResults] = useState(12);
+  const [sourceModalReason, setSourceModalReason] = useState("Add a file or a verified web source to unlock chat and tools.");
+  const [sourceSearchResults, setSourceSearchResults] = useState<WebSourceItem[]>([]);
+  const [importingSourceId, setImportingSourceId] = useState<string | null>(null);
+  const [sourcePromptedForStudio, setSourcePromptedForStudio] = useState<string | null>(null);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+  const [togglingFileId, setTogglingFileId] = useState<string | null>(null);
+  const [desktopLayoutEnabled, setDesktopLayoutEnabled] = useState(false);
+  const [desktopPanelWidths, setDesktopPanelWidths] = useState({
+    left: desktopLeftPanelDefault,
+    right: desktopRightPanelDefault
+  });
+  const [draggingDivider, setDraggingDivider] = useState<null | "left" | "right">(null);
+  const [preview, setPreview] = useState<PreviewState>({
+    open: false,
+    loading: false,
+    file: null,
+    kind: "text",
+    text: "",
+    url: null,
+    error: ""
+  });
+  const [, setDragDepth] = useState(0);
+
+  const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
+    try {
+      localStorage.setItem(`${chatThreadsStoragePrefix}${sessionId}`, JSON.stringify(threads.slice(0, 12)));
+    } catch {
+      // Recent chat snapshots are helpful but should never block the tutor.
+    }
+  }, []);
+
+  const snapshotCurrentChat = useCallback(() => {
+    if (!activeSessionId || messages.length < 2) return;
+    const title =
+      messages.find((message) => message.role === "user")?.content.replace(/\s+/g, " ").trim().slice(0, 56) ||
+      "Recent tutor chat";
+    const thread: ChatThread = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      title,
+      messages: messages.slice(-80),
+      updatedAt: Date.now()
+    };
+    setChatThreads((current) => {
+      const next = [thread, ...current.filter((item) => item.title !== title)].slice(0, 12);
+      persistChatThreads(activeSessionId, next);
+      return next;
+    });
+  }, [activeSessionId, messages, persistChatThreads]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setMessages([]);
+      setChatThreads([]);
+      setChatHistoryReadySession(null);
+      return;
+    }
+
+    let ignore = false;
+    setChatHistoryReadySession(null);
+    try {
+      const rawThreads = localStorage.getItem(`${chatThreadsStoragePrefix}${activeSessionId}`);
+      const parsedThreads = rawThreads ? (JSON.parse(rawThreads) as ChatThread[]) : [];
+      setChatThreads(
+        Array.isArray(parsedThreads)
+          ? parsedThreads
+              .filter((thread) => thread?.id && Array.isArray(thread.messages))
+              .slice(0, 12)
+          : []
+      );
+    } catch {
+      setChatThreads([]);
+    }
+
+    const loadChatHistory = async () => {
+      try {
+        const response = await fetch(`/api/chat-history?sessionId=${activeSessionId}`);
+        const json = await readJsonResponse(response);
+        if (ignore) return;
+
+        if (response.ok && Array.isArray(json.messages)) {
+          setMessages(
+            json.messages
+              .filter((message: ChatMessage) => message?.role && typeof message.content === "string")
+              .map((message: ChatMessage) => ({ role: message.role, content: message.content }))
+          );
+        } else {
+          setMessages([]);
+        }
+      } catch {
+        if (!ignore) setMessages([]);
+      } finally {
+        if (!ignore) setChatHistoryReadySession(activeSessionId);
+      }
+    };
+
+    void loadChatHistory();
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSessionId || chatHistoryReadySession !== activeSessionId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/chat-history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: activeSessionId,
+          messages: messages.slice(-80)
+        })
+      }).catch(() => {
+        // Chat history should never block the tutor UI.
+      });
+    }, 650);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeSessionId, chatHistoryReadySession, messages]);
+
+  useEffect(() => {
+    setSessionList(sessions);
+  }, [sessions]);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`${recentWebsitesStoragePrefix}${activeSessionId || "global"}`);
+      if (!stored) {
+        setRecentWebsites([]);
+        return;
+      }
+      const parsed = JSON.parse(stored) as RecentWebsite[];
+      setRecentWebsites(Array.isArray(parsed) ? parsed.slice(0, maxRecentWebsites) : []);
+    } catch {
+      setRecentWebsites([]);
+    }
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    try {
+      const savedLeft = Number(localStorage.getItem("scholarmind_workspace_left_width"));
+      const savedRight = Number(localStorage.getItem("scholarmind_workspace_right_width"));
+      const storedClipboard = localStorage.getItem(sourceClipboardStorageKey);
+
+      setDesktopPanelWidths({
+        left: Number.isFinite(savedLeft) && savedLeft > 0 ? savedLeft : desktopLeftPanelDefault,
+        right: Number.isFinite(savedRight) && savedRight > 0 ? savedRight : desktopRightPanelDefault
+      });
+      if (storedClipboard) {
+        const parsed = JSON.parse(storedClipboard) as CopiedSourceClipboard;
+        if (parsed?.sourceSessionId && parsed?.sourceStudioTitle) {
+          setCopiedSourceClipboard(parsed);
+        }
+      }
+    } catch {
+      setDesktopPanelWidths({
+        left: desktopLeftPanelDefault,
+        right: desktopRightPanelDefault
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("scholarmind_workspace_left_width", String(Math.round(desktopPanelWidths.left)));
+      localStorage.setItem("scholarmind_workspace_right_width", String(Math.round(desktopPanelWidths.right)));
+      if (copiedSourceClipboard) {
+        localStorage.setItem(sourceClipboardStorageKey, JSON.stringify(copiedSourceClipboard));
+      } else {
+        localStorage.removeItem(sourceClipboardStorageKey);
+      }
+    } catch {
+      // Ignore storage issues.
+    }
+  }, [copiedSourceClipboard, desktopPanelWidths]);
+
+  useEffect(() => {
+    if (!initialSessionId) return;
+    setFilesBySession((current) => ({ ...current, [initialSessionId]: initialFiles }));
+  }, [initialFiles, initialSessionId]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    const loadPreferences = async () => {
+      try {
+        const response = await fetch("/api/preferences");
+        const json = await readJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(normalizeErrorMessage(json.error, "Unable to load your account preferences."));
+        }
+        if (ignore) return;
+
+        const nextDefaultTool = actionButtons.some((item) => item.key === json.defaultTool)
+          ? (json.defaultTool as AIAction)
+          : defaultUserPreferences.defaultTool;
+
+        setRememberLastStudioPref(json.rememberLastStudio ?? defaultUserPreferences.rememberLastStudio);
+        setAccountLastStudioId(typeof json.lastStudioId === "string" ? json.lastStudioId : null);
+        setPreferredDefaultTool(nextDefaultTool);
+
+        try {
+          localStorage.setItem("theme", json.theme === "light" ? "light" : "dark");
+          localStorage.setItem("scholarmind_playful_motion", json.playfulMotion === false ? "off" : "on");
+          localStorage.setItem("scholarmind_remember_last_studio", json.rememberLastStudio === false ? "off" : "on");
+          localStorage.setItem("scholarmind_default_tool", nextDefaultTool);
+          if (typeof json.lastStudioId === "string" && json.lastStudioId) {
+            localStorage.setItem("scholarmind_last_studio", json.lastStudioId);
+          }
+        } catch {
+          // Ignore local storage issues and keep the account-backed values in memory.
+        }
+      } catch {
+        try {
+          setRememberLastStudioPref(localStorage.getItem("scholarmind_remember_last_studio") !== "off");
+          const storedTool = localStorage.getItem("scholarmind_default_tool") as AIAction | null;
+          if (storedTool && actionButtons.some((item) => item.key === storedTool)) {
+            setPreferredDefaultTool(storedTool);
+          }
+          const rememberedStudio = localStorage.getItem("scholarmind_last_studio");
+          setAccountLastStudioId(rememberedStudio || null);
+        } catch {
+          // Browser storage can fail in private contexts. The in-memory defaults are enough.
+        }
+      } finally {
+        if (!ignore) {
+          setPreferencesReady(true);
+        }
+      }
+    };
+
+    void loadPreferences();
+
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const preventWindowFileDrop = (event: DragEvent) => {
+      if (!event.dataTransfer?.types?.includes("Files")) return;
+      event.preventDefault();
+    };
+
+    window.addEventListener("dragover", preventWindowFileDrop);
+    window.addEventListener("drop", preventWindowFileDrop);
+
+    return () => {
+      window.removeEventListener("dragover", preventWindowFileDrop);
+      window.removeEventListener("drop", preventWindowFileDrop);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (initialSessionId) {
+      setActiveSessionId(initialSessionId);
+      return;
+    }
+
+    if (!activeSessionId && sessionList[0]) {
+      setActiveSessionId(sessionList[0].id);
+    }
+  }, [activeSessionId, initialSessionId, sessionList]);
+
+  useEffect(() => {
+    if (restoredStudio || !sessionList.length || !preferencesReady) return;
+
+    if (pathname !== "/dashboard/workspace") {
+      setRestoredStudio(true);
+      return;
+    }
+
+    try {
+      if (!rememberLastStudioPref) {
+        setRestoredStudio(true);
+        return;
+      }
+
+      const rememberedStudio = accountLastStudioId || localStorage.getItem("scholarmind_last_studio");
+      if (rememberedStudio && sessionList.some((session) => session.id === rememberedStudio)) {
+        setActiveSessionId(rememberedStudio);
+      }
+    } catch {
+      // Ignore browser storage errors and keep the current default studio.
+    } finally {
+      setRestoredStudio(true);
+    }
+  }, [accountLastStudioId, pathname, preferencesReady, rememberLastStudioPref, restoredStudio, sessionList]);
+
+  const currentFiles = useMemo(
+    () => (activeSessionId ? filesBySession[activeSessionId] ?? [] : []),
+    [activeSessionId, filesBySession]
+  );
+  const sourceEnabledFiles = useMemo(
+    () => currentFiles.filter((file) => file.source_enabled !== false),
+    [currentFiles]
+  );
+  const sourceEnabledCount = sourceEnabledFiles.length;
+  const hasCurrentFiles = activeSessionId ? activeSessionId in filesBySession : false;
+  const currentSession = sessionList.find((session) => session.id === activeSessionId) ?? null;
+  const currentToolHistory = useMemo(
+    () => (activeSessionId ? toolHistoryBySession[activeSessionId] ?? [] : []),
+    [activeSessionId, toolHistoryBySession]
+  );
+  const currentMetrics = activeSessionId ? metricsBySession[activeSessionId] ?? createEmptyMetrics() : createEmptyMetrics();
+  const currentFilesLabel = useMemo(() => {
+    if (!sourceEnabledFiles.length) return "No source-enabled files yet";
+    if (sourceEnabledFiles.length === 1) return sourceEnabledFiles[0].file_name;
+    const preview = sourceEnabledFiles.slice(0, 2).map((file) => file.file_name).join(", ");
+    return sourceEnabledFiles.length > 2 ? `${preview} +${sourceEnabledFiles.length - 2} more` : preview;
+  }, [sourceEnabledFiles]);
+  const toolsLocked = sourceEnabledCount === 0;
+
+  const closeSourceModal = () => {
+    setSourceModalOpen(false);
+    setSourceModalError("");
+    setSourceSearchWarning("");
+    setSourceModalQuery("");
+    setSourceSearchEngine("scholar");
+  };
+
+  const openSourceModal = (
+    reason = "Add notes to unlock chat and tools.",
+    _mode: "upload" | "web" = "upload"
+  ) => {
+    void _mode;
+    setSourceModalReason(reason);
+    setSourceModalMode("upload");
+    setSourceModalError("");
+    setVisibleSourceResults(12);
+    setSourceResultFilter("all");
+    setSourceModalOpen(true);
+  };
+
+  const parsedQuiz = useMemo(
+    () =>
+      activeAction === "quiz"
+        ? normalizeQuizItems(parseJsonBlock<QuizItem[]>(output) ?? parseQuizFallback(output))
+        : null,
+    [activeAction, output]
+  );
+  const parsedFlashcards = useMemo(
+    () =>
+      activeAction === "flashcards"
+        ? normalizeFlashcards(
+            parseJsonBlock<FlashcardItem[]>(output) ??
+              (parseFlashcards(output).length ? parseFlashcards(output).map((item) => ({ front: item.question, back: item.answer })) : parseFlashcardsFallback(output))
+          )
+        : null,
+    [activeAction, output]
+  );
+  const parsedCards = useMemo(() => parseOutputCards(output, activeAction), [activeAction, output]);
+  const filteredSourceResults = useMemo(() => {
+    if (sourceResultFilter === "all") return sourceSearchResults;
+    if (sourceResultFilter === "verified") {
+      return sourceSearchResults.filter((result) => result.trustLabel === "Verified");
+    }
+    if (sourceResultFilter === "scholar") {
+      return sourceSearchResults.filter((result) => result.trustLabel === "Scholar" || result.trustLabel === "Trusted");
+    }
+    return sourceSearchResults.filter((result) => result.trustLabel === "Web");
+  }, [sourceResultFilter, sourceSearchResults]);
+  const visibleSourceSearchResults = useMemo(
+    () => filteredSourceResults.slice(0, visibleSourceResults),
+    [filteredSourceResults, visibleSourceResults]
+  );
+  const quizResultRows = useMemo(
+    () =>
+      (parsedQuiz ?? []).map((item, index) => {
+        const graded = quizResults[index];
+        const selected = graded?.selected || selectedQuizOption[index] || "";
+        const correct = graded?.correct || item.answer || "";
+        const isCorrect = graded?.isCorrect ?? (selected && correct ? selected === correct : false);
+        return {
+          number: index + 1,
+          question: item.question,
+          selected,
+          correct,
+          isCorrect,
+          explanation: graded?.explanation || item.explanation || ""
+        };
+      }),
+    [parsedQuiz, quizResults, selectedQuizOption]
+  );
+  const parsedExamQuestions = useMemo(
+    () => (activeAction === "exam" ? parseExamQuestions(output) : []),
+    [activeAction, output]
+  );
+  const parsedSchedule = useMemo(
+    () => (activeAction === "study_plan" ? parseRevisionSchedule(output) : []),
+    [activeAction, output]
+  );
+  const effectiveSiteSettings = siteSettings ?? {
+    aiDailyLimit: defaultFreePreviewDailyLimit,
+    aiHourlyLimit: 8,
+    examWeeklyLimit: defaultExamGeneratorWeeklyLimit,
+    researchModeLocked: true,
+    maintenanceMessage: ""
+  };
+  const desktopGridStyle = useMemo(
+    () =>
+      desktopLayoutEnabled
+        ? {
+            gridTemplateColumns: `minmax(0,1fr) ${desktopResizeHandleWidth}px ${desktopPanelWidths.right}px`
+          }
+        : undefined,
+    [desktopLayoutEnabled, desktopPanelWidths.right]
+  );
+  const timerDisplay = useMemo(() => {
+    const minutes = Math.floor(timerRemaining / 60);
+    const seconds = timerRemaining % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }, [timerRemaining]);
+  const timerHasStarted = timerRemaining > 0 || timerPhase === "done";
+  const selectedTrack = focusTracks[selectedTrackIndex] ?? null;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(focusMusicStateStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { playing?: boolean; trackIndex?: number };
+        if (typeof parsed.playing === "boolean") setMusicPlaying(parsed.playing);
+        if (typeof parsed.trackIndex === "number" && focusTracks.length) {
+          setSelectedTrackIndex(Math.max(0, Math.min(focusTracks.length - 1, parsed.trackIndex)));
+        }
+      }
+    } catch {
+      // Music state is optional, so a bad localStorage value should not break Studio.
+    } finally {
+      musicStateLoadedRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!musicStateLoadedRef.current) return;
+    const state = {
+      playing: musicPlaying,
+      trackIndex: selectedTrackIndex,
+      updatedAt: Date.now()
+    };
+    try {
+      localStorage.setItem(focusMusicStateStorageKey, JSON.stringify(state));
+      window.dispatchEvent(new CustomEvent("scholarmind:music-state", { detail: state }));
+    } catch {
+      // Ignore private browsing/storage failures.
+    }
+  }, [musicPlaying, selectedTrackIndex]);
+
+  useEffect(() => {
+    void fetch("/api/music/spotify/status")
+      .then((response) => response.json())
+      .then((json) => setSpotifyConnected(Boolean(json.connected)))
+      .catch(() => setSpotifyConnected(false));
+  }, []);
+
+  useEffect(() => {
+    const musicStatus = searchParams.get("music");
+    if (!musicStatus) return;
+
+    if (musicStatus === "spotify_connected") {
+      setSpotifyConnected(true);
+      setMusicPanelOpen(true);
+      setStatusNote("Spotify connected. Browse your playlists or search for tracks in the music panel.");
+    } else if (musicStatus === "spotify_not_connected") {
+      setStatusNote("Spotify could not be connected. Check your redirect URL and try again.");
+    } else if (musicStatus === "spotify_setup_required") {
+      setStatusNote("Spotify is not configured on this deployment yet.");
+    }
+
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.delete("music");
+    const nextQuery = nextParams.toString();
+    router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const activeWorkspaceDynamicTab = useMemo(
+    () => workspaceTabs.find((item) => item.id === workspaceTab) ?? null,
+    [workspaceTab, workspaceTabs]
+  );
+  const splitWorkspaceTab = useMemo(
+    () => workspaceTabs.find((item) => item.id === splitWorkspaceTabId) ?? null,
+    [splitWorkspaceTabId, workspaceTabs]
+  );
+  const updateMetrics = useCallback(
+    (updater: (current: StudyMetrics) => StudyMetrics) => {
+      if (!activeSessionId) return;
+
+      setMetricsBySession((current) => {
+        const base = current[activeSessionId] ?? createEmptyMetrics();
+        return {
+          ...current,
+          [activeSessionId]: updater(base)
+        };
+      });
+    },
+    [activeSessionId]
+  );
+
+  const downloadBlob = useCallback((blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(url), 400);
+  }, []);
+
+  const exportPayload = useCallback(() => {
+    const base = {
+      studio: currentSession?.title || "Study studio",
+      action: activeAction,
+      generatedAt: new Date().toISOString(),
+      sourceCount: sourceEnabledFiles.length,
+      sources: sourceEnabledFiles.map((file) => ({
+        id: file.id,
+        name: file.file_name,
+        type: file.file_type
+      }))
+    };
+
+    if (activeAction === "quiz" && parsedQuiz?.length) {
+      return {
+        ...base,
+        items: parsedQuiz,
+        results: quizResultRows
+      };
+    }
+
+    if (activeAction === "flashcards" && parsedFlashcards?.length) {
+      return {
+        ...base,
+        cards: parsedFlashcards
+      };
+    }
+
+    if (activeAction === "exam" && parsedExamQuestions.length) {
+      return {
+        ...base,
+        questions: parsedExamQuestions.map((question, index) => ({
+          ...question,
+          answer: examAnswers[index] || ""
+        })),
+        markdown: output
+      };
+    }
+
+    if (activeAction === "study_plan" && parsedSchedule.length) {
+      return {
+        ...base,
+        schedule: parsedSchedule,
+        markdown: output
+      };
+    }
+
+    return {
+      ...base,
+      cards: parsedCards,
+      markdown: output
+    };
+  }, [activeAction, currentSession?.title, examAnswers, output, parsedCards, parsedExamQuestions, parsedFlashcards, parsedQuiz, parsedSchedule, quizResultRows, sourceEnabledFiles]);
+
+  const exportCurrentResultAsJson = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate a study result first, then export it.");
+      return;
+    }
+
+    const fileName = `${sanitizeFileBaseName(`${currentSession?.title || "studio"}-${activeAction}`)}.json`;
+    downloadBlob(new Blob([JSON.stringify(exportPayload(), null, 2)], { type: "application/json" }), fileName);
+    setStatusNote("JSON export downloaded.");
+  }, [activeAction, currentSession?.title, downloadBlob, exportPayload, output]);
+
+  const exportCurrentResultAsPdf = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate a study result first, then export it.");
+      return;
+    }
+
+    const printableWindow = window.open("", "_blank", "noopener,noreferrer,width=1100,height=900");
+    if (!printableWindow) {
+      setStatusNote("Allow popups for this site to export as PDF.");
+      return;
+    }
+
+    const quizTable =
+      activeAction === "quiz" && quizResultRows.length
+        ? `
+          <h2>Quiz Results</h2>
+          <table>
+            <thead>
+              <tr><th>#</th><th>Question</th><th>Your answer</th><th>Correct answer</th><th>Result</th></tr>
+            </thead>
+            <tbody>
+              ${quizResultRows
+                .map(
+                  (row) =>
+                    `<tr><td>${row.number}</td><td>${escapeHtml(row.question)}</td><td>${escapeHtml(
+                      row.selected || "—"
+                    )}</td><td>${escapeHtml(row.correct || "—")}</td><td>${row.isCorrect ? "Correct" : row.selected ? "Review" : "Pending"}</td></tr>`
+                )
+                .join("")}
+            </tbody>
+          </table>
+        `
+        : "";
+
+    const examAnswerSheet =
+      activeAction === "exam" && parsedExamQuestions.length
+        ? `
+          <h2>Online Answer Sheet</h2>
+          ${parsedExamQuestions
+            .map(
+              (question, index) => `
+                <section style="margin-bottom: 18px;">
+                  <h3 style="margin-bottom: 6px;">Question ${escapeHtml(question.number)}${question.marks ? ` (${escapeHtml(question.marks)})` : ""}</h3>
+                  <p>${escapeHtml(question.prompt)}</p>
+                  <div style="margin-top: 8px; border: 1px solid #cbd5e1; border-radius: 14px; padding: 12px; min-height: 96px;">
+                    ${escapeHtml(examAnswers[index] || "No online answer added yet.")}
+                  </div>
+                </section>
+              `
+            )
+            .join("")}
+        `
+        : "";
+
+    printableWindow.document.write(`<!doctype html>
+      <html>
+        <head>
+          <title>${escapeHtml(currentSession?.title || "ScholarMind Export")}</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 32px; color: #0f172a; line-height: 1.6; }
+            h1, h2 { margin: 0 0 12px; }
+            .meta { color: #475569; margin-bottom: 24px; }
+            pre { white-space: pre-wrap; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 18px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border: 1px solid #cbd5e1; padding: 10px; text-align: left; vertical-align: top; }
+            th { background: #e2e8f0; }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(actionButtons.find((item) => item.key === activeAction)?.label || "Study export")}</h1>
+          <p class="meta">${escapeHtml(currentSession?.title || "Study studio")} • ${sourceEnabledCount} source-enabled file(s)</p>
+          ${quizTable}
+          ${examAnswerSheet}
+          <pre>${escapeHtml(output)}</pre>
+          <script>window.onload = function(){ window.print(); };</script>
+        </body>
+      </html>`);
+    printableWindow.document.close();
+    setStatusNote("PDF export opened in a print window.");
+  }, [activeAction, currentSession?.title, examAnswers, output, parsedExamQuestions, quizResultRows, sourceEnabledCount]);
+
+  const upsertWorkspaceTab = useCallback((nextTab: WorkspaceDynamicTab) => {
+    setWorkspaceTabs((current) => {
+      const existingIndex = current.findIndex((item) => item.id === nextTab.id);
+      if (existingIndex >= 0) {
+        const next = [...current];
+        next[existingIndex] = nextTab;
+        return next;
+      }
+      return [...current, nextTab].slice(-16);
+    });
+    setWorkspaceTab(nextTab.id);
+    if (
+      nextTab.kind === "output" ||
+      nextTab.kind === "canvas-output" ||
+      nextTab.kind === "browse" ||
+      nextTab.kind === "canvas-browse" ||
+      nextTab.kind === "canvas-source"
+    ) {
+      setTab("tools");
+    } else {
+      setTab("chat");
+    }
+  }, []);
+
+  const recordRecentWebsite = useCallback(
+    (url: string, label: string) => {
+      setRecentWebsites((current) => {
+        const next = [{ url, label, visitedAt: Date.now() }, ...current.filter((item) => item.url !== url)].slice(
+          0,
+          maxRecentWebsites
+        );
+        try {
+          localStorage.setItem(
+            `${recentWebsitesStoragePrefix}${activeSessionId || "global"}`,
+            JSON.stringify(next)
+          );
+        } catch {
+          // Ignore storage failures.
+        }
+        return next;
+      });
+    },
+    [activeSessionId]
+  );
+
+  const openBrowseInWorkspace = useCallback(
+    (url: string, label: string) => {
+      recordRecentWebsite(url, label);
+      upsertWorkspaceTab({
+        id: `browse-${Date.now()}`,
+        label: clipText(label, 24),
+        kind: "browse",
+        url,
+        closable: true
+      });
+    },
+    [recordRecentWebsite, upsertWorkspaceTab]
+  );
+
+  const closeWorkspaceTab = useCallback((tabId: string) => {
+    setWorkspaceTabs((current) => current.filter((item) => item.id !== tabId));
+    setWorkspaceTab((current) => (current === tabId ? "home" : current));
+    setSplitWorkspaceTabId((current) => (current === tabId ? null : current));
+  }, []);
+
+  const openDraggedWorkspaceSplit = useCallback(
+    (draggedTabId: string, side: "left" | "right") => {
+      const draggedTab = workspaceTabs.find((item) => item.id === draggedTabId);
+      if (!draggedTab) return;
+
+      const currentDynamicTab = workspaceTabs.find((item) => item.id === workspaceTab && item.id !== draggedTabId);
+      const fallbackPartner = workspaceTabs.find((item) => item.id !== draggedTabId);
+      const partnerTab = currentDynamicTab ?? fallbackPartner;
+
+      if (!partnerTab) {
+        setWorkspaceTab(draggedTabId);
+        setSplitWorkspaceTabId(null);
+        setStatusNote("Open another note, search result, or AI output before using split view.");
+        return;
+      }
+
+      if (side === "left") {
+        setWorkspaceTab(draggedTabId);
+        setSplitWorkspaceTabId(partnerTab.id);
+      } else {
+        setWorkspaceTab(partnerTab.id);
+        setSplitWorkspaceTabId(draggedTabId);
+      }
+
+      setSplitPickerOpen(false);
+      setSplitDragTabId(null);
+      setSplitDropSide(null);
+      setStatusNote(`${draggedTab.label} opened in split view. Drag another tab to either side to rearrange.`);
+    },
+    [workspaceTab, workspaceTabs]
+  );
+
+  const restoreChatThread = useCallback((thread: ChatThread) => {
+    snapshotCurrentChat();
+    setMessages(thread.messages);
+    setChat("");
+    setShowChatThreads(false);
+    setTab("tools");
+    setStatusNote(`Restored chat: ${thread.title}`);
+  }, [snapshotCurrentChat]);
+
+  const deleteChatThread = useCallback((threadId: string) => {
+    if (!activeSessionId) return;
+    setChatThreads((current) => {
+      const next = current.filter((thread) => thread.id !== threadId);
+      persistChatThreads(activeSessionId, next);
+      return next;
+    });
+  }, [activeSessionId, persistChatThreads]);
+
+  const startNewChat = useCallback(() => {
+    snapshotCurrentChat();
+    setMessages([]);
+    setChat("");
+    setShowChatThreads(false);
+    setStatusNote("Started a new tutor chat. Recent chats are saved in this studio.");
+  }, [snapshotCurrentChat]);
+
+  const openCurrentResultInCanvas = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate or reopen an output before opening canvas mode.");
+      return;
+    }
+
+    const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
+    upsertWorkspaceTab({
+      id: `canvas-output-${activeAction}`,
+      label: label,
+      kind: "canvas-output",
+      action: activeAction,
+      output,
+      closable: true
+    });
+  }, [activeAction, output, upsertWorkspaceTab]);
+
+  const openCurrentResultInWorkspaceTab = useCallback(() => {
+    if (!output) {
+      setStatusNote("Generate or reopen an output before opening a workspace tab.");
+      return;
+    }
+
+    const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
+    upsertWorkspaceTab({
+      id: `output-${activeAction}`,
+      label,
+      kind: "output",
+      action: activeAction,
+      output,
+      closable: true
+    });
+  }, [activeAction, output, upsertWorkspaceTab]);
+
+  const openGeneratedResultInWorkspaceTab = useCallback(
+    (action: AIAction, generatedOutput: string, focus = "") => {
+      const label = actionButtons.find((item) => item.key === action)?.label || "AI Output";
+      const focusLabel = focus.trim();
+      upsertWorkspaceTab({
+        id: `output-${action}-${Date.now()}`,
+        label: focusLabel ? `${label}: ${clipText(focusLabel, 24)}` : label,
+        kind: "output",
+        action,
+        output: generatedOutput,
+        closable: true
+      });
+    },
+    [upsertWorkspaceTab]
+  );
+
+  const openFileInCanvas = useCallback(
+    async (file: FileItem) => {
+      try {
+        const response = await fetch(`/api/files/preview?fileId=${file.id}`);
+        const json = await readJsonResponse(response);
+        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
+        upsertWorkspaceTab({
+          id: `canvas-source-${file.id}`,
+          label: clipText(file.file_name, 28),
+          kind: "canvas-source",
+          file,
+          previewKind: kind,
+          text: json.text || file.extracted_text || "",
+          url: json.url || null,
+          closable: true
+        });
+        setWorkspaceTab(`canvas-source-${file.id}`);
+        setTab("tools");
+      } catch {
+        upsertWorkspaceTab({
+          id: `canvas-source-${file.id}`,
+          label: clipText(file.file_name, 28),
+          kind: "canvas-source",
+          file,
+          previewKind: "text",
+          text: file.extracted_text || "Preview text is not available for this file.",
+          url: null,
+          closable: true
+        });
+      }
+    },
+    [upsertWorkspaceTab]
+  );
+
+  const openFileInWorkspaceTab = useCallback(
+    async (file: FileItem) => {
+      if (file.file_type === "text/web") {
+        const webUrl = extractWebUrlFromSourceText(file.extracted_text || "");
+        if (webUrl) {
+          openBrowseInWorkspace(webUrl, file.file_name);
+          return;
+        }
+      }
+
+      await openFileInCanvas(file);
+    },
+    [openBrowseInWorkspace, openFileInCanvas]
+  );
+
+  const addCanvasAnnotation = useCallback(
+    (
+      tabId: string,
+      tool: Exclude<CanvasTool, "mouse">,
+      point?: { x: number; y: number },
+      initialText?: string
+    ) => {
+    const placement = point ?? { x: 18, y: 18 };
+    setCanvasAnnotations((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        tabId,
+        tool,
+        text:
+          initialText?.trim() ||
+          (tool === "highlight" ? "Highlight this section" : "Type your note here"),
+        x: placement.x,
+        y: placement.y,
+        width: tool === "highlight" ? 220 : 180,
+        height: tool === "highlight" ? 72 : 96,
+        createdAt: Date.now()
+      },
+      ...current
+    ]);
+    setStatusNote("Text box added. Drag it anywhere on the canvas and resize from the corner.");
+  }, []);
+
+  const getCanvasPointerPoint = useCallback((event: ReactPointerEvent<HTMLDivElement>): CanvasPoint => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      pressure: event.pressure && event.pressure > 0 ? event.pressure : 0.5
+    };
+  }, []);
+
+  const eraseStrokesNear = useCallback((tabId: string, point: CanvasPoint) => {
+    const radius = 24;
+    setCanvasStrokes((current) =>
+      current.filter((stroke) => {
+        if (stroke.tabId !== tabId) return true;
+        return !stroke.points.some((p) => Math.hypot(p.x - point.x, p.y - point.y) <= radius);
+      })
+    );
+  }, []);
+
+  const beginCanvasStroke = useCallback(
+    (tabId: string, event: ReactPointerEvent<HTMLDivElement>) => {
+      activeCanvasTabRef.current = tabId;
+
+      if (canvasTool === "eraser") {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        eraseStrokesNear(tabId, getCanvasPointerPoint(event));
+        return;
+      }
+
+      if (canvasTool !== "draw" && canvasTool !== "highlight") return;
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      const point = getCanvasPointerPoint(event);
+      setActiveCanvasStroke({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        tabId,
+        tool: canvasTool,
+        color: canvasTool === "highlight" ? "rgba(255, 226, 105, 0.42)" : "rgba(105, 232, 238, 0.95)",
+        width: canvasTool === "highlight" ? 18 : 4,
+        points: [point],
+        createdAt: Date.now()
+      });
+    },
+    [canvasTool, eraseStrokesNear, getCanvasPointerPoint]
+  );
+
+  const moveCanvasStroke = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (canvasTool === "eraser") return;
+
+      if (!activeCanvasStroke) return;
+      event.preventDefault();
+      const point = getCanvasPointerPoint(event);
+      setActiveCanvasStroke((current) =>
+        current
+          ? {
+              ...current,
+              points: [...current.points, point]
+            }
+          : current
+      );
+    },
+    [activeCanvasStroke, canvasTool, eraseStrokesNear, getCanvasPointerPoint]
+  );
+
+  const finishCanvasStroke = useCallback(() => {
+    if (canvasTool === "eraser") {
+      activeCanvasTabRef.current = null;
+      return;
+    }
+
+    setActiveCanvasStroke((current) => {
+      if (!current || current.points.length < 2) return null;
+      setCanvasStrokes((strokes) => [current, ...strokes].slice(0, 120));
+      setStatusNote("Canvas drawing saved. Stylus, Apple Pencil, and S-Pen strokes are visible to your study context.");
+      return null;
+    });
+  }, [canvasTool]);
+
+  const strokePath = useCallback((points: CanvasPoint[]) => {
+    if (!points.length) return "";
+    return points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
+      .join(" ");
+  }, []);
+
+  const buildScreenContext = useCallback(() => {
+    const openResultLabel = output
+      ? `${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}: ${clipText(
+          cleanGeneratedText(output).replace(/\s+/g, " "),
+          900
+        )}`
+      : "No generated output open.";
+    const previewContext = preview.open
+      ? `Open source preview: ${preview.file?.file_name || "source"} (${preview.kind}). ${clipText(
+          preview.text.replace(/\s+/g, " "),
+          700
+        )}`
+      : "No source preview modal open.";
+    const openTabsSummary = workspaceTabs
+      .map((tab) => {
+        const parts = [`${tab.label} (${tab.kind})`];
+        if (tab.url) parts.push(`url=${tab.url}`);
+        if (tab.query) parts.push(`search=${tab.query}`);
+        if (tab.action) parts.push(`tool=${tab.action}`);
+        if (tab.file?.file_name) parts.push(`file=${tab.file.file_name}`);
+        return parts.join(" | ");
+      })
+      .slice(0, 10)
+      .join(" || ");
+    const activeTab = workspaceTabs.find((item) => item.id === workspaceTab);
+    const annotationSummary = canvasAnnotations
+      .slice(0, 16)
+      .map(
+        (annotation) =>
+          `[${annotation.tabId}] ${annotation.tool} at (${annotation.x.toFixed(0)}%, ${annotation.y.toFixed(0)}%): "${clipText(annotation.text, 160)}"`
+      )
+      .join(" | ");
+    const strokeSummary = canvasStrokes
+      .slice(0, 16)
+      .map(
+        (stroke) =>
+          `[${stroke.tabId}] ${stroke.tool} stroke with ${stroke.points.length} points, color ${stroke.color}, width ${stroke.width}`
+      )
+      .join(" | ");
+    const activeTabDetail = workspaceTabs.find((item) => item.id === workspaceTab);
+    const activeTabPreview = activeTabDetail
+      ? [
+          activeTabDetail.url ? `Live page: ${activeTabDetail.url}` : "",
+          activeTabDetail.file?.file_name ? `File: ${activeTabDetail.file.file_name}` : "",
+          activeTabDetail.previewKind ? `Preview mode: ${activeTabDetail.previewKind}` : "",
+          activeTabDetail.text ? `Visible text preview: ${clipText(activeTabDetail.text.replace(/\s+/g, " "), 1200)}` : "",
+          activeTabDetail.output
+            ? `Visible generated output: ${clipText(cleanGeneratedText(activeTabDetail.output).replace(/\s+/g, " "), 900)}`
+            : ""
+        ]
+          .filter(Boolean)
+          .join("\n")
+      : "";
+    const activeTabAnnotations = canvasAnnotations
+      .filter((annotation) => annotation.tabId === workspaceTab)
+      .map((annotation) => `${annotation.tool}: "${clipText(annotation.text, 140)}"`)
+      .join(" | ");
+    const activeTabStrokes = canvasStrokes.filter((stroke) => stroke.tabId === workspaceTab).length;
+
+    return [
+      `Active workspace tab: ${activeTab?.label || workspaceTab}.`,
+      activeTabPreview ? `What the student is viewing now:\n${activeTabPreview}` : "",
+      activeTabAnnotations ? `Annotations on the active tab: ${activeTabAnnotations}.` : "",
+      activeTabStrokes ? `Freehand marks on the active tab: ${activeTabStrokes} stroke(s).` : "",
+      `Active canvas tool: ${canvasTool}.`,
+      currentSession?.title ? `Current studio: ${currentSession.title}.` : "",
+      openTabsSummary ? `Open workspace tabs: ${openTabsSummary}.` : "No extra workspace tabs open.",
+      `Source-enabled files in view: ${currentFilesLabel}.`,
+      `Selected tool: ${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}.`,
+      openResultLabel,
+      previewContext,
+      annotationSummary ? `Canvas annotations across tabs: ${annotationSummary}.` : "",
+      strokeSummary ? `Canvas drawings across tabs: ${strokeSummary}.` : "",
+      currentToolHistory.length
+        ? `Recent generated outputs: ${currentToolHistory
+            .slice(0, 4)
+            .map((item) => `${item.label}: ${item.title}`)
+            .join(" | ")}.`
+        : ""
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }, [
+    activeAction,
+    canvasAnnotations,
+    canvasStrokes,
+    canvasTool,
+    currentFilesLabel,
+    currentSession?.title,
+    currentToolHistory,
+    output,
+    preview.file?.file_name,
+    preview.kind,
+    preview.open,
+    preview.text,
+    workspaceTab,
+    workspaceTabs
+  ]);
+
+  useEffect(() => {
+    setRevealedQuiz({});
+    setSelectedQuizOption({});
+    setQuizResults({});
+    setRevealedFlashcards({});
+    setExamAnswers({});
+    setToolCardIndex(0);
+  }, [activeAction, output]);
+
+  useEffect(() => {
+    setMessages([]);
+    setOutput("");
+    setChat("");
+    setChatLoading(false);
+    setToolModalOpen(false);
+    setToolModalView("setup");
+    setStatusNote("");
+    closePreview();
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (sourceEnabledCount) {
+      setSourceModalOpen(false);
+      setSourceModalError("");
+    }
+  }, [sourceEnabledCount]);
+
+  useEffect(() => {
+    if (!activeSessionId || sourceEnabledCount || sourcePromptedForStudio === activeSessionId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      openSourceModal("Upload a source or import a web source before you start chatting or generating tools.");
+      setSourcePromptedForStudio(activeSessionId);
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [activeSessionId, sourceEnabledCount, sourcePromptedForStudio]);
+
+  useEffect(() => {
+    const tab = workspaceTabs.find((item) => item.id === workspaceTab);
+    if (!tab || !(tab.kind === "output" || tab.kind === "canvas-output") || !tab.output) return;
+    if (tab.action) setActiveAction(tab.action);
+    setOutput(tab.output);
+  }, [workspaceTab, workspaceTabs]);
+
+  useEffect(() => {
+    if (!preferencesReady || defaultToolAppliedRef.current) return;
+    if (actionButtons.some((item) => item.key === preferredDefaultTool)) {
+      setActiveAction(preferredDefaultTool);
+      setToolDraft(createToolDraft(preferredDefaultTool));
+    }
+    defaultToolAppliedRef.current = true;
+  }, [preferencesReady, preferredDefaultTool]);
+
+  useEffect(() => {
+    if (!preferencesReady) return;
+
+    try {
+      localStorage.setItem("scholarmind_remember_last_studio", rememberLastStudioPref ? "on" : "off");
+      localStorage.setItem("scholarmind_default_tool", preferredDefaultTool);
+      if (!rememberLastStudioPref) {
+        localStorage.removeItem("scholarmind_last_studio");
+      }
+    } catch {
+      return;
+    }
+  }, [preferencesReady, preferredDefaultTool, rememberLastStudioPref]);
+
+  useEffect(() => {
+    if (!activeSessionId || !preferencesReady || !rememberLastStudioPref) return;
+
+    try {
+      localStorage.setItem("scholarmind_last_studio", activeSessionId);
+    } catch {
+      // Ignore browser storage failures.
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lastStudioId: activeSessionId })
+      });
+    }, 160);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeSessionId, preferencesReady, rememberLastStudioPref]);
+
+  useEffect(() => {
+    if (!activeSessionId || hasCurrentFiles) return;
+
+    let ignore = false;
+
+    const fetchFiles = async () => {
+      setFetchingFiles(true);
+
+      try {
+        const response = await fetch(`/api/sessions?sessionId=${activeSessionId}`);
+        const json = await readJsonResponse(response);
+        if (!response.ok) {
+          throw new Error(normalizeErrorMessage(json.error, "Unable to load files for this studio."));
+        }
+        if (ignore) return;
+
+        setFilesBySession((current) => ({
+          ...current,
+          [activeSessionId]: json.files ?? []
+        }));
+      } catch (error) {
+        if (!ignore) {
+          setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to load files for this studio."));
+        }
+      } finally {
+        if (!ignore) setFetchingFiles(false);
+      }
+    };
+
+    fetchFiles();
+
+    return () => {
+      ignore = true;
+    };
+  }, [activeSessionId, hasCurrentFiles]);
+
+  useEffect(() => {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+
+    viewport.scrollTo({
+      top: viewport.scrollHeight,
+      behavior: messages.length > 1 ? "smooth" : "auto"
+    });
+  }, [chatLoading, messages]);
+
+  useEffect(() => {
+    const container = workspaceScrollRef.current;
+    if (!container) return;
+
+    const onScroll = () => {
+      const y = container.scrollTop;
+      const atBottom = y + container.clientHeight >= container.scrollHeight - 100;
+
+      if (y < lastWorkspaceScrollYRef.current - 12) {
+        setMusicPanelOpen(false);
+      }
+
+      lastWorkspaceScrollYRef.current = y;
+    };
+
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, []);
+
+  const playSoftPing = useCallback((kind: "break" | "focus" | "done" = "focus") => {
+    try {
+      const AudioContextClass = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const audio = new AudioContextClass();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = kind === "done" ? 740 : kind === "break" ? 520 : 620;
+      gain.gain.setValueAtTime(0.001, audio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.13, audio.currentTime + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + (kind === "done" ? 0.45 : 0.22));
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      oscillator.start();
+      oscillator.stop(audio.currentTime + (kind === "done" ? 0.5 : 0.25));
+      window.setTimeout(() => audio.close(), 650);
+    } catch {
+      // Browser audio can be blocked; the visual timer still works.
+    }
+  }, []);
+
+  const startStudyTimer = useCallback(
+    (minutes = timerMinutes) => {
+      const safeMinutes = Math.max(1, Math.min(240, minutes));
+      setTimerMinutes(safeMinutes);
+      setBreakEveryMinutes((current) => Math.max(1, Math.min(current, safeMinutes)));
+      setBreakMinutes((current) => Math.max(1, Math.min(current, Math.max(1, Math.min(breakEveryMinutes, safeMinutes)))));
+      setTimerRemaining(safeMinutes * 60);
+      setTimerPhase("focus");
+      setTimerRunning(true);
+      setBreakPopupOpen(false);
+      setStatusNote(`Study timer started for ${safeMinutes} minute(s).`);
+    },
+    [breakEveryMinutes, timerMinutes]
+  );
+
+  useEffect(() => {
+    if (!timerRunning || timerRemaining <= 0) return;
+
+    const intervalId = window.setInterval(() => {
+      setTimerRemaining((current) => {
+        if (current <= 1) {
+          setTimerRunning(false);
+          setTimerPhase("done");
+          setBreakPopupOpen(false);
+          playSoftPing("done");
+          setStatusNote("Study timer complete.");
+          return 0;
+        }
+
+        const next = current - 1;
+        if (timerMode === "regular") {
+          return next;
+        }
+
+        const elapsed = timerMinutes * 60 - next;
+        const focusBlock = Math.max(1, breakEveryMinutes) * 60;
+        const breakBlock = Math.max(1, breakMinutes) * 60;
+        const cycle = focusBlock + breakBlock;
+        const cyclePosition = elapsed % cycle;
+        const nextPhase = cyclePosition >= focusBlock ? "break" : "focus";
+
+        setTimerPhase((currentPhase) => {
+          if (currentPhase !== nextPhase) {
+            playSoftPing(nextPhase === "break" ? "break" : "focus");
+            if (nextPhase === "break") {
+              setBreakPopupOpen(true);
+            }
+          }
+          return nextPhase;
+        });
+
+        return next;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [breakEveryMinutes, breakMinutes, playSoftPing, timerMinutes, timerMode, timerRemaining, timerRunning]);
+
+  useEffect(() => {
+    const syncDesktopLayout = () => {
+      const enabled = window.innerWidth >= 1024;
+      setDesktopLayoutEnabled(enabled);
+
+      const container = workspaceGridRef.current;
+      if (!enabled || !container) return;
+
+      const availableWidth = container.getBoundingClientRect().width - desktopResizeHandleWidth;
+      if (availableWidth <= desktopCenterPanelMin) return;
+
+      setDesktopPanelWidths((current) => {
+        const maxRight = Math.min(
+          desktopRightPanelMax,
+          availableWidth - desktopCenterPanelMin
+        );
+        const nextRight = Math.min(
+          Math.max(current.right, desktopRightPanelMin),
+          Math.max(desktopRightPanelMin, maxRight)
+        );
+
+        return current.right === nextRight
+          ? current
+          : { ...current, right: nextRight };
+      });
+    };
+
+    syncDesktopLayout();
+    window.addEventListener("resize", syncDesktopLayout);
+    return () => window.removeEventListener("resize", syncDesktopLayout);
+  }, []);
+
+  useEffect(() => {
+    if (!draggingDivider) return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const container = workspaceGridRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const availableWidth = rect.width - desktopResizeHandleWidth;
+      if (availableWidth <= desktopCenterPanelMin) return;
+
+      setDesktopPanelWidths((current) => {
+        if (draggingDivider === "left") {
+          const maxLeft = Math.min(
+            desktopLeftPanelMax,
+            availableWidth - current.right - desktopCenterPanelMin
+          );
+          const nextLeft = Math.min(
+            Math.max(event.clientX - rect.left, desktopLeftPanelMin),
+            Math.max(desktopLeftPanelMin, maxLeft)
+          );
+
+          return {
+            ...current,
+            left: nextLeft
+          };
+        }
+
+        const distanceFromRight = rect.right - event.clientX;
+        const maxRight = Math.min(
+          desktopRightPanelMax,
+          availableWidth - desktopCenterPanelMin
+        );
+        const nextRight = Math.min(
+          Math.max(distanceFromRight, desktopRightPanelMin),
+          Math.max(desktopRightPanelMin, maxRight)
+        );
+
+        return {
+          ...current,
+          right: nextRight
+        };
+      });
+    };
+
+    const onMouseUp = () => {
+      setDraggingDivider(null);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [draggingDivider]);
+
+  const buildContextForPrompt = useCallback(
+    (hint: string, action: AIAction) => {
+      const sourceContext = buildStudyContext(sourceEnabledFiles, hint, {
+        maxCharacters:
+          action === "notes"
+            ? 18000
+            : action === "exam"
+              ? 14000
+              : action === "quiz" || action === "flashcards"
+                ? 7500
+                : 6500,
+        maxChunks:
+          action === "notes" ? 20 : action === "exam" ? 14 : action === "quiz" || action === "flashcards" ? 10 : 7
+      });
+      const profile = onboardingSummary(onboarding);
+
+      return [profile ? `Student profile:\n${profile}` : "", sourceContext].filter(Boolean).join("\n\n");
+    },
+    [onboarding, sourceEnabledFiles]
+  );
+
+  const saveToolResult = useCallback(
+    (action: AIAction, text: string, focus: string) => {
+      if (!activeSessionId) return;
+
+      const actionLabel = actionButtons.find((item) => item.key === action)?.label || "Tool";
+      const focusLabel = focus.trim();
+      const result: ToolHistoryItem = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        action,
+        title: focusLabel ? `${actionLabel}: ${clipText(focusLabel, 44)}` : actionLabel,
+        label: actionLabel,
+        preview: summarizeGeneratedOutput(text),
+        output: text,
+        createdAt: Date.now()
+      };
+
+      setToolHistoryBySession((current) => ({
+        ...current,
+        [activeSessionId]: [result, ...(current[activeSessionId] ?? [])].slice(0, 12)
+      }));
+    },
+    [activeSessionId]
+  );
+
+  const openSavedToolResult = useCallback((result: ToolHistoryItem) => {
+    setActiveAction(result.action);
+    setToolDraft(createToolDraft(result.action));
+    setOutput(result.output);
+    setToolCardIndex(0);
+    setTab("tools");
+    upsertWorkspaceTab({
+      id: `saved-output-${result.id}`,
+      label: result.label,
+      kind: "output",
+      action: result.action,
+      output: result.output,
+      closable: true
+    });
+  }, [upsertWorkspaceTab]);
+
+  const toolResultCount =
+    activeAction === "quiz"
+      ? parsedQuiz?.length ?? 0
+      : activeAction === "flashcards"
+        ? parsedFlashcards?.length ?? 0
+        : parsedCards.length;
+
+  const shiftToolCard = useCallback(
+    (step: number) => {
+      if (!toolResultCount) {
+        setToolCardIndex(0);
+        return;
+      }
+
+      setToolCardIndex((current) => (current + step + toolResultCount) % toolResultCount);
+    },
+    [toolResultCount]
+  );
+
+  useEffect(() => {
+    if (!toolModalOpen || toolModalView !== "result") return;
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) {
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        shiftToolCard(1);
+        return;
+      }
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        shiftToolCard(-1);
+        return;
+      }
+
+      if (activeAction === "flashcards" && event.code === "Space") {
+        event.preventDefault();
+        setRevealedFlashcards((current) => {
+          if (!current[toolCardIndex]) {
+            updateMetrics((metrics) => ({
+              ...metrics,
+              flashcardsFlipped: metrics.flashcardsFlipped + 1
+            }));
+            return { ...current, [toolCardIndex]: true };
+          }
+
+          shiftToolCard(1);
+          return current;
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeAction, shiftToolCard, toolCardIndex, toolModalOpen, toolModalView, updateMetrics]);
+
+  const refreshStudios = async () => {
+    setStudioBrowserRefreshing(true);
+
+    try {
+      const response = await fetch("/api/sessions");
+      const json = await readJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to refresh the studio list."));
+      }
+
+      setSessionList(Array.isArray(json.sessions) ? json.sessions : []);
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to refresh the studio list."));
+    } finally {
+      setStudioBrowserRefreshing(false);
+    }
+  };
+
+  const openStudio = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setTab("files");
+    setShowStudioBrowser(false);
+    setStatusNote("");
+  };
+
+  const getKnownFileCount = (sessionId: string) =>
+    sessionId in filesBySession ? filesBySession[sessionId].length : null;
+
+  const createStudio = async (title?: string) => {
+    setStatusNote("Preparing a new studio...");
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title || `Studio ${sessionList.length + 1}` })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to prepare a studio."));
+      }
+
+      const nextSession = { id: json.id as string, title: json.title as string };
+      setSessionList((current) =>
+        current.some((session) => session.id === nextSession.id) ? current : [nextSession, ...current]
+      );
+      setFilesBySession((current) => ({ ...current, [nextSession.id]: current[nextSession.id] ?? [] }));
+      setActiveSessionId(nextSession.id);
+      setTab("files");
+      setStatusNote("Studio ready.");
+      return nextSession.id;
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to prepare a studio."));
+      return null;
+    }
+  };
+
+  const renameStudio = async (sessionId: string, currentTitle: string) => {
+    const nextTitle = window.prompt("Rename studio", currentTitle)?.trim();
+    if (!nextTitle || nextTitle === currentTitle) {
+      return;
+    }
+
+    setRenamingStudioId(sessionId);
+    setStatusNote("Renaming studio...");
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, title: nextTitle })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to rename this studio."));
+      }
+
+      setSessionList((current) =>
+        current.map((session) => (session.id === sessionId ? { ...session, title: json.title || nextTitle } : session))
+      );
+      setStatusNote(`Studio renamed to ${json.title || nextTitle}.`);
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to rename this studio."));
+    } finally {
+      setRenamingStudioId(null);
+    }
+  };
+
+  const deleteStudio = async (sessionId: string, title: string) => {
+    const confirmed = window.confirm(`Delete "${title}"? This will remove the studio and its uploaded sources.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingStudioId(sessionId);
+    setStatusNote("Deleting studio...");
+
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to delete this studio."));
+      }
+
+      const nextSessions = Array.isArray(json.sessions) ? json.sessions : [];
+      setSessionList(nextSessions);
+      setFilesBySession((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
+
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(nextSessions[0]?.id ?? null);
+      }
+
+      setShowStudioBrowser(false);
+      setStatusNote(`Deleted ${title}.`);
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to delete this studio."));
+    } finally {
+      setDeletingStudioId(null);
+    }
+  };
+
+  const ensureActiveSession = async () => {
+    if (activeSessionId) return activeSessionId;
+    return createStudio("Untitled Studio");
+  };
+
+  const uploadFiles = async (incoming: FileList | File[] | null) => {
+    const filesToUpload = incoming ? Array.from(incoming) : [];
+    if (!filesToUpload.length) {
+      const message = "No files were selected. Try again and keep the files in the picker until the upload starts.";
+      setStatusNote(message);
+      setSourceModalError(message);
+      return;
+    }
+
+    const maxUploadFileSizeBytes = defaultMaxUploadFileSizeMb * 1024 * 1024;
+    const oversizedFiles = filesToUpload.filter((file) => file.size > maxUploadFileSizeBytes);
+    const allowedFiles = filesToUpload.filter((file) => file.size <= maxUploadFileSizeBytes);
+
+    if (!allowedFiles.length) {
+      const message = `Each uploaded file must be ${defaultMaxUploadFileSizeMb} MB or smaller.`;
+      setStatusNote(message);
+      setSourceModalError(message);
+      return;
+    }
+
+    const sessionId = await ensureActiveSession();
+    if (!sessionId) {
+      return;
+    }
+
+    setActiveSessionId(sessionId);
+    setUploading(true);
+    setUploadProgress(10);
+    setStatusNote("");
+    setSourceModalError("");
+
+    try {
+      let nextFiles = filesBySession[sessionId] ?? [];
+      const warnings: string[] = [];
+      const rejectedFiles: { fileName: string; reason: string }[] = [];
+
+  // Batch upload all files in a single request
+      const form = new FormData();
+      allowedFiles.forEach((file) => form.append("files", file));
+      form.append("sessionId", sessionId);
+
+      setUploadProgress(30);
+      const response = await fetch("/api/upload", { method: "POST", body: form });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        if (Array.isArray(json.rejectedFiles)) {
+          rejectedFiles.push(...json.rejectedFiles);
+        } else if (json.error) {
+          allowedFiles.forEach(f => rejectedFiles.push({ fileName: f.name, reason: normalizeErrorMessage(json.error, "Upload failed.") }));
+        }
+      } else {
+        nextFiles = Array.isArray(json.files) ? json.files : nextFiles;
+        if (Array.isArray(json.warnings)) warnings.push(...json.warnings);
+        if (Array.isArray(json.rejectedFiles)) rejectedFiles.push(...json.rejectedFiles);
+      }
+      setUploadProgress(80);
+
+      if (!nextFiles.length) {
+        const refreshResponse = await fetch(`/api/sessions?sessionId=${sessionId}`);
+        const refreshJson = await readJsonResponse(refreshResponse);
+        if (!refreshResponse.ok) {
+          throw new Error(
+            normalizeErrorMessage(refreshJson.error, "Upload finished, but the files could not be refreshed.")
+          );
+        }
+        nextFiles = Array.isArray(refreshJson.files) ? refreshJson.files : [];
+      }
+
+      setUploadProgress(92);
+      setFilesBySession((current) => ({
+        ...current,
+        [sessionId]: nextFiles
+      }));
+      setUploadProgress(100);
+      const oversizedMessage =
+        oversizedFiles.length > 0 ? ` ${oversizedFiles.length} file(s) were skipped for being over ${defaultMaxUploadFileSizeMb} MB.` : "";
+      const rejectedMessage =
+        rejectedFiles.length > 0
+          ? ` ${rejectedFiles.length} file(s) were unreadable and were skipped. Reupload a clearer copy.`
+          : "";
+      if (nextFiles.length) {
+        const message = warnings.length
+          ? `${nextFiles.length} file(s) added. ${warnings[0]}${rejectedMessage}${oversizedMessage}`
+          : `${nextFiles.length} file(s) added. The study tools are now ready to use.${rejectedMessage}${oversizedMessage}`;
+        setStatusNote(message);
+        setSourceModalError("");
+        setSourceModalOpen(false);
+      } else {
+        const message =
+          rejectedFiles[0]?.reason ||
+          "Upload finished, but no saved files came back from Supabase. Re-run supabase/schema.sql and confirm the storage policies were created.";
+        setStatusNote(message);
+        setSourceModalError(message);
+      }
+      setTab("tools");
+    } catch (error) {
+      const message = formatSupabaseSetupError((error as Error).message || "Upload failed.");
+      setStatusNote(message);
+      setSourceModalError(message);
+    } finally {
+      window.setTimeout(() => {
+        setUploading(false);
+        setUploadProgress(0);
+      }, 360);
+    }
+  };
+
+  const searchWebSources = async () => {
+    const query = sourceModalQuery.trim();
+    if (!query) {
+      setSourceModalError("Type a topic, chapter, or question to search for web sources.");
+      return;
+    }
+
+    setSourceModalLoading(true);
+    setSourceModalError("");
+    setSourceSearchWarning("");
+    setSourceSearchResults([]);
+    setVisibleSourceResults(12);
+    setSourceResultFilter("all");
+
+    try {
+      const response = await fetch("/api/sources/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, engine: sourceSearchEngine })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to search the web right now."));
+      }
+
+      setSourceSearchResults(Array.isArray(json.results) ? json.results : []);
+      setSourceSearchWarning(typeof json.warning === "string" ? json.warning : "");
+      setSourceModalMode("web");
+
+      if (!json.results?.length) {
+        setSourceModalError("No web sources came back for that topic. Try a more specific search.");
+      }
+    } catch (error) {
+      setSourceModalError((error as Error).message || "Unable to search the web right now.");
+    } finally {
+      setSourceModalLoading(false);
+    }
+  };
+
+  const searchWorkspaceSources = async () => {
+    const query = workspaceSearchQuery.trim();
+    if (!query) {
+      setWorkspaceSearchError("Type a topic, question, or URL to search inside the studio.");
+      return;
+    }
+
+    setWorkspaceSearchLoading(true);
+    setWorkspaceSearchError("");
+
+    try {
+      const looksLikeUrl =
+        /^https?:\/\//i.test(query) ||
+        /^www\./i.test(query) ||
+        /^[\w-]+\.(ac\.|co\.|com|org|net|edu|gov|io|app)[^\s]*$/i.test(query);
+
+      if (looksLikeUrl) {
+        const normalizedUrl = /^https?:\/\//i.test(query) ? query : `https://${query.replace(/^www\./i, "www.")}`;
+        let hostname = normalizedUrl;
+        try {
+          hostname = new URL(normalizedUrl).hostname;
+        } catch {
+          throw new Error("That URL does not look valid. Try again with https:// included.");
+        }
+
+        openBrowseInWorkspace(normalizedUrl, hostname);
+        setStatusNote(`Opened ${hostname} inside this studio.`);
+        return;
+      }
+
+      const googleUrl = getGoogleSearchUrl(query);
+      openBrowseInWorkspace(googleUrl, `Google: ${clipText(query, 28)}`);
+      setStatusNote(`Opened Google search for “${query}” inside this studio.`);
+    } catch (error) {
+      setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
+    } finally {
+      setWorkspaceSearchLoading(false);
+    }
+  };
+
+  void searchWebSources;
+
+  const removeFile = async (file: FileItem) => {
+    setDeletingFileId(file.id);
+    setStatusNote("");
+
+    try {
+      const response = await fetch(`/api/files/${file.id}`, {
+        method: "DELETE"
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to remove this source."));
+      }
+
+      const sessionId = activeSessionId;
+      if (!sessionId) return;
+
+      setFilesBySession((current) => ({
+        ...current,
+        [sessionId]: (current[sessionId] ?? []).filter((currentFile) => currentFile.id !== file.id)
+      }));
+      setStatusNote(`${file.file_name} was removed from this studio.`);
+
+      if (preview.file?.id === file.id) {
+        closePreview();
+      }
+    } catch (error) {
+      setStatusNote((error as Error).message || "Unable to remove this source.");
+    } finally {
+      setDeletingFileId(null);
+    }
+  };
+
+  const importWebSource = async (source: WebSourceItem) => {
+    const sessionId = await ensureActiveSession();
+    if (!sessionId) return;
+
+    setImportingSourceId(source.id);
+    setSourceModalError("");
+
+    try {
+      const response = await fetch("/api/sources/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          title: source.title,
+          url: source.url,
+          snippet: source.snippet,
+          source: source.source,
+          trustLabel: source.trustLabel
+        })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to import this web source."));
+      }
+
+      setActiveSessionId(sessionId);
+      setFilesBySession((current) => ({
+        ...current,
+        [sessionId]: Array.isArray(json.files) ? json.files : current[sessionId] ?? []
+      }));
+      openBrowseInWorkspace(source.url, source.title);
+      setStatusNote(`${source.title} was added to this studio and opened in the workspace browser.`);
+      setSourceModalOpen(false);
+      setTab("tools");
+    } catch (error) {
+      setSourceModalError((error as Error).message || "Unable to import this web source.");
+    } finally {
+      setImportingSourceId(null);
+    }
+  };
+
+  const saveBrowseAsNote = useCallback(
+    async (url: string, label: string) => {
+      await importWebSource({
+        id: `browse-save-${Date.now()}`,
+        title: label || url,
+        url,
+        snippet: `Saved from workspace browser on ${new Date().toLocaleDateString()}.`,
+        source: "Workspace browser",
+        trustLabel: "Web"
+      });
+    },
+    [importWebSource]
+  );
+
+  const copySourcesFromStudio = (sourceSessionId: string, sourceStudioTitle: string) => {
+    if (sourceSessionId === activeSessionId) {
+      setStatusNote("You are already inside that studio.");
+      return;
+    }
+
+    setCopiedSourceClipboard({
+      sourceSessionId,
+      sourceStudioTitle,
+      copiedAt: Date.now()
+    });
+    setShowStudioBrowser(false);
+    setTab("files");
+    setStatusNote(`Copied ${sourceStudioTitle} into your source clipboard. Open a studio and paste it into Files when you're ready.`);
+  };
+
+  const pasteCopiedSourcesIntoStudio = async () => {
+    const targetSessionId = await ensureActiveSession();
+    if (!targetSessionId || !copiedSourceClipboard) return;
+
+    if (copiedSourceClipboard.sourceSessionId === targetSessionId) {
+      setStatusNote("Those copied sources already belong to this studio.");
+      return;
+    }
+
+    setCopyingStudioId(copiedSourceClipboard.sourceSessionId);
+    setStatusNote(`Pasting sources from ${copiedSourceClipboard.sourceStudioTitle} into this studio...`);
+
+    try {
+      const response = await fetch("/api/sessions/copy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceSessionId: copiedSourceClipboard.sourceSessionId,
+          targetSessionId
+        })
+      });
+      const json = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw new Error(normalizeErrorMessage(json.error, "Unable to paste copied sources."));
+      }
+
+      setFilesBySession((current) => ({
+        ...current,
+        [targetSessionId]: json.files ?? current[targetSessionId] ?? []
+      }));
+      setTab("files");
+      setStatusNote(
+        json.message ||
+          `Copied ${typeof json.copiedCount === "number" ? json.copiedCount : 0} source(s) into this studio.`
+      );
+    } catch (error) {
+      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to paste copied sources."));
+    } finally {
+      setCopyingStudioId(null);
+    }
+  };
+
+  const toggleFileSource = async (file: FileItem) => {
+    const sessionId = activeSessionId;
