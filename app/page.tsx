@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import {
   ArrowRight,
@@ -11,14 +9,13 @@ import {
   Sparkles,
   WandSparkles
 } from "lucide-react";
-import { motion, useScroll, useTransform } from "framer-motion";
-import { ScrollShowcase } from "@/components/landing/ScrollShowcase";
-import { ThreeHero } from "@/components/landing/ThreeHero";
+import { DeferredScrollShowcase } from "@/components/landing/DeferredScrollShowcase";
+import { DeferredThreeHero } from "@/components/landing/DeferredThreeHero";
 import { BrandLink } from "@/components/common/BrandLink";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Badge } from "@/components/ui/Badge";
-import { buttonVariants } from "@/components/ui/Button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
 import { Logo } from "@/components/ui/Logo";
@@ -84,20 +81,10 @@ const faqs = [
 ];
 
 export default function LandingPage() {
-  const { scrollYProgress } = useScroll();
-  const leftGlowY = useTransform(scrollYProgress, [0, 1], [0, 280]);
-  const rightGlowY = useTransform(scrollYProgress, [0, 1], [0, -200]);
-
   return (
     <main className="noise relative overflow-x-hidden pb-16">
-      <motion.div
-        style={{ y: leftGlowY }}
-        className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-[rgba(255,125,89,0.2)] blur-3xl"
-      />
-      <motion.div
-        style={{ y: rightGlowY }}
-        className="pointer-events-none absolute -right-24 top-20 h-80 w-80 rounded-full bg-[rgba(57,208,255,0.18)] blur-3xl"
-      />
+      <div className="pointer-events-none absolute -left-20 top-16 h-72 w-72 rounded-full bg-[rgba(255,125,89,0.2)] blur-3xl" />
+      <div className="pointer-events-none absolute -right-24 top-20 h-80 w-80 rounded-full bg-[rgba(57,208,255,0.18)] blur-3xl" />
 
       <header className="glass sticky top-0 z-40 border-b border-white/10">
         <Container className="flex items-center justify-between py-4">
@@ -117,12 +104,7 @@ export default function LandingPage() {
 
       <Container className="pt-5 sm:pt-8">
         <section className="grid gap-6 pb-8 pt-4 sm:gap-8 sm:pb-10 sm:pt-6 lg:grid-cols-[1.02fr_0.98fr] lg:items-center">
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55 }}
-            className="space-y-5 sm:space-y-7"
-          >
+          <div className="space-y-5 sm:space-y-7">
             <Badge className="bg-white/45">
               <Sparkles className="h-3.5 w-3.5" />
               Text, images, PDFs, and lecture transcripts
@@ -173,16 +155,11 @@ export default function LandingPage() {
                 </div>
               ))}
             </div>
-          </motion.div>
+          </div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.08, duration: 0.55 }}
-            className="relative"
-          >
-            <ThreeHero />
-          </motion.div>
+          <div className="relative">
+            <DeferredThreeHero />
+          </div>
         </section>
 
         <div className="pb-6 sm:pb-10">
@@ -221,19 +198,13 @@ export default function LandingPage() {
       </Container>
 
       <div id="study-flow">
-        <ScrollShowcase />
+        <DeferredScrollShowcase />
       </div>
 
       <Container className="py-10 sm:py-16">
-        <motion.section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {studyFeatures.map((feature, index) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 26 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: "-80px" }}
-              transition={{ delay: index * 0.08, duration: 0.55 }}
-            >
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {studyFeatures.map((feature) => (
+            <div key={feature.title}>
               <Card className="h-full overflow-hidden">
                 <CardHeader className="relative space-y-3 p-5 sm:p-6">
                   <div className="absolute right-5 top-5 h-16 w-16 rounded-full bg-[rgba(255,125,89,0.12)] blur-2xl" />
@@ -242,9 +213,9 @@ export default function LandingPage() {
                   <p className="muted text-sm">{feature.copy}</p>
                 </CardHeader>
               </Card>
-            </motion.div>
+            </div>
           ))}
-        </motion.section>
+        </section>
       </Container>
 
       <Container className="pb-6 sm:pb-10">
@@ -337,7 +308,7 @@ export default function LandingPage() {
       </Container>
 
       <Container className="py-6 sm:py-8">
-        <motion.section className="grid gap-6 lg:grid-cols-[1fr_0.92fr]">
+        <section className="grid gap-6 lg:grid-cols-[1fr_0.92fr]">
           <Card>
             <CardHeader className="space-y-3 p-5 sm:p-6">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[var(--accent-sky)]">
@@ -383,11 +354,11 @@ export default function LandingPage() {
               ))}
             </CardContent>
           </Card>
-        </motion.section>
+        </section>
       </Container>
 
       <Container className="pb-8 pt-2 sm:pb-10 sm:pt-4">
-        <motion.div>
+        <div>
           <Card className="overflow-hidden">
             <CardHeader className="relative space-y-4 p-5 text-center sm:p-6">
               <div className="absolute inset-x-20 top-0 h-24 rounded-full bg-[rgba(255,125,89,0.12)] blur-3xl" />
@@ -414,7 +385,7 @@ export default function LandingPage() {
               </div>
             </CardHeader>
           </Card>
-        </motion.div>
+        </div>
       </Container>
 
       <footer className="border-t border-white/10 py-8">

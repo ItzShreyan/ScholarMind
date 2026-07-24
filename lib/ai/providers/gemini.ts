@@ -12,7 +12,19 @@ export const geminiProvider: AIProvider = {
     const model = client.getGenerativeModel({
       model: process.env.GEMINI_MODEL || "gemini-2.5-flash"
     });
-    const result = await model.generateContent(buildPrompt(input));
+    const prompt = buildPrompt(input);
+    const parts = input.imageAttachments?.length
+      ? [
+          { text: prompt },
+          ...input.imageAttachments.map((image) => ({
+            inlineData: {
+              mimeType: image.mimeType,
+              data: image.data
+            }
+          }))
+        ]
+      : prompt;
+    const result = await model.generateContent(parts);
     const text = normalizeAIText(result.response.text());
     return { provider: "gemini", text };
   }

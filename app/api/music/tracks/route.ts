@@ -32,18 +32,12 @@ export async function GET(req: Request) {
     const { data, error } = await query;
     if (error) throw error;
 
-    // Attach signed URLs for playback
-    const tracks = await Promise.all(
-      (data || []).map(async (track) => {
-        const { data: signedUrlData } = await supabase.storage
-          .from("user-audio")
-          .createSignedUrl(track.storage_path, 60 * 60 * 24 * 7);
-        return {
-          ...track,
-          playback_url: signedUrlData?.signedUrl || ""
-        };
-      })
-    );
+    // This stable same-origin URL authorizes and signs each media request on
+    // demand. Never persist a signed URL: it expires and breaks on return.
+    const tracks = (data || []).map((track) => ({
+      ...track,
+      playback_url: `/api/music/tracks/${encodeURIComponent(track.id)}/stream`
+    }));
 
     return NextResponse.json({ tracks });
   } catch (error) {

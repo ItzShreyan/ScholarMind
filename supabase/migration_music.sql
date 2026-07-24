@@ -84,6 +84,15 @@ values (
 )
 on conflict (id) do nothing;
 
+-- Existing projects may have created this bucket before all browser audio MIME
+-- variants were supported. Keep its policy independent from signed URLs.
+update storage.buckets
+set allowed_mime_types = array[
+  'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/ogg', 'audio/flac', 'audio/aac',
+  'audio/x-m4a', 'audio/mp3', 'audio/mpeg3', 'audio/x-wav', 'audio/x-mpeg'
+]
+where id = 'user-audio';
+
 -- Storage policies for audio files
 drop policy if exists "user audio read own objects" on storage.objects;
 drop policy if exists "user audio insert own objects" on storage.objects;

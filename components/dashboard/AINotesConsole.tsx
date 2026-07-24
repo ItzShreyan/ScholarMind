@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Atom, BookOpen, Download, FlaskConical, Waves } from "lucide-react";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
@@ -225,6 +225,61 @@ export function AINotesConsole({ content }: { content: string }) {
   const notes = useMemo(() => parseNotes(content), [content]);
   const [activeSection, setActiveSection] = useState(0);
   const [revealedAnswers, setRevealedAnswers] = useState<Record<number, boolean>>({});
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Array<HTMLElement | null>>([]);
+  const sections = safeItems(notes?.sections);
+
+  useEffect(() => {
+    setActiveSection(0);
+  }, [content]);
+
+  useEffect(() => {
+    const scrollRoot = contentScrollRef.current;
+    const chapterSections = sectionRefs.current.filter((section): section is HTMLElement => Boolean(section));
+    if (!scrollRoot || !chapterSections.length || !("IntersectionObserver" in window)) return;
+
+    const updateActiveSection = () => {
+      const rootRect = scrollRoot.getBoundingClientRect();
+      // Treat the upper third of the reading pane as the student's current place.
+      // This avoids changing chapters only after the entire next chapter is visible.
+      const readingLine = rootRect.top + scrollRoot.clientHeight * 0.35;
+      let nextActiveSection = 0;
+
+      sectionRefs.current.forEach((section, index) => {
+        if (section && section.getBoundingClientRect().top <= readingLine) {
+          nextActiveSection = index;
+        }
+      });
+
+      setActiveSection((current) => (current === nextActiveSection ? current : nextActiveSection));
+    };
+
+    const observer = new IntersectionObserver(updateActiveSection, {
+      root: scrollRoot,
+      // The lower boundary is the reading line. An entry crossing it in either
+      // direction updates the chapter map without a scroll-event listener.
+      rootMargin: "0px 0px -65% 0px",
+      threshold: 0
+    });
+
+    chapterSections.forEach((section) => observer.observe(section));
+    updateActiveSection();
+    return () => observer.disconnect();
+  }, [content, sections.length]);
+
+  const scrollToSection = (index: number) => {
+    const scrollRoot = contentScrollRef.current;
+    const section = sectionRefs.current[index];
+    if (!scrollRoot || !section) return;
+
+    setActiveSection(index);
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const sectionRect = section.getBoundingClientRect();
+    scrollRoot.scrollTo({
+      top: Math.max(0, scrollRoot.scrollTop + sectionRect.top - rootRect.top - 24),
+      behavior: "smooth"
+    });
+  };
 
   if (!notes) {
     return (
@@ -233,8 +288,6 @@ export function AINotesConsole({ content }: { content: string }) {
       </div>
     );
   }
-
-  const sections = safeItems(notes.sections);
 
   return (
     <article className="overflow-hidden rounded-[34px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.11),rgba(255,255,255,0.04))] shadow-[0_34px_90px_rgba(2,6,23,0.28)]">
@@ -276,7 +329,8 @@ export function AINotesConsole({ content }: { content: string }) {
                 <motion.button
                   key={`${section.heading}-${index}`}
                   type="button"
-                  onClick={() => setActiveSection(index)}
+                  onClick={() => scrollToSection(index)}
+                  aria-current={activeSection === index ? "location" : undefined}
                   whileHover={{ x: 3 }}
                   whileTap={{ scale: 0.97 }}
                   transition={{ type: "spring", stiffness: 400, damping: 20 }}
@@ -301,11 +355,14 @@ export function AINotesConsole({ content }: { content: string }) {
           ) : null}
         </aside>
 
-        <div className="hide-scrollbar max-h-[75vh] overflow-auto p-5 md:p-8">
+        <div ref={contentScrollRef} className="hide-scrollbar max-h-[75vh] overflow-auto p-5 md:p-8">
           <div className="mx-auto max-w-4xl space-y-7">
             {sections.map((section, index) => (
               <motion.section
                 key={`${section.heading}-${index}`}
+                ref={(element) => {
+                  sectionRefs.current[index] = element;
+                }}
                 className={index === activeSection ? "scroll-mt-8" : ""}
                 {...fadeInUp}
                 transition={{ ...fadeInUp.transition, delay: index * 0.04 }}

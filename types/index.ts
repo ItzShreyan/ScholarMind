@@ -15,6 +15,13 @@ export type ChatHistoryItem = {
   content: string;
 };
 
+export type AIImageAttachment = {
+  name: string;
+  mimeType: string;
+  /** Base64 payload only; never expose this field to a browser response. */
+  data: string;
+};
+
 export type AIRequest = {
   action: AIAction;
   prompt: string;
@@ -26,6 +33,7 @@ export type AIRequest = {
   examMode?: "full" | "practice";
   sessionId?: string;
   userId?: string;
+  imageAttachments?: AIImageAttachment[];
 };
 
 export type StudySession = {

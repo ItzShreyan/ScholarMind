@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { inferFileMimeType, isAudioDocument } from "@/lib/documents/formats";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -65,25 +66,19 @@ export async function POST(req: Request) {
       );
     }
 
-    const allowedAudioTypes = [
-      "audio/mpeg", "audio/wav", "audio/mp4", "audio/ogg",
-      "audio/flac", "audio/aac", "audio/x-m4a", "audio/mp3",
-      "audio/mpeg3", "audio/x-wav", "audio/x-mpeg"
-    ];
-
     const uploaded: Array<{
       id: string;
       name: string;
       artist: string;
       file_name: string;
-      storage_path: string;
+      playback_url: string;
       duration: number;
     }> = [];
 
     for (const file of filesToProcess) {
       try {
-        const mimeType = file.type || "audio/mpeg";
-        if (!allowedAudioTypes.some((t) => mimeType.includes(t.toLowerCase().replace("audio/", "")))) {
+        const mimeType = inferFileMimeType(file.name, file.type);
+        if (!isAudioDocument(file.name, mimeType)) {
           errors.push(`${file.name}: Unsupported audio format.`);
           continue;
         }
@@ -107,12 +102,6 @@ export async function POST(req: Request) {
           errors.push(`${file.name}: Upload failed.`);
           continue;
         }
-
-        // Get a signed URL for playback (valid for 7 days)
-        const { data: signedUrlData } = await supabase.storage
-          .from("user-audio")
-          .createSignedUrl(storagePath, 60 * 60 * 24 * 7);
-        const playbackUrl = signedUrlData?.signedUrl || `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/user-audio/${storagePath}`;
 
         const { data: track, error: dbError } = await supabase
           .from("user_audio_tracks")
@@ -140,10 +129,14 @@ export async function POST(req: Request) {
           name: track.name,
           artist: track.artist,
           file_name: track.file_name,
-          storage_path: playbackUrl,
+          playback_url: `/api/music/tracks/${encodeURIComponent(track.id)}/stream`,
           duration: track.duration
         });
-      } catch {
+      } catch (error) {
+        console.error("music_upload_failed", {
+          fileName: file.name,
+          message: error instanceof Error ? error.message : "Unknown upload error"
+        });
         errors.push(`${file.name}: Upload failed.`);
       }
     }

@@ -20,7 +20,10 @@ export const openRouterProvider: AIProvider = {
             "X-Title": "ScholarMind"
           },
           body: JSON.stringify({
-            model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.2-3b-instruct:free",
+            model:
+              process.env.OPENROUTER_CHAT_MODEL ||
+              process.env.OPENROUTER_MODEL ||
+              "nvidia/nemotron-3-ultra-550b-a55b:free",
             messages: [{ role: "user", content: buildPrompt(input) }],
             temperature: 0.4,
             max_tokens: 1200,

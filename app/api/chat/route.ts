@@ -8,13 +8,20 @@ import {
 } from "@/lib/ai/limits";
 import { getSiteSettings } from "@/lib/site-settings";
 import { createClient } from "@/lib/supabase/server";
+import { geminiProvider } from "@/lib/ai/providers/gemini";
+import { loadVisionAttachments } from "@/lib/ai/image-attachments";
+import {
+  buildOpenRouterContent,
+  getOpenRouterModel,
+  type OpenRouterContent
+} from "@/lib/ai/providers/openrouter-content";
 
 type ProviderMessage = {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: OpenRouterContent;
 };
 
-function normalizeHistory(history: unknown): ProviderMessage[] {
+function normalizeHistory(history: unknown): Array<{ role: "user" | "assistant"; content: string }> {
   if (!Array.isArray(history)) return [];
 
   return history
@@ -84,10 +91,11 @@ export async function POST(req: Request) {
 
     const { input } = await req.json();
     const apiKeys = getOpenRouterKeys();
+    const geminiConfigured = Boolean(process.env.GEMINI_API_KEY?.trim());
 
-    if (!apiKeys.length) {
+    if (!apiKeys.length && !geminiConfigured) {
       return NextResponse.json(
-        { error: "Missing OPENROUTER_API_KEY. Add it to .env.local, then restart npm run dev. On Netlify, add the same key in Site settings > Environment variables." },
+        { error: "Missing an AI provider key. Add GEMINI_API_KEY or OPENROUTER_API_KEY in .env.local, then restart npm run dev." },
         { status: 400 }
       );
     }
@@ -98,7 +106,6 @@ export async function POST(req: Request) {
     }
 
     const siteSettings = await getSiteSettings(supabase);
-    const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
     const actorKey = user.id;
     const chatReservation = await reserveChatUsage({
       supabase,
@@ -113,14 +120,26 @@ export async function POST(req: Request) {
 
     const context = normalizeAIText(input?.context || "");
     const screenContext = normalizeAIText(input?.screenContext || "");
+    const vision = await loadVisionAttachments(user.id, input?.sessionId);
+
     const messages: ProviderMessage[] = [
       { role: "system", content: buildSystemPrompt(context, screenContext) },
       ...normalizeHistory(input?.history || input?.messages),
-      { role: "user", content: message }
+      { role: "user", content: buildOpenRouterContent(message, vision.attachments) }
     ];
 
     let data: { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }> } | null = null;
     const failures: string[] = [];
+    const model = getOpenRouterModel(vision.attachments, "chat");
+
+    if (vision.attachments.length) {
+      console.info("openrouter_vision_chat_request", {
+        userId: user.id,
+        sessionId: input?.sessionId,
+        imageCount: vision.attachments.length,
+        model
+      });
+    }
 
     for (const [index, apiKey] of apiKeys.entries()) {
       const controller = new AbortController();
@@ -136,7 +155,7 @@ export async function POST(req: Request) {
           "X-Title": "ScholarMind"
         },
         body: JSON.stringify({
-          model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
+          model,
           messages,
           temperature: 0.35,
           max_tokens: 1200,
@@ -159,6 +178,39 @@ export async function POST(req: Request) {
 
       data = await response.json();
       break;
+    }
+
+    // Gemini remains a fallback for both visual and text chat if every
+    // OpenRouter key is unavailable, rate-limited, or rejects the request.
+    if (!data && geminiConfigured) {
+      try {
+        const result = await geminiProvider.generate({
+          action: "chat",
+          prompt: message,
+          context: [context, screenContext].filter(Boolean).join("\n\n"),
+          history: normalizeHistory(input?.history || input?.messages),
+          sessionId: typeof input?.sessionId === "string" ? input.sessionId : undefined,
+          imageAttachments: vision.attachments
+        });
+        if (result.text.trim()) {
+          console.info("chat_gemini_fallback_succeeded", {
+            userId: user.id,
+            sessionId: input?.sessionId,
+            imageCount: vision.attachments.length
+          });
+          return makeSseResponse(result.text);
+        }
+        failures.push("gemini: empty response");
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Unknown Gemini error";
+        console.error("chat_gemini_fallback_failed", {
+          userId: user.id,
+          sessionId: input?.sessionId,
+          imageCount: vision.attachments.length,
+          message: detail
+        });
+        failures.push(`gemini: ${detail}`);
+      }
     }
 
     if (!data) {

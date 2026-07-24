@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { LoaderCircle, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { WorkBook, WorkSheet } from "xlsx";
@@ -20,23 +20,32 @@ interface FileViewerProps {
  * Single preview component for all supported format families.
  */
 export function FileViewer({ url, fileName, previewKind, text, html }: FileViewerProps) {
+  let viewer: ReactNode;
   switch (previewKind) {
     case "pdf":
-      return <PdfRenderer url={url ?? ""} fileName={fileName} />;
+      viewer = <PdfRenderer url={url ?? ""} fileName={fileName} />;
+      break;
     case "image":
-      return <ImageRenderer url={url ?? ""} fileName={fileName} />;
+      viewer = <ImageRenderer url={url ?? ""} fileName={fileName} />;
+      break;
     case "table":
-      return <SpreadsheetRenderer url={url ?? ""} fileName={fileName} text={text ?? ""} />;
+      viewer = <SpreadsheetRenderer url={url ?? ""} fileName={fileName} text={text ?? ""} />;
+      break;
     case "word":
-      return <DocxRenderer html={html ?? ""} text={text ?? ""} fileName={fileName} />;
+      viewer = <DocxRenderer html={html ?? ""} text={text ?? ""} fileName={fileName} />;
+      break;
     case "audio":
-      return <AudioRenderer url={url ?? ""} fileName={fileName} text={text ?? ""} />;
+      viewer = <AudioRenderer url={url ?? ""} fileName={fileName} text={text ?? ""} />;
+      break;
     case "presentation":
-      return <PresentationRenderer text={text ?? ""} fileName={fileName} />;
+      viewer = <PresentationRenderer text={text ?? ""} fileName={fileName} />;
+      break;
     case "text":
     default:
-      return <TextPreview text={text ?? ""} fileName={fileName} />;
+      viewer = <TextPreview text={text ?? ""} fileName={fileName} />;
   }
+
+  return <div className="studio-file-viewer min-w-0">{viewer}</div>;
 }
 
 /* ─── Image renderer with zoom controls ─── */

@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
 import { DynamicIslandMusicPlayer } from "@/components/dashboard/DynamicIslandMusicPlayer";
+import { MusicPlaybackProvider } from "@/components/dashboard/MusicPlaybackContext";
 
 export function DashboardMusicLayout({ children }: { children: React.ReactNode }) {
   const [spotifyConnected, setSpotifyConnected] = useState(false);
@@ -19,8 +20,10 @@ export function DashboardMusicLayout({ children }: { children: React.ReactNode }
 
   return (
     <SpotifyPlaybackProvider connected={spotifyConnected}>
-      {children}
-      <DynamicIslandMusicPlayer />
+      <MusicPlaybackProvider>
+        {children}
+        <DynamicIslandMusicPlayer />
+      </MusicPlaybackProvider>
     </SpotifyPlaybackProvider>
   );
 }

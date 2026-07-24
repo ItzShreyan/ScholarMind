@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { AuthProvider } from "@/components/providers/AuthProvider";
 import { TelemetryTracker } from "@/components/providers/TelemetryTracker";
 import { GlobalSecurityBadge } from "@/components/common/GlobalSecurityBadge";
+import { MaintenanceBanner } from "@/components/common/MaintenanceBanner";
 import { getSiteUrl } from "@/lib/site-url";
-import { getCachedSiteSettings } from "@/lib/site-settings";
 
 const siteUrl = getSiteUrl();
 
@@ -50,10 +51,9 @@ export const metadata: Metadata = {
   }
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children
 }: Readonly<{ children: React.ReactNode }>) {
-  const siteSettings = await getCachedSiteSettings();
   const bootScript = `
     (function () {
       try {
@@ -74,13 +74,11 @@ export default async function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: bootScript }} />
       </head>
       <body>
+        <Suspense fallback={null}>
+          <MaintenanceBanner />
+        </Suspense>
         <AuthProvider>
           <TelemetryTracker />
-          {siteSettings.maintenanceMessage ? (
-            <div className="border-b border-white/10 bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.16))] px-4 py-3 text-center text-sm backdrop-blur">
-              {siteSettings.maintenanceMessage}
-            </div>
-          ) : null}
           {children}
           <GlobalSecurityBadge />
         </AuthProvider>

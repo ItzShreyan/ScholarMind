@@ -77,7 +77,7 @@ export function CanvasPdfViewer({ url, fileName }: CanvasPdfViewerProps) {
   const nextPage = useCallback(() => setPageNum((p) => Math.min(numPages, p + 1)), [numPages]);
 
   return (
-    <div className="flex flex-col rounded-[24px] border border-white/10 bg-black/10 overflow-hidden">
+    <div className="studio-file-viewer flex flex-col rounded-[24px] border border-white/10 bg-black/10 overflow-hidden">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/8 px-4 py-3">
         <div className="flex items-center gap-2">

@@ -98,8 +98,14 @@ export function useBeatAnalyserNode(
       }
 
       startLoop();
-    } catch {
-      // Silently ignore — audio analysis is enhancement-only
+    } catch (error) {
+      // Analysis is non-essential, but keep a development-only diagnostic so a
+      // CORS or browser-policy issue can be identified without exposing it in UI.
+      if (process.env.NODE_ENV !== "production") {
+        console.debug("beat_reactive_analyser_unavailable", {
+          message: error instanceof Error ? error.message : "Unknown analyser error"
+        });
+      }
     }
   }, [audioRef, startLoop]);
 

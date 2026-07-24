@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
     "jszip"
   ],
   images: {
+    formats: ["image/avif", "image/webp"],
     remotePatterns: [
       {
         protocol: "https",
@@ -49,6 +50,22 @@ const nextConfig: NextConfig = {
       "frame-ancestors 'self'",
       "upgrade-insecure-requests"
     ].join("; ");
+    // Proxied pages are rendered inside a sandboxed, opaque-origin iframe. They
+    // need a different CSP so their own CSS, images, fonts, and scripts may load.
+    // The route repeats this policy to keep the boundary explicit at both layers.
+    const browseProxyCsp = [
+      "default-src * data: blob:",
+      "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
+      "style-src * 'unsafe-inline' data: blob:",
+      "font-src * data: blob:",
+      "img-src * data: blob:",
+      "connect-src * data: blob:",
+      "media-src * data: blob:",
+      "frame-src * data: blob:",
+      "form-action *",
+      "base-uri *",
+      "frame-ancestors 'self'"
+    ].join("; ");
 
     return [
       {
@@ -63,6 +80,12 @@ const nextConfig: NextConfig = {
           { key: "Content-Security-Policy", value: csp },
           { key: "X-Mind-Security", value: "Mind Security Engine" }
         ]
+      },
+      {
+        // This must follow the catch-all rule so it replaces the app CSP rather
+        // than intersecting with `base-uri 'self'` on the proxied document.
+        source: "/api/browse-proxy",
+        headers: [{ key: "Content-Security-Policy", value: browseProxyCsp }]
       }
     ];
   }

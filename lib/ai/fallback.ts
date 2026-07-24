@@ -57,6 +57,14 @@ const remoteOnlyToolActions = new Set([
   "insights"
 ]);
 
+function inputForProvider(input: AIRequest, provider: AIProvider) {
+  // Both Gemini and OpenRouter accept the original image bytes. Other
+  // providers remain useful text-only fallbacks without false visual context.
+  return provider.name === "gemini" || provider.name === "openrouter_v2"
+    ? input
+    : { ...input, imageAttachments: undefined };
+}
+
 function requiresRemoteAI(input: AIRequest) {
   return remoteOnlyToolActions.has(String(input.action || input.mode || ""));
 }
@@ -121,12 +129,16 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const contextHash = input.context
     ? createHash("md5").update(input.context).digest("hex").slice(0, 8)
     : "no-context";
+  const imageHash = input.imageAttachments?.length
+    ? createHash("md5").update(input.imageAttachments.map((image) => image.data).join("")).digest("hex").slice(0, 8)
+    : "no-images";
   const cacheKey = JSON.stringify({
     v: 10,
     mode: input.mode,
     examMode: input.examMode,
     message: input.message,
-    contextHash
+    contextHash,
+    imageHash
   });
   const cached = getCached(cacheKey);
   if (cached) return { text: normalizeAIText(cached), provider: "cache" as const };
@@ -145,8 +157,8 @@ export async function generateWithFallback(rawInput: AIRequest) {
   if (primary && !(strictRemote && primary.name === "local")) {
     try {
       const result = await withTimeout(
-        primary.generate(input),
-        10000,
+        primary.generate(inputForProvider(input, primary)),
+        input.imageAttachments?.length ? 25000 : 10000,
         primary.name
       );
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
@@ -164,7 +176,16 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const openrouterConfigured = hasOpenRouterKey();
   const openrouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat", "concepts", "hard_mode", "study_plan", "insights"]);
   const fallbackOrder =
-    strictRemote
+    input.imageAttachments?.length
+      ? [
+          providers.openrouter_v2,
+          providers.gemini,
+          providers.groq_v2,
+          providers.groq,
+          providers.together,
+          providers.huggingface
+        ]
+      : strictRemote
       ? [
           providers.openrouter_v2,
           providers.groq_v2,
@@ -191,8 +212,8 @@ export async function generateWithFallback(rawInput: AIRequest) {
 
     try {
       const result = await withTimeout(
-        provider.generate(input),
-        10000,
+        provider.generate(inputForProvider(input, provider)),
+        input.imageAttachments?.length ? 25000 : 10000,
         provider.name
       );
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));

@@ -35,27 +35,27 @@ export async function GET(req: Request) {
   const kind = resolvePreviewKind(file.file_name, file.file_type, file.storage_path);
   let previewText = file.file_type === "text/web" ? cleanStudySourceText(file.extracted_text) : file.extracted_text;
   let html: string | undefined;
+  const isInlineOnly = file.storage_path.startsWith("inline://");
 
-  // For Word documents, also extract HTML for rich preview
-  if (kind === "word" && !file.storage_path.startsWith("inline://")) {
-    const { data: signedData, error: signedError } = await supabase.storage
-      .from("study-files")
-      .createSignedUrl(file.storage_path, 60 * 60);
-
-    if (!signedError && signedData?.signedUrl) {
-      try {
-        const response = await fetch(signedData.signedUrl);
-        const buffer = Buffer.from(await response.arrayBuffer());
-        const { html: htmlContent, text: plainText } = await extractDocxDocumentHtml(buffer);
-        if (htmlContent) html = htmlContent;
-        if (plainText) previewText = plainText;
-      } catch {
-        // Fall back to plain text
-      }
+  // Legacy inline records contain extracted text only. Keep that useful rather
+  // than sending a renderer a missing original file.
+  if (isInlineOnly) {
+    const originalKind = resolvePreviewKind(file.file_name, file.file_type, "stored-file");
+    if (originalKind !== "text") {
+      previewText = `The original ${file.file_name} was not retained in storage, so only its extracted text is available. Re-upload the file to restore its formatted preview.\n\n${previewText || ""}`;
     }
+
+    return NextResponse.json({
+      kind: "text",
+      fileName: file.file_name,
+      text: previewText
+    });
   }
 
-  if ((kind === "pdf" || kind === "image") && !file.storage_path.startsWith("inline://")) {
+  let signedUrl: string | undefined;
+  const needsOriginalFile = kind === "pdf" || kind === "image" || kind === "table" || kind === "audio" || kind === "word";
+
+  if (needsOriginalFile) {
     const { data: signedData, error: signedError } = await supabase.storage
       .from("study-files")
       .createSignedUrl(file.storage_path, 60 * 60);
@@ -64,15 +64,33 @@ export async function GET(req: Request) {
       return NextResponse.json({
         kind: "text",
         fileName: file.file_name,
-        text: previewText
+        text: `The original file is temporarily unavailable, so its formatted preview cannot be displayed. Try opening it again shortly.\n\n${previewText || ""}`
       });
     }
 
+    signedUrl = signedData.signedUrl;
+  }
+
+  // For Word documents, also extract HTML for rich preview
+  if (kind === "word" && signedUrl) {
+    try {
+      const response = await fetch(signedUrl);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const { html: htmlContent, text: plainText } = await extractDocxDocumentHtml(buffer);
+      if (htmlContent) html = htmlContent;
+      if (plainText) previewText = plainText;
+    } catch {
+      // The extracted text remains a safe fallback when Word parsing fails.
+    }
+  }
+
+  if (signedUrl) {
     return NextResponse.json({
       kind,
       fileName: file.file_name,
-      url: signedData.signedUrl,
-      text: previewText
+      url: signedUrl,
+      text: previewText,
+      html
     });
   }
 

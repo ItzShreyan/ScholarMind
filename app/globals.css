@@ -57,6 +57,7 @@ html {
 body {
   position: relative;
   min-height: 100vh;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-body), sans-serif;
@@ -246,6 +247,17 @@ html[data-playful="off"] .playful-sway {
 
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+@media (max-width: 639px) {
+  .studio-file-viewer button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .studio-file-viewer [class*="min-h-[60vh]"] {
+    min-height: 52svh;
+  }
 }
 
 @keyframes floaty {

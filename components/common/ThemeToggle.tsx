@@ -70,7 +70,7 @@ export function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="glass smooth-hover rounded-full p-2.5"
+      className="glass smooth-hover inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2.5 sm:min-h-0 sm:min-w-0"
       aria-label={light ? "Switch to dark theme" : "Switch to light theme"}
       type="button"
     >

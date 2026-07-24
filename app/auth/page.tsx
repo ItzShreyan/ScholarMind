@@ -5,12 +5,14 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
+  AlertCircle,
   ArrowLeft,
   Brain,
   CheckCircle2,
   Eye,
   EyeOff,
   Mail,
+  LoaderCircle,
   ShieldCheck,
   Sparkles
 } from "lucide-react";
@@ -18,7 +20,36 @@ import { createClient } from "@/lib/supabase/client";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { normalizeErrorMessage } from "@/lib/ai/util";
+import { getAuthErrorMessage, logAuthFailure, type AuthOperation } from "@/lib/auth/error-messages";
+
+const authRequestTimeoutMs = 20_000;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+type FieldErrors = Partial<Record<"email" | "password", string>>;
+
+function passwordValidationMessage(password: string) {
+  if (password.length < 8) return "Use at least 8 characters.";
+  if (!/[a-z]/.test(password)) return "Include a lower-case letter.";
+  if (!/[A-Z]/.test(password)) return "Include an upper-case letter.";
+  if (!/\d/.test(password)) return "Include a number.";
+  return "";
+}
+
+function passwordStrengthLabel(password: string) {
+  if (!password) return "";
+  const requirementsMet = [password.length >= 8, /[a-z]/.test(password), /[A-Z]/.test(password), /\d/.test(password)].filter(Boolean).length;
+  return requirementsMet === 4 ? "Strong password" : `Password strength: ${requirementsMet}/4 requirements met`;
+}
+
+function withAuthTimeout<T>(request: Promise<T>) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject({ code: "auth_request_timeout" }), authRequestTimeoutMs);
+  });
+  return Promise.race([request, timeout]).finally(() => {
+    if (timeoutId) clearTimeout(timeoutId);
+  });
+}
 
 const highlights = [
   {
@@ -47,11 +78,47 @@ export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [message, setMessage] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "success">("idle");
   const [nextPath, setNextPath] = useState("/dashboard");
 
-  const setSafeMessage = (value: unknown, fallback = "") => {
-    setMessage(normalizeErrorMessage(value, fallback));
+  const reportAuthFailure = (operation: AuthOperation, error: unknown) => {
+    logAuthFailure(operation, error);
+    setStatus("error");
+    setMessage(getAuthErrorMessage(error, operation));
+  };
+
+  const clearFieldError = (field: keyof FieldErrors) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+    if (status === "error") {
+      setStatus("idle");
+      setMessage("");
+    }
+  };
+
+  const validateForm = () => {
+    const nextErrors: FieldErrors = {};
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      nextErrors.email = "Enter your email address.";
+    } else if (!emailPattern.test(normalizedEmail)) {
+      nextErrors.email = "Enter a valid email address.";
+    }
+
+    if (!password) {
+      nextErrors.password = "Enter your password.";
+    } else if (mode === "signup") {
+      const passwordError = passwordValidationMessage(password);
+      if (passwordError) nextErrors.password = passwordError;
+    }
+
+    setFieldErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
   };
 
   useEffect(() => {
@@ -67,13 +134,16 @@ export default function AuthPage() {
     }
     if (!authError) return;
 
+    const callbackError = { message: authError };
+    logAuthFailure("callback", callbackError);
     setStatus("error");
-    setSafeMessage(authError, "We could not complete that sign-in step. Please try again.");
+    setMessage(getAuthErrorMessage(callbackError, "callback"));
   }, []);
 
   const switchMode = (nextMode: "signin" | "signup") => {
     setMode(nextMode);
-    setSafeMessage("");
+    setMessage("");
+    setFieldErrors({});
     setStatus("idle");
   };
 
@@ -85,71 +155,100 @@ export default function AuthPage() {
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    setSafeMessage("");
-    setStatus("loading");
+    if (status === "loading") return;
+    setMessage("");
 
-    if (!supabase) {
+    if (!validateForm()) {
       setStatus("error");
-      setSafeMessage("Authentication is unavailable because Supabase config is not loaded.");
       return;
     }
 
-    if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: getAuthRedirectTo()
-        }
-      });
+    setStatus("loading");
 
-      if (error) {
-        setStatus("error");
-        setSafeMessage(error.message, "Unable to create your account.");
+    if (!supabase) {
+      reportAuthFailure(mode === "signup" ? "sign-up" : "sign-in", { code: "auth_unavailable" });
+      return;
+    }
+
+    try {
+      if (mode === "signup") {
+        const { data, error } = await withAuthTimeout(
+          supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              emailRedirectTo: getAuthRedirectTo()
+            }
+          })
+        );
+
+        if (error) {
+          reportAuthFailure("sign-up", error);
+          return;
+        }
+        // Supabase can intentionally obscure duplicate accounts by returning a
+        // user with no identities instead of an explicit error.
+        if (!data.user || (data.user.identities && data.user.identities.length === 0)) {
+          reportAuthFailure("sign-up", { code: "email_exists" });
+          return;
+        }
+
+        setEmail("");
+        setPassword("");
+        setShowPassword(false);
+        setFieldErrors({});
+        setStatus("success");
+        setMode("signin");
+        setMessage("Check your inbox to verify your email, then sign in to open the workspace.");
         return;
       }
 
+      const { error } = await withAuthTimeout(
+        supabase.auth.signInWithPassword({ email: email.trim(), password })
+      );
+
+      if (error) {
+        reportAuthFailure("sign-in", error);
+        return;
+      }
+
+      setEmail("");
+      setPassword("");
+      setShowPassword(false);
+      setFieldErrors({});
       setStatus("success");
-      setMode("signin");
-      setSafeMessage("Check your inbox to verify your email, then sign in to open the workspace.");
-      return;
+      setMessage("Opening your dashboard...");
+      window.location.assign(nextPath);
+    } catch (error) {
+      reportAuthFailure(mode === "signup" ? "sign-up" : "sign-in", error);
     }
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (error) {
-      setStatus("error");
-      setSafeMessage(error.message, "Unable to sign you in.");
-      return;
-    }
-
-    setStatus("success");
-    setSafeMessage("Opening your dashboard...");
-    window.location.assign(nextPath);
   };
 
   const signInGoogle = async () => {
-    setSafeMessage("");
+    if (status === "loading") return;
+    setMessage("");
     setStatus("loading");
 
     if (!supabase) {
-      setStatus("error");
-      setSafeMessage("Google authentication is unavailable because Supabase config is not loaded.");
+      reportAuthFailure("oauth", { code: "auth_unavailable" });
       return;
     }
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: getAuthRedirectTo()
-      }
-    });
-
-    if (error) {
-      setStatus("error");
-      setSafeMessage(
-        `${error.message}. Make sure Google auth is enabled in Supabase and that /auth/callback is allowed as a redirect URL.`
+    try {
+      const { error } = await withAuthTimeout(
+        supabase.auth.signInWithOAuth({
+          provider: "google",
+          options: {
+            redirectTo: getAuthRedirectTo()
+          }
+        })
       );
+
+      if (error) {
+        reportAuthFailure("oauth", error);
+      }
+    } catch (error) {
+      reportAuthFailure("oauth", error);
     }
   };
 
@@ -228,7 +327,8 @@ export default function AuthPage() {
             <button
               type="button"
               onClick={() => switchMode("signin")}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+              disabled={status === "loading"}
+              className={`rounded-full px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                 mode === "signin" ? "bg-[var(--fg)] text-[var(--bg)]" : "text-[color:var(--fg)]"
               }`}
             >
@@ -237,7 +337,8 @@ export default function AuthPage() {
             <button
               type="button"
               onClick={() => switchMode("signup")}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+              disabled={status === "loading"}
+              className={`rounded-full px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
                 mode === "signup" ? "bg-[var(--fg)] text-[var(--bg)]" : "text-[color:var(--fg)]"
               }`}
             >
@@ -253,6 +354,7 @@ export default function AuthPage() {
               className="w-full justify-center"
               disabled={status === "loading"}
             >
+              {status === "loading" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
               Continue with Google
             </Button>
 
@@ -262,28 +364,54 @@ export default function AuthPage() {
               <div className="h-px flex-1 bg-white/20" />
             </div>
 
-            <form onSubmit={onSubmit} className="space-y-4">
+            <form onSubmit={onSubmit} noValidate className="space-y-4" aria-busy={status === "loading"}>
               <label className="block">
                 <span className="mb-2 block text-sm font-medium">Email</span>
                 <input
                   type="email"
                   value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    clearFieldError("email");
+                  }}
                   placeholder="you@example.com"
-                  className="w-full rounded-[22px] border border-white/20 bg-white/25 px-4 py-3.5 outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/40"
+                  autoComplete="email"
+                  inputMode="email"
+                  aria-invalid={Boolean(fieldErrors.email)}
+                  aria-describedby={fieldErrors.email ? "auth-email-error" : undefined}
+                  className={`w-full rounded-[22px] border bg-white/25 px-4 py-3.5 outline-none transition focus:bg-white/40 ${
+                    fieldErrors.email ? "border-[rgba(244,63,94,0.9)]" : "border-white/20 focus:border-[var(--accent-sky)]"
+                  }`}
                   required
                 />
+                {fieldErrors.email ? (
+                  <span id="auth-email-error" className="mt-2 block text-xs text-[rgb(253,164,175)]">
+                    {fieldErrors.email}
+                  </span>
+                ) : null}
               </label>
 
               <label className="block">
                 <span className="mb-2 block text-sm font-medium">Password</span>
-                <div className="flex items-center rounded-[22px] border border-white/20 bg-white/25 px-4 py-3.5 focus-within:border-[var(--accent-sky)] focus-within:bg-white/40">
+                <div
+                  className={`flex items-center rounded-[22px] border bg-white/25 px-4 py-3.5 focus-within:bg-white/40 ${
+                    fieldErrors.password
+                      ? "border-[rgba(244,63,94,0.9)]"
+                      : "border-white/20 focus-within:border-[var(--accent-sky)]"
+                  }`}
+                >
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    onChange={(event) => {
+                      setPassword(event.target.value);
+                      clearFieldError("password");
+                    }}
                     placeholder={mode === "signin" ? "Enter your password" : "Create a password"}
                     className="w-full bg-transparent outline-none"
+                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    aria-invalid={Boolean(fieldErrors.password)}
+                    aria-describedby={fieldErrors.password ? "auth-password-error" : mode === "signup" ? "auth-password-strength" : undefined}
                     required
                   />
                   <button
@@ -295,11 +423,24 @@ export default function AuthPage() {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                {fieldErrors.password ? (
+                  <span id="auth-password-error" className="mt-2 block text-xs text-[rgb(253,164,175)]">
+                    {fieldErrors.password}
+                  </span>
+                ) : mode === "signup" ? (
+                  <span id="auth-password-strength" className="muted mt-2 block text-xs" aria-live="polite">
+                    {passwordStrengthLabel(password) || "Use 8+ characters with upper- and lower-case letters and a number."}
+                  </span>
+                ) : null}
               </label>
 
               <Button type="submit" size="lg" className="w-full justify-center" disabled={status === "loading"}>
-                {status === "loading"
-                  ? "Please wait..."
+                {status === "loading" ? (
+                  <>
+                    <LoaderCircle className="h-4 w-4 animate-spin" />
+                    Please wait...
+                  </>
+                )
                   : mode === "signin"
                     ? "Open dashboard"
                     : "Create account"}
@@ -308,6 +449,8 @@ export default function AuthPage() {
 
             {message ? (
               <div
+                role={status === "error" ? "alert" : "status"}
+                aria-live="polite"
                 className={`mt-4 rounded-[24px] px-4 py-3 text-sm ${
                   status === "error"
                     ? "bg-[rgba(244,63,94,0.14)] text-[color:var(--fg)]"
@@ -315,7 +458,11 @@ export default function AuthPage() {
                 }`}
               >
                 <div className="flex items-start gap-2">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  {status === "error" ? (
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-[rgb(253,164,175)]" />
+                  ) : (
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
                   <span>{message}</span>
                 </div>
               </div>
@@ -327,7 +474,8 @@ export default function AuthPage() {
             <button
               type="button"
               onClick={() => switchMode(mode === "signin" ? "signup" : "signin")}
-              className="font-semibold text-[var(--accent-coral)]"
+              disabled={status === "loading"}
+              className="font-semibold text-[var(--accent-coral)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {mode === "signin" ? "Create one" : "Sign in"}
             </button>

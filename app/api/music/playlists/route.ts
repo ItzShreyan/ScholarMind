@@ -46,18 +46,10 @@ export async function GET() {
 
           if (trackError) throw trackError;
 
-          // Attach signed URLs
-          tracks = await Promise.all(
-            (trackData || []).map(async (track) => {
-              const { data: signedUrlData } = await supabase.storage
-                .from("user-audio")
-                .createSignedUrl(track.storage_path, 60 * 60 * 24 * 7);
-              return {
-                ...track,
-                playback_url: signedUrlData?.signedUrl || ""
-              };
-            })
-          );
+          tracks = (trackData || []).map((track) => ({
+            ...track,
+            playback_url: `/api/music/tracks/${encodeURIComponent(track.id)}/stream`
+          }));
         }
 
         return {

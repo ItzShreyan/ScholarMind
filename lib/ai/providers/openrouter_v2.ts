@@ -4,12 +4,26 @@ import { AIRequest } from "@/types";
 import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
 import { getOpenRouterKeys, isOpenRouterKeyLimitError } from "@/lib/ai/openrouter-keys";
+import {
+  buildOpenRouterContent,
+  getOpenRouterModel,
+  type OpenRouterContent
+} from "@/lib/ai/providers/openrouter-content";
 
-function buildMessages(input: AIRequest) {
+type OpenRouterMessage = {
+  role: "user" | "assistant";
+  content: OpenRouterContent;
+};
+
+function buildMessages(input: AIRequest): OpenRouterMessage[] {
   const prompt = buildPrompt(input);
   const history = Array.isArray(input.history) ? input.history.filter((item) => normalizeAIText(item.content)) : [];
-  if (!history.length) return [{ role: "user" as const, content: prompt }];
-  return [...history, { role: "user" as const, content: prompt }];
+  const currentMessage = {
+    role: "user" as const,
+    content: buildOpenRouterContent(prompt, input.imageAttachments)
+  };
+  if (!history.length) return [currentMessage];
+  return [...history, currentMessage];
 }
 
 export const openrouterProviderV2: AIProvider = {
@@ -18,6 +32,15 @@ export const openrouterProviderV2: AIProvider = {
     const apiKeys = getOpenRouterKeys();
     if (!apiKeys.length) throw new Error("Missing OPENROUTER_API_KEY");
     const messages = buildMessages(input);
+    const model = getOpenRouterModel(input.imageAttachments);
+
+    if (input.imageAttachments?.length) {
+      console.info("openrouter_vision_request", {
+        action: input.action,
+        imageCount: input.imageAttachments.length,
+        model
+      });
+    }
 
     const run = async () => {
       const failures: string[] = [];
@@ -32,7 +55,7 @@ export const openrouterProviderV2: AIProvider = {
               Authorization: `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-              model: process.env.OPENROUTER_MODEL || "openai/gpt-oss-20b:free",
+              model,
               messages,
               temperature: input.action === "notes" ? 0.35 : input.action === "quiz" || input.action === "flashcards" ? 0.25 : 0.4,
               max_tokens:

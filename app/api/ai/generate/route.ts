@@ -4,6 +4,7 @@ import { generateWithFallback } from "@/lib/ai/fallback";
 import { getSiteSettings } from "@/lib/site-settings";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeErrorMessage } from "@/lib/ai/util";
+import { loadVisionAttachments } from "@/lib/ai/image-attachments";
 import {
   formatExamLimitMessage,
   formatAiLimitMessage,
@@ -14,10 +15,9 @@ import {
 } from "@/lib/ai/limits";
 
 export const runtime = "nodejs";
-// Netlify Starter (free) plan: functions are killed at 10 seconds regardless of
-// what the code declares. The per-provider timeout in lib/ai/fallback.ts caps
-// each attempt at 10 seconds, so a single slow provider can't waste the budget.
-export const maxDuration = 10;
+// Vision requests need time to download a bounded set of images and let Gemini
+// inspect them. Individual provider calls remain capped in the fallback layer.
+export const maxDuration = 45;
 
 const schema = z.object({
   action: z.enum([
@@ -118,11 +118,15 @@ export async function POST(req: Request) {
     }
 
     try {
+      const vision = user
+        ? await loadVisionAttachments(user.id, body.sessionId)
+        : { attachments: [], warnings: [] };
       const result = await generateWithFallback({
         action: body.action,
         prompt: body.prompt,
         context: body.context,
-        examMode: body.examMode
+        examMode: body.examMode,
+        imageAttachments: vision.attachments
       });
       try {
         await supabase.from("study_site_events").insert({
@@ -145,6 +149,10 @@ export async function POST(req: Request) {
       return NextResponse.json({
         ...result,
         text,
+        vision: {
+          attachedImageCount: vision.attachments.length,
+          warnings: vision.warnings
+        },
         usage: {
           hourlyRemaining: reservation.hourlyRemaining,
           dailyRemaining: reservation.dailyRemaining,

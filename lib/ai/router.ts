@@ -17,6 +17,15 @@ export function normalizeAIRequest(input: AIRequest): AIRequest {
 }
 
 export function selectProvider(_input: AIRequest): string {
+  // OpenRouter is the primary provider. Its vision route receives source
+  // images as private base64 data URLs and falls back to Gemini when needed.
+  if (_input.imageAttachments?.length && hasOpenRouterKey()) {
+    return "openrouter_v2";
+  }
+  if (_input.imageAttachments?.length && hasKey(process.env.GEMINI_API_KEY)) {
+    return "gemini";
+  }
+
   const openRouterFirstActions = new Set(["summary", "flashcards", "quiz", "notes", "exam", "chat", "concepts", "hard_mode", "study_plan", "insights"]);
   if (openRouterFirstActions.has(String(_input.action || _input.mode || "")) && hasOpenRouterKey()) {
     return "openrouter_v2";

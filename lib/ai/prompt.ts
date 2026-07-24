@@ -12,6 +12,9 @@ export function buildPrompt(input: AIRequest): string {
   const baseContext = input.context
     ? `\nContext from the user's uploaded study material:\n${clippedContext}\n`
     : "";
+  const visualContext = input.imageAttachments?.length
+    ? `\nThe user also attached ${input.imageAttachments.length} image source(s). Inspect them directly and use visible diagrams, labels, tables, and text as evidence.\n`
+    : "";
 
   const styleHints: Record<AIRequest["action"], string> = {
     summary:
@@ -41,7 +44,7 @@ export function buildPrompt(input: AIRequest): string {
   return `You are ScholarMind, an elite AI tutor for students.
 Task: ${input.action}
 Instruction: ${styleHints[input.action]}
-User prompt: ${clippedPrompt}${baseContext}
+  User prompt: ${clippedPrompt}${baseContext}${visualContext}
 
 Global rules:
 - Be clear, readable, and easy to scan.

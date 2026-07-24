@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAuthErrorMessage, logAuthFailure } from "@/lib/auth/error-messages";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
@@ -10,7 +11,9 @@ export async function GET(request: Request) {
   const errorDescription = requestUrl.searchParams.get("error_description");
 
   if (error) {
-    const message = errorDescription || error;
+    const authError = { code: error, message: errorDescription || error };
+    logAuthFailure("callback", authError);
+    const message = getAuthErrorMessage(authError, "callback");
     return NextResponse.redirect(
       new URL(`/auth?error=${encodeURIComponent(message)}`, requestUrl.origin)
     );
@@ -18,7 +21,10 @@ export async function GET(request: Request) {
 
   if (!code) {
     return NextResponse.redirect(
-      new URL("/auth?error=We could not confirm the login request. Please try again.", requestUrl.origin)
+      new URL(
+        `/auth?error=${encodeURIComponent(getAuthErrorMessage({ code: "missing_auth_code" }, "callback"))}`,
+        requestUrl.origin
+      )
     );
   }
 
@@ -29,9 +35,10 @@ export async function GET(request: Request) {
       throw exchangeError;
     }
   } catch (exchangeError) {
+    logAuthFailure("callback", exchangeError);
     return NextResponse.redirect(
       new URL(
-        `/auth?error=${encodeURIComponent((exchangeError as Error).message || "Unable to finish sign-in.")}`,
+        `/auth?error=${encodeURIComponent(getAuthErrorMessage(exchangeError, "callback"))}`,
         requestUrl.origin
       )
     );

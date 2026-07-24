@@ -64,6 +64,59 @@ export function getFileExtension(fileName: string) {
   return parts.length > 1 ? parts.pop() || "" : "";
 }
 
+/**
+ * Browsers do not consistently populate File.type (notably for Office files
+ * and files restored from a synced device). Persist a canonical MIME type so
+ * both Supabase Storage and the preview route can identify the original file.
+ */
+export function inferFileMimeType(fileName: string, reportedType?: string) {
+  const normalized = (reportedType || "").trim().toLowerCase();
+  const extension = getFileExtension(fileName);
+  const mimeTypes: Record<string, string> = {
+    pdf: "application/pdf",
+    txt: "text/plain",
+    md: "text/markdown",
+    markdown: "text/markdown",
+    json: "application/json",
+    yaml: "application/yaml",
+    yml: "application/yaml",
+    xml: "application/xml",
+    html: "text/html",
+    htm: "text/html",
+    rtf: "application/rtf",
+    csv: "text/csv",
+    tsv: "text/tab-separated-values",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ods: "application/vnd.oasis.opendocument.spreadsheet",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    odp: "application/vnd.oasis.opendocument.presentation",
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    bmp: "image/bmp",
+    tif: "image/tiff",
+    tiff: "image/tiff",
+    heic: "image/heic",
+    heif: "image/heif",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    m4a: "audio/mp4",
+    ogg: "audio/ogg",
+    flac: "audio/flac",
+    aac: "audio/aac"
+  };
+
+  // Prefer the known extension. This normalizes browser-specific values such
+  // as audio/x-m4a and makes stored metadata stable across devices.
+  if (mimeTypes[extension]) return mimeTypes[extension];
+
+  return normalized || "application/octet-stream";
+}
+
 export function isTextLikeDocument(fileName: string, fileType?: string) {
   return textExtensions.includes(getFileExtension(fileName)) || hasMimeMatch(fileType, textMimeSubstrings);
 }
@@ -107,6 +160,10 @@ export function resolvePreviewKind(fileName: string, fileType?: string, storageP
 
   if (isDocxDocument(fileName, fileType)) {
     return "word" as const;
+  }
+
+  if (isPresentationDocument(fileName, fileType)) {
+    return "presentation" as const;
   }
 
   if (isSpreadsheetDocument(fileName, fileType)) {

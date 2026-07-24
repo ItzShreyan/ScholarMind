@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlayback";
+import { useMusicPlayback } from "@/components/dashboard/MusicPlaybackContext";
 import { formatTrackDuration } from "@/lib/music/spotify-catalog";
 import { BeatReactiveBorder } from "@/components/dashboard/BeatReactiveBorder";
 import { useBeatAnalyserNode } from "@/hooks/useBeatAnalyserNode";
@@ -44,6 +45,7 @@ interface DynamicIslandMusicPlayerProps {
 
 export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerRef }: DynamicIslandMusicPlayerProps) {
   const spotifyContext = useSpotifyPlaybackContext();
+  const { setPlayback } = useMusicPlayback();
   const [isMinimized, setIsMinimized] = useState(false);
   const [systemAudio, setSystemAudio] = useState<SystemAudioTrack | null>(null);
   const [externalAudioActive, setExternalAudioActive] = useState(false);
@@ -76,7 +78,9 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   const [uploadedTracks, setUploadedTracks] = useState<UploadedTrack[]>([]);
   const [currentQueueIndex, setCurrentQueueIndex] = useState(-1);
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
+  const [isLocalPlaying, setIsLocalPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const uploadedTracksRef = useRef<UploadedTrack[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +139,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
 
   const hasUploadedTracksRef = useRef(uploadedTracks.length);
   hasUploadedTracksRef.current = uploadedTracks.length;
+  uploadedTracksRef.current = uploadedTracks;
   const loopModeRef = useRef(loopMode);
   loopModeRef.current = loopMode;
   const currentQueueIndexRef = useRef(currentQueueIndex);
@@ -269,6 +274,9 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   useEffect(() => {
     const audio = new Audio();
     audio.preload = "auto";
+    // Set this before assigning a source so Web Audio can analyse proxied or
+    // externally-hosted audio when the server supplies the appropriate CORS header.
+    audio.crossOrigin = "anonymous";
     audioRef.current = audio;
 
     const handleLoadedMetadata = () => {
@@ -286,6 +294,9 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
       }
     };
 
+    const handlePlay = () => setIsLocalPlaying(true);
+    const handlePause = () => setIsLocalPlaying(false);
+
     const handleEnded = () => {
       const lMode = loopModeRef.current;
       const total = hasUploadedTracksRef.current;
@@ -297,21 +308,45 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
         playNextByRef();
       } else if (idx < total - 1) {
         playNextByRef();
+      } else {
+        setIsLocalPlaying(false);
+        setCurrentQueueIndex(-1);
+        setUploadedTrackCurrentTime(0);
+        setUploadedTrackDuration(0);
+        audio.src = "";
       }
     };
 
     const handleError = () => {
-      setUploadError("Failed to play audio file. Try a different format.");
+      const activeTrack = uploadedTracksRef.current[currentQueueIndexRef.current];
+      const mediaError = audio.error;
+      const code = mediaError?.code;
+      const message = code === MediaError.MEDIA_ERR_NETWORK
+        ? "The audio stream could not be reached. Please try again."
+        : code === MediaError.MEDIA_ERR_DECODE || code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED
+          ? "This audio format is not supported by this browser."
+          : "The audio file could not be played. Please try again.";
+      console.error("music_playback_failed", {
+        trackId: activeTrack?.id,
+        mediaErrorCode: code,
+        networkState: audio.networkState,
+        readyState: audio.readyState
+      });
+      setUploadError(message);
     };
 
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
     audio.addEventListener("timeupdate", handleTimeUpdate);
+    audio.addEventListener("play", handlePlay);
+    audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("error", handleError);
 
     return () => {
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("timeupdate", handleTimeUpdate);
+      audio.removeEventListener("play", handlePlay);
+      audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("error", handleError);
       audio.pause();
@@ -330,11 +365,15 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     const track = tracks[index];
     if (!track?.playback_url) return;
     setCurrentQueueIndex(index);
+    setIsMinimized(false);
     setUploadedTrackCurrentTime(0);
     setUploadedTrackDuration(track.duration || 0);
     audio.src = track.playback_url;
     audio.load();
-    void audio.play().catch(() => setUploadError("Could not play this track."));
+    void audio.play().catch((error) => {
+      console.error("music_playback_start_failed", { trackId: track.id, message: error instanceof Error ? error.message : "Unknown playback error" });
+      setUploadError("The audio file could not be played. Please try again.");
+    });
   }, [uploadedTracks]);
 
   const playNextByRef = useCallback(() => {
@@ -356,7 +395,10 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     setUploadedTrackDuration(nextTrack.duration || 0);
     audio.src = nextTrack.playback_url;
     audio.load();
-    void audio.play().catch(() => setUploadError("Could not play this track."));
+    void audio.play().catch((error) => {
+      console.error("music_playback_start_failed", { trackId: nextTrack.id, message: error instanceof Error ? error.message : "Unknown playback error" });
+      setUploadError("The audio file could not be played. Please try again.");
+    });
   }, [uploadedTracks]);
 
   const playPrev = useCallback(() => {
@@ -381,64 +423,46 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     setIsUploadingAudio(true);
     setUploadError(null);
     try {
-      const newTracks: UploadedTrack[] = [];
       const formData = new FormData();
+      let acceptedFileCount = 0;
       for (const file of fileArray) {
         if (file.size > 50 * 1024 * 1024) {
           setUploadError(`${file.name} exceeds 50MB limit.`);
           continue;
         }
         formData.append("files", file);
-        const objectUrl = URL.createObjectURL(file);
-        newTracks.push({
-          id: `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          name: file.name.replace(/\.[^/.]+$/, ""),
-          artist: "Uploaded audio",
-          file_name: file.name,
-          playback_url: objectUrl,
-          duration: 0
-        });
+        acceptedFileCount += 1;
       }
-      if (fileArray.length > 0) {
-        void fetch("/api/music/upload", {
-          method: "POST",
-          body: formData
-        }).then(async (response) => {
-          if (response.ok) {
-            const data = await response.json();
-            if (data.tracks?.length) {
-              setUploadedTracks((prev) =>
-                prev.map((localTrack, i) => {
-                  const serverTrack = data.tracks[i];
-                  if (serverTrack && localTrack.file_name === serverTrack.file_name) {
-                    return {
-                      ...localTrack,
-                      id: serverTrack.id,
-                      playback_url: serverTrack.storage_path || localTrack.playback_url
-                    };
-                  }
-                  return localTrack;
-                })
-              );
-            }
-          }
-        }).catch(() => {});
+
+      if (!acceptedFileCount) return;
+
+      const response = await fetch("/api/music/upload", {
+        method: "POST",
+        body: formData
+      });
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        errors?: string[];
+        tracks?: UploadedTrack[];
+      };
+
+      if (!response.ok) {
+        throw new Error(data.error || "Upload failed.");
       }
-      if (newTracks.length > 0) {
-        setUploadedTracks((prev) => {
-          const updated = [...prev, ...newTracks];
-          if (currentQueueIndex < 0 && updated.length > 0) {
-            return updated;
-          }
-          return updated;
-        });
+
+      const persistedTracks = Array.isArray(data.tracks) ? data.tracks.filter((track) => track.id && track.playback_url) : [];
+      if (persistedTracks.length) {
+        setUploadedTracks((previous) => [...previous, ...persistedTracks]);
+      }
+      if (data.errors?.length) {
+        setUploadError(data.errors[0]);
       }
     } catch (err) {
+      console.error("music_upload_request_failed", { message: err instanceof Error ? err.message : "Unknown upload request error" });
       setUploadError((err as Error).message || "Upload failed.");
     } finally {
       setIsUploadingAudio(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-play first track when queue becomes non-empty
@@ -658,7 +682,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
       : systemAudio?.source || "No music";
 
   const isPlaying = isUploadActive
-    ? audioRef.current && !audioRef.current.paused
+    ? isLocalPlaying
     : hasSpotify
       ? spotifyState?.playing
       : !!systemAudio?.isPlaying;
@@ -674,6 +698,20 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     : hasSpotify
       ? spotifyState?.track?.artist || "Unknown Artist"
       : systemAudio?.artist ?? "";
+
+  useEffect(() => {
+    setPlayback({
+      isPlaying: Boolean(isPlaying),
+      currentTrack: isPlaying
+        ? {
+            id: isUploadActive && currentTrack ? currentTrack.id : spotifyState?.track?.id || "external-audio",
+            title: currentTrackTitle,
+            artist: currentTrackArtist,
+            source: activeSource
+          }
+        : null
+    });
+  }, [activeSource, currentTrack, currentTrackArtist, currentTrackTitle, isPlaying, isUploadActive, setPlayback, spotifyState?.track?.id]);
 
   const {
     searchResults,
@@ -709,6 +747,28 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   }, [panelView, loadSpotifyPlaylists, hasSpotify, spotifyState?.ready]);
 
   const activePlaylist = spotifyState?.activePlaylist;
+  const handleStopPlayback = useCallback(() => {
+    if (isUploadActive) {
+      const audio = audioRef.current;
+      audio?.pause();
+      if (audio) audio.src = "";
+      setIsLocalPlaying(false);
+      setCurrentQueueIndex(-1);
+      setUploadedTrackCurrentTime(0);
+      setUploadedTrackDuration(0);
+      return;
+    }
+
+    if (hasSpotify && spotifyState?.playing) {
+      void spotifyTogglePlay();
+      return;
+    }
+
+    // External media cannot be stopped by this page, but it should not keep
+    // ScholarMind's player visible once the user dismisses it.
+    setSystemAudio(null);
+    setExternalAudioActive(false);
+  }, [hasSpotify, isUploadActive, spotifyState?.playing, spotifyTogglePlay]);
 const progressPct = uploadedTrackDuration > 0
     ? (uploadedTrackCurrentTime / uploadedTrackDuration) * 100 : 0;
 
@@ -741,6 +801,11 @@ const progressPct = uploadedTrackDuration > 0
   const uploadBeatRafRef = useRef<number>(0);
   const previousIntensityRef = useRef(0);
   const beatFlashEndRef = useRef(0);
+  const lastPublishedUploadSignalRef = useRef<BeatSignal>({
+    intensity: 0,
+    hue: 180,
+    onBeat: false
+  });
 
   useEffect(() => {
     if (uploadBeatRafRef.current) {
@@ -749,6 +814,11 @@ const progressPct = uploadedTrackDuration > 0
     }
 
     if (!beatReactiveEnabled || !isUploadActive || !isPlaying) {
+      lastPublishedUploadSignalRef.current = {
+        intensity: 0,
+        hue: 180,
+        onBeat: false
+      };
       setUploadBeatSignal((prev) =>
         prev.intensity === 0 && !prev.onBeat
           ? prev
@@ -775,7 +845,20 @@ const progressPct = uploadedTrackDuration > 0
       const intensity = Math.min(1, raw * 1.2);
       previousIntensityRef.current = raw;
 
-      setUploadBeatSignal({ intensity, hue: trackHash, onBeat });
+      const nextSignal = { intensity, hue: trackHash, onBeat };
+      const previousSignal = lastPublishedUploadSignalRef.current;
+
+      // The analyser keeps sampling at display refresh rate, but React only
+      // needs updates when the visible output actually changes. This avoids
+      // rerendering the entire player 60 times per second.
+      if (
+        Math.abs(nextSignal.intensity - previousSignal.intensity) >= 0.02 ||
+        nextSignal.onBeat !== previousSignal.onBeat ||
+        nextSignal.hue !== previousSignal.hue
+      ) {
+        lastPublishedUploadSignalRef.current = nextSignal;
+        setUploadBeatSignal(nextSignal);
+      }
       uploadBeatRafRef.current = requestAnimationFrame(tick);
     };
 
@@ -800,10 +883,7 @@ const progressPct = uploadedTrackDuration > 0
     : null;
 
   // ── Visibility rule: render nothing when idle and no media is active ──
-  const shouldShowPlayer =
-    isUploadActive ||
-    (hasSpotify && (spotifyState?.track?.name || spotifyState?.playing)) ||
-    (systemAudio?.title && systemAudio.title !== "No music");
+  const shouldShowPlayer = Boolean(isPlaying);
 
   if (!shouldShowPlayer) return null;
 
@@ -818,11 +898,11 @@ const progressPct = uploadedTrackDuration > 0
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.9 }}
           transition={{ duration: 0.3, type: "spring", stiffness: 400, damping: 25 }}
-          className="fixed bottom-6 right-6 z-40"
+          className="fixed bottom-3 right-3 z-40 sm:bottom-6 sm:right-6"
           onClick={() => setIsMinimized(false)}
         >
           <motion.div
-            className="flex items-center gap-3 rounded-full bg-gradient-to-r from-[rgba(255,209,102,0.2)] to-[rgba(57,208,255,0.2)] border border-white/20 px-4 py-2 backdrop-blur-md cursor-pointer hover:border-white/40 transition-colors"
+            className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border border-white/20 bg-gradient-to-r from-[rgba(255,209,102,0.2)] to-[rgba(57,208,255,0.2)] px-3 py-2 backdrop-blur-md transition-colors hover:border-white/40 sm:gap-3 sm:px-4"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
@@ -838,7 +918,7 @@ const progressPct = uploadedTrackDuration > 0
                 <Music className="h-4 w-4 text-[var(--accent-sky)]" />
               )}
             </motion.div>
-            <span className="text-xs font-semibold text-white/80 max-w-[120px] truncate">
+            <span className="max-w-[90px] truncate text-xs font-semibold text-white/80 sm:max-w-[120px]">
               {currentTrackTitle}
             </span>
             {hasUploadedTracks && (
@@ -867,7 +947,7 @@ const progressPct = uploadedTrackDuration > 0
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 20, scale: 0.95 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
-          className="fixed bottom-6 right-6 z-40 w-[min(32rem,calc(100vw-1.5rem))] rounded-[24px] bg-gradient-to-br from-[rgba(255,255,255,0.1)] to-[rgba(255,255,255,0.05)] border border-white/20 p-4 backdrop-blur-xl shadow-2xl"
+          className="fixed bottom-3 right-3 z-40 max-h-[70svh] w-[calc(100vw-1.5rem)] overflow-y-auto rounded-[24px] border border-white/20 bg-gradient-to-br from-[rgba(255,255,255,0.1)] to-[rgba(255,255,255,0.05)] p-3 shadow-2xl backdrop-blur-xl sm:bottom-6 sm:right-6 sm:max-h-[80vh] sm:w-[min(32rem,calc(100vw-1.5rem))] sm:p-4"
         >
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
@@ -935,7 +1015,19 @@ const progressPct = uploadedTrackDuration > 0
               <motion.button
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
-                onClick={() => setBeatReactiveEnabled((c) => !c)}
+                onClick={() => {
+                  setBeatReactiveEnabled((current) => {
+                    const next = !current;
+                    if (process.env.NODE_ENV !== "production") {
+                      console.debug("beat_reactive_toggled", {
+                        enabled: next,
+                        source: isUploadActive ? "upload" : hasSpotify ? "spotify" : "external"
+                      });
+                    }
+                    return next;
+                  });
+                }}
+                aria-pressed={beatReactiveEnabled}
                 className={`p-1.5 rounded-full transition-colors ${
                   beatReactiveEnabled
                     ? "bg-[var(--accent-mint)]/20 text-[var(--accent-mint)]"
@@ -947,7 +1039,14 @@ const progressPct = uploadedTrackDuration > 0
               </motion.button>
               <button
                 onClick={() => setIsMinimized(true)}
-                title="Minimise music player"
+                title="Collapse music player"
+                className="p-1.5 bg-white/10 hover:bg-white/16 rounded-full transition-colors"
+              >
+                <ChevronDown className="h-4 w-4 text-white/80" />
+              </button>
+              <button
+                onClick={handleStopPlayback}
+                title="Stop and hide music player"
                 className="p-1.5 bg-white/10 hover:bg-white/16 rounded-full transition-colors"
               >
                 <X className="h-4 w-4 text-white/80" />

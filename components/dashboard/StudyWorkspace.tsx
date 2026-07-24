@@ -875,6 +875,7 @@ export function StudyWorkspace({
   const searchParams = useSearchParams();
   const workspaceGridRef = useRef<HTMLDivElement>(null);
   const workspaceScrollRef = useRef<HTMLDivElement>(null);
+  const askAIPopupRef = useRef<HTMLDivElement>(null);
   const lastWorkspaceScrollYRef = useRef(0);
   const chatViewportRef = useRef<HTMLDivElement>(null);
   const quickImportInputRef = useRef<HTMLInputElement>(null);
@@ -901,6 +902,7 @@ export function StudyWorkspace({
   const [chatHistoryReadySession, setChatHistoryReadySession] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
+  const [isDesktopViewport, setIsDesktopViewport] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState("home");
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
   const [browseReloadKeys, setBrowseReloadKeys] = useState<Record<string, number>>({});
@@ -995,7 +997,23 @@ export function StudyWorkspace({
   });
   const [, setDragDepth] = useState(0);
   const [askAIPopup, setAskAIPopup] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [selectedEditorText, setSelectedEditorText] = useState("");
   const [showQuizResults, setShowQuizResults] = useState(false);
+
+  // On mobile the workspace and chat are mutually exclusive tabs. On desktop the
+  // two panels are visible together, which is the only state where a selection
+  // can be sent without moving the student away from the workspace.
+  const isStudioWorkspaceTabActive = tab === "chat";
+  const isAIChatOpenAndVisible = isDesktopViewport && !workspaceFullscreen && !chatFullscreen;
+  const canAskAIAboutSelection =
+    isStudioWorkspaceTabActive && selectedEditorText.length > 0 && isAIChatOpenAndVisible;
+  const askAIDisabledReason = !isStudioWorkspaceTabActive
+    ? "Open the Studio Workspace tab to ask about selected text."
+    : !selectedEditorText.length
+      ? "Select text in the Studio Workspace first."
+      : !isAIChatOpenAndVisible
+        ? "Keep AI Chat open beside the Studio Workspace to ask about this selection."
+        : "";
 
   const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
     try {
@@ -1024,27 +1042,43 @@ export function StudyWorkspace({
   }, [activeSessionId, messages, persistChatThreads]);
 
   useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 768px)");
+    const updateViewport = () => setIsDesktopViewport(mediaQuery.matches);
+    updateViewport();
+    mediaQuery.addEventListener("change", updateViewport);
+    return () => mediaQuery.removeEventListener("change", updateViewport);
+  }, []);
+
+  useEffect(() => {
     const handleSelection = () => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) {
         setAskAIPopup(null);
+        setSelectedEditorText("");
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      if (!workspaceScrollRef.current?.contains(range.commonAncestorContainer)) {
+        setAskAIPopup(null);
+        setSelectedEditorText("");
         return;
       }
       const text = selection.toString().trim();
-      if (text.length < 3) {
+      if (!text.length) {
         setAskAIPopup(null);
+        setSelectedEditorText("");
         return;
       }
-      
-      const range = selection.getRangeAt(0);
       const rect = range.getBoundingClientRect();
       
       // Do not show popup if selection is hidden/zero-sized
       if (rect.width === 0 || rect.height === 0) {
         setAskAIPopup(null);
+        setSelectedEditorText("");
         return;
       }
 
+      setSelectedEditorText(text);
       setAskAIPopup({
         text,
         x: rect.left + rect.width / 2,
@@ -1052,7 +1086,13 @@ export function StudyWorkspace({
       });
     };
 
-    const handleMouseDown = () => setAskAIPopup(null);
+    const handleMouseDown = (event: MouseEvent) => {
+      // The old global dismissal ran before the button's click event, so Ask AI
+      // could never submit the selected text.
+      if (event.target instanceof Node && askAIPopupRef.current?.contains(event.target)) return;
+      setAskAIPopup(null);
+      setSelectedEditorText("");
+    };
 
     document.addEventListener("mouseup", handleSelection);
     document.addEventListener("keyup", handleSelection);
@@ -1883,7 +1923,10 @@ export function StudyWorkspace({
       try {
         const response = await fetch(`/api/files/preview?fileId=${file.id}`);
         const json = await readJsonResponse(response);
-        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as "text" | "table" | "pdf" | "image";
+        if (!response.ok) {
+          throw new Error(normalizeErrorMessage(json.error, "Unable to open this file."));
+        }
+        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as PreviewKind;
         upsertWorkspaceTab({
           id: `canvas-source-${file.id}`,
           label: clipText(file.file_name, 28),
@@ -2819,6 +2862,7 @@ export function StudyWorkspace({
       let nextFiles = filesBySession[sessionId] ?? [];
       const warnings: string[] = [];
       const rejectedFiles: { fileName: string; reason: string }[] = [];
+      let uploadedCount = 0;
 
   // Batch upload all files in a single request
       const form = new FormData();
@@ -2837,6 +2881,7 @@ export function StudyWorkspace({
         }
       } else {
         nextFiles = Array.isArray(json.files) ? json.files : nextFiles;
+        uploadedCount = typeof json.uploadedCount === "number" ? json.uploadedCount : 0;
         if (Array.isArray(json.warnings)) warnings.push(...json.warnings);
         if (Array.isArray(json.rejectedFiles)) rejectedFiles.push(...json.rejectedFiles);
       }
@@ -2865,10 +2910,10 @@ export function StudyWorkspace({
         rejectedFiles.length > 0
           ? ` ${rejectedFiles.length} file(s) were unreadable and were skipped. Reupload a clearer copy.`
           : "";
-      if (nextFiles.length) {
+      if (uploadedCount > 0) {
         const message = warnings.length
-          ? `${nextFiles.length} file(s) added. ${warnings[0]}${rejectedMessage}${oversizedMessage}`
-          : `${nextFiles.length} file(s) added. The study tools are now ready to use.${rejectedMessage}${oversizedMessage}`;
+          ? `${uploadedCount} file(s) added. ${warnings[0]}${rejectedMessage}${oversizedMessage}`
+          : `${uploadedCount} file(s) added. The study tools are now ready to use.${rejectedMessage}${oversizedMessage}`;
         setStatusNote(message);
         setSourceModalError("");
         setSourceModalOpen(false);
@@ -4261,8 +4306,10 @@ export function StudyWorkspace({
               src={`/api/browse-proxy?url=${encodeURIComponent(workspaceItem.url)}`}
               title={workspaceItem.label}
               loading="lazy"
+              referrerPolicy="strict-origin-when-cross-origin"
               className="h-[min(72vh,900px)] w-full rounded-[24px] border border-white/10 bg-white"
-              sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+              sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts"
+              allow="autoplay; fullscreen; picture-in-picture"
             />
           </div>
         ) : isSearch ? (
@@ -4869,7 +4916,7 @@ export function StudyWorkspace({
   };
 
   return (
-    <div className="px-3 pb-32 pt-3 md:px-4">
+    <div className="min-w-0 overflow-x-hidden px-3 pb-32 pt-3 md:px-4">
       <section>
         <div className="panel panel-border rounded-[30px] p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -4919,13 +4966,13 @@ export function StudyWorkspace({
         </div>
       </section>
 
-      <div className="mt-4 flex gap-2 lg:hidden">
+      <div className="sticky top-2 z-20 mt-4 grid grid-cols-2 gap-2 md:hidden">
         {(["chat", "tools"] as const).map((item) => (
           <button
             key={item}
             type="button"
             onClick={() => setTab(item)}
-            className={`rounded-full px-3 py-2 text-xs font-medium capitalize transition ${
+            className={`min-h-11 rounded-2xl px-3 py-2 text-sm font-semibold transition ${
               tab === item ? "bg-[var(--fg)] text-[var(--bg)]" : "bg-white/15"
             }`}
           >
@@ -4936,7 +4983,7 @@ export function StudyWorkspace({
 
       <div
         ref={workspaceGridRef}
-        className="mt-4 grid gap-4 lg:items-start"
+        className="mt-4 grid min-w-0 gap-4 md:grid-cols-2 md:items-start"
         style={desktopGridStyle}
       >
         <aside className="hidden">
@@ -5390,12 +5437,12 @@ export function StudyWorkspace({
             workspaceFullscreen
               ? "fixed inset-3 z-40 block lg:inset-5"
               : tab !== "chat"
-                ? "hidden lg:block"
+                ? "hidden md:block"
                 : "block"
           }`}
         >
           <div
-            className={`panel panel-border relative overflow-hidden rounded-[30px] p-4 transition ${
+            className={`panel panel-border relative min-w-0 overflow-hidden rounded-[30px] p-3 sm:p-4 transition ${
               screenAwarePulse ? "shadow-[0_0_0_2px_rgba(57,208,255,0.38),0_0_55px_rgba(255,125,89,0.22)]" : ""
             }`}
           >
@@ -5482,7 +5529,7 @@ export function StudyWorkspace({
                           : `${item.label} pinned to split view. Open another tab to compare side by side.`
                       );
                     }}
-                    className={`group inline-flex items-center gap-2 rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
+                    className={`group inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-t-[18px] px-4 py-2 text-xs font-semibold transition ${
                       workspaceTab === item.key
                         ? "bg-[rgba(255,255,255,0.16)] text-[var(--fg)]"
                         : splitWorkspaceTabId === item.key
@@ -5612,7 +5659,14 @@ export function StudyWorkspace({
                 </motion.div>
               ) : null}
 
-              <div ref={workspaceScrollRef} className={`hide-scrollbar overflow-auto p-5 ${workspaceExpanded ? "min-h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)]" : "min-h-[38rem] max-h-[72vh]"}`}>
+              <div
+                ref={workspaceScrollRef}
+                className={`hide-scrollbar overflow-auto p-3 sm:p-5 ${
+                  workspaceExpanded
+                    ? "min-h-[calc(100svh-10rem)] max-h-[calc(100svh-10rem)] md:min-h-[calc(100vh-12rem)] md:max-h-[calc(100vh-12rem)]"
+                    : "min-h-[52svh] max-h-[70svh] md:min-h-[38rem] md:max-h-[72vh]"
+                }`}
+              >
                 {workspaceTab === "home" ? (
                   <div className="space-y-5">
                     <div className="rounded-[30px] bg-[radial-gradient(circle_at_18%_20%,rgba(255,143,107,0.24),transparent_32%),radial-gradient(circle_at_86%_20%,rgba(107,221,255,0.2),transparent_30%),rgba(255,255,255,0.08)] p-6">
@@ -5886,8 +5940,8 @@ export function StudyWorkspace({
                       </div>
                     </div>
                     <div
-                      className="grid gap-4"
-                      style={{ gridTemplateColumns: `${splitRatio}% minmax(0,1fr)` }}
+                      className="grid grid-cols-1 gap-4 md:grid-cols-2"
+                      style={isDesktopViewport ? { gridTemplateColumns: `${splitRatio}% minmax(0,1fr)` } : undefined}
                     >
                       <div className="min-w-0">{renderWorkspaceDynamicTab(activeWorkspaceDynamicTab)}</div>
                       <div className="min-w-0">{renderWorkspaceDynamicTab(splitWorkspaceTab)}</div>
@@ -5919,12 +5973,12 @@ export function StudyWorkspace({
             chatFullscreen
               ? "fixed inset-3 z-40 block lg:inset-5"
               : tab !== "tools"
-                ? "hidden lg:block"
+                ? "hidden md:block"
                 : "block"
           }`}
         >
           <div className="space-y-4">
-          <div className="panel panel-border rounded-[30px] p-4">
+          <div className="panel panel-border min-w-0 rounded-[30px] p-3 sm:p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold">AI Tutor</p>
@@ -6009,8 +6063,10 @@ export function StudyWorkspace({
 
             <div
               ref={chatViewportRef}
-              className={`hide-scrollbar mt-4 space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-4 ${
-                chatFullscreen || workspaceExpanded ? "min-h-[calc(100vh-12rem)] max-h-[calc(100vh-12rem)]" : "min-h-[34rem] lg:max-h-[calc(100vh-18rem)]"
+              className={`hide-scrollbar mt-4 space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-3 sm:p-4 ${
+                chatFullscreen || workspaceExpanded
+                  ? "min-h-[calc(100svh-10rem)] max-h-[calc(100svh-10rem)] md:min-h-[calc(100vh-12rem)] md:max-h-[calc(100vh-12rem)]"
+                  : "min-h-[42svh] max-h-[56svh] md:min-h-[34rem] md:max-h-[calc(100vh-18rem)]"
               }`}
             >
               {!sourceEnabledCount ? (
@@ -6082,15 +6138,15 @@ export function StudyWorkspace({
               ) : null}
             </div>
 
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <input
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
                 onKeyDown={onChatKeyDown}
                 placeholder={sourceEnabledCount ? "Ask your tutor..." : "Say hi, or upload files for source-grounded tutoring"}
-                className="w-full rounded-[20px] border border-white/20 bg-white/20 px-4 py-3 text-sm outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
+                className="min-h-11 w-full rounded-[20px] border border-white/20 bg-white/20 px-4 py-3 text-sm outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
               />
-              <Button onClick={sendChat} className="shrink-0 px-4" disabled={loading || chatLoading}>
+              <Button onClick={sendChat} className="min-h-11 shrink-0 px-4 sm:min-h-0" disabled={loading || chatLoading}>
                 {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
               </Button>
             </div>
@@ -6740,6 +6796,7 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
 
       {askAIPopup ? (
         <motion.div
+          ref={askAIPopupRef}
           initial={{ opacity: 0, y: 10, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
@@ -6753,18 +6810,27 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
         >
           <Button
             onClick={() => {
-              const quote = `> ${askAIPopup.text.replace(/\n/g, "\n> ")}\n\n`;
+              if (!canAskAIAboutSelection) return;
+              const quote = `> ${selectedEditorText.replace(/\n/g, "\n> ")}\n\n`;
               void submitChatQuestion(quote);
-              setTab("chat");
               setAskAIPopup(null);
+              setSelectedEditorText("");
               window.getSelection()?.removeAllRanges();
             }}
             size="sm"
-            className="rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] px-4 py-2 font-semibold text-black shadow-xl"
+            disabled={!canAskAIAboutSelection}
+            title={canAskAIAboutSelection ? "Ask AI about this selection" : askAIDisabledReason}
+            aria-describedby={!canAskAIAboutSelection ? "ask-ai-disabled-reason" : undefined}
+            className="rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))] px-4 py-2 font-semibold text-black shadow-xl disabled:grayscale"
           >
             <WandSparkles className="mr-2 h-4 w-4" />
             Ask AI
           </Button>
+          {!canAskAIAboutSelection ? (
+            <p id="ask-ai-disabled-reason" role="status" className="mt-2 max-w-64 rounded-xl bg-black/75 px-3 py-2 text-center text-[11px] leading-4 text-white/85 shadow-lg">
+              {askAIDisabledReason}
+            </p>
+          ) : null}
         </motion.div>
       ) : null}
 

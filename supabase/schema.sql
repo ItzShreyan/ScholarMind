@@ -330,15 +330,51 @@ values (
     'application/pdf',
     'text/plain',
     'text/markdown',
+    'application/json',
+    'application/xml',
+    'application/yaml',
+    'application/x-yaml',
+    'application/rtf',
+    'text/xml',
+    'text/yaml',
+    'text/rtf',
+    'text/html',
+    'text/csv',
+    'text/tab-separated-values',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.oasis.opendocument.spreadsheet',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.oasis.opendocument.presentation',
     'image/png',
     'image/jpeg',
     'image/webp',
+    'image/gif',
+    'image/bmp',
     'image/tiff',
     'image/heic',
-    'image/heif'
+    'image/heif',
+    'audio/mpeg',
+    'audio/wav',
+    'audio/mp4',
+    'audio/ogg',
+    'audio/flac',
+    'audio/aac'
   ]
 )
 on conflict (id) do nothing;
+
+-- Keep existing projects in sync with the supported upload/preview formats.
+update storage.buckets
+set allowed_mime_types = array[
+  'application/pdf', 'text/plain', 'text/markdown', 'application/json', 'application/xml', 'application/yaml', 'application/x-yaml', 'application/rtf', 'text/xml', 'text/yaml', 'text/rtf', 'text/html', 'text/csv', 'text/tab-separated-values',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.oasis.opendocument.spreadsheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.oasis.opendocument.presentation',
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp', 'image/tiff', 'image/heic', 'image/heif',
+  'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/ogg', 'audio/flac', 'audio/aac'
+]
+where id = 'study-files';
 
 drop policy if exists "study files read own objects" on storage.objects;
 drop policy if exists "study files insert own objects" on storage.objects;

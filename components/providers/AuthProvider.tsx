@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Session } from "@supabase/supabase-js";
+import { logAuthFailure } from "@/lib/auth/error-messages";
 import { createClient } from "@/lib/supabase/client";
 
 type AuthCtx = { session: Session | null; loading: boolean };
@@ -13,10 +14,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (error) logAuthFailure("session", error);
+        setSession(data.session);
+      })
+      .catch((error) => {
+        logAuthFailure("session", error);
+        setSession(null);
+      })
+      .finally(() => setLoading(false));
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) =>
       setSession(nextSession)
     );

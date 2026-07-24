@@ -25,9 +25,16 @@ interface BeatReactiveBorderProps {
  */
 export function BeatReactiveBorder({ signal, enabled }: BeatReactiveBorderProps) {
   const divRef = useRef<HTMLDivElement | null>(null);
+  // Keep the animation loop stable as the signal changes. Restarting the loop on
+  // each frequency update cleared the box shadow before it was perceptible.
+  const signalRef = useRef<BeatSignal | null>(signal);
   // Smoothed intensity — lerped toward the target each frame for soft decay
   const smoothedRef = useRef(0);
   const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    signalRef.current = signal;
+  }, [signal]);
 
   useEffect(() => {
     if (rafRef.current) {
@@ -40,9 +47,10 @@ export function BeatReactiveBorder({ signal, enabled }: BeatReactiveBorderProps)
     const el = divRef.current;
 
     const tick = () => {
-      const target = signal ? signal.intensity : 0;
-      const hue = signal ? signal.hue : 180;
-      const onBeat = signal ? signal.onBeat : false;
+      const currentSignal = signalRef.current;
+      const target = currentSignal ? currentSignal.intensity : 0;
+      const hue = currentSignal ? currentSignal.hue : 180;
+      const onBeat = currentSignal ? currentSignal.onBeat : false;
 
       // Lerp: fast attack (0.35), slow decay (0.06) for natural feel
       const lerpRate = target > smoothedRef.current ? 0.35 : 0.06;
@@ -85,7 +93,7 @@ export function BeatReactiveBorder({ signal, enabled }: BeatReactiveBorderProps)
       el.style.opacity = "0";
       smoothedRef.current = 0;
     };
-  }, [enabled, signal]);
+  }, [enabled]);
 
   if (!enabled) return null;
 
