@@ -33,8 +33,8 @@ export function getOpenRouterModel(
   purpose: "chat" | "study" = "study"
 ) {
   if (imageAttachments?.length) {
-    // This model can read image, video, and audio inputs. Deployments can
-    // override it with another OpenRouter vision model when needed.
+    // Keep image requests on the NVIDIA Nano Omni model so multimodal input
+    // continues to work with the same provider used for image understanding.
     return (
       process.env.OPENROUTER_VISION_MODEL?.trim() ||
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"

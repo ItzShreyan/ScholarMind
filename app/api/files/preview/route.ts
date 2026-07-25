@@ -61,11 +61,10 @@ export async function GET(req: Request) {
       .createSignedUrl(file.storage_path, 60 * 60);
 
     if (signedError || !signedData?.signedUrl) {
-      return NextResponse.json({
-        kind: "text",
-        fileName: file.file_name,
-        text: `The original file is temporarily unavailable, so its formatted preview cannot be displayed. Try opening it again shortly.\n\n${previewText || ""}`
-      });
+      return NextResponse.json(
+        { error: "The original file is temporarily unavailable. Please try opening it again." },
+        { status: 503 }
+      );
     }
 
     signedUrl = signedData.signedUrl;

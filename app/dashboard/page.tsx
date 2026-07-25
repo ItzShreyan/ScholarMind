@@ -31,7 +31,10 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <DashboardHeader email={user.email} />
+      <DashboardHeader
+        email={user.email}
+        firstName={typeof user.user_metadata?.first_name === "string" ? user.user_metadata.first_name : undefined}
+      />
       <DashboardOverview
         sessions={sessions.map((s) => ({ id: s.id, title: s.title, created_at: s.created_at }))}
         fileCount={fileCount}

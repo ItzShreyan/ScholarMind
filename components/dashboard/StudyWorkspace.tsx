@@ -1920,38 +1920,40 @@ export function StudyWorkspace({
 
   const openFileInCanvas = useCallback(
     async (file: FileItem) => {
-      try {
-        const response = await fetch(`/api/files/preview?fileId=${file.id}`);
-        const json = await readJsonResponse(response);
-        if (!response.ok) {
-          throw new Error(normalizeErrorMessage(json.error, "Unable to open this file."));
+      let lastError: unknown;
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await fetch(`/api/files/preview?fileId=${file.id}`);
+          const json = await readJsonResponse(response);
+          if (!response.ok) {
+            throw new Error(normalizeErrorMessage(json.error, "Unable to load this file's preview."));
+          }
+          const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as PreviewKind;
+          upsertWorkspaceTab({
+            id: `canvas-source-${file.id}`,
+            label: clipText(file.file_name, 28),
+            kind: "canvas-source",
+            file,
+            previewKind: kind,
+            text: json.text || file.extracted_text || "",
+            url: json.url || null,
+            html: json.html || undefined,
+            closable: true
+          });
+          setWorkspaceTab(`canvas-source-${file.id}`);
+          setTab("tools");
+          return;
+        } catch (error) {
+          lastError = error;
         }
-        const kind = (json.kind || resolvePreviewKind(file.file_name, file.file_type, file.storage_path)) as PreviewKind;
-        upsertWorkspaceTab({
-          id: `canvas-source-${file.id}`,
-          label: clipText(file.file_name, 28),
-          kind: "canvas-source",
-          file,
-          previewKind: kind,
-          text: json.text || file.extracted_text || "",
-          url: json.url || null,
-          html: json.html || undefined,
-          closable: true
-        });
-        setWorkspaceTab(`canvas-source-${file.id}`);
-        setTab("tools");
-      } catch {
-        upsertWorkspaceTab({
-          id: `canvas-source-${file.id}`,
-          label: clipText(file.file_name, 28),
-          kind: "canvas-source",
-          file,
-          previewKind: "text",
-          text: file.extracted_text || "Preview text is not available for this file.",
-          url: null,
-          closable: true
-        });
       }
+
+      const message = normalizeErrorMessage(
+        lastError instanceof Error ? lastError.message : lastError,
+        "Couldn't load this file's preview."
+      );
+      setStatusNote(`${message} Please try again.`);
     },
     [upsertWorkspaceTab]
   );
@@ -6651,32 +6653,34 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
                       Generator setup
                     </p>
 
-                    <div className="mt-5">
-                      <p className="text-sm font-medium">Number of items</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {[
-                          { label: "Fewer", value: Math.max(3, createToolDraft(toolDraft.action).count - 2) },
-                          { label: "Standard", value: createToolDraft(toolDraft.action).count },
-                          {
-                            label: "More",
-                            value: Math.min(toolDraft.action === "exam" ? 18 : 12, createToolDraft(toolDraft.action).count + 3)
-                          }
-                        ].map((option) => (
-                          <button
-                            key={`${toolDraft.action}-${option.label}`}
-                            type="button"
-                            onClick={() => setToolDraft((current) => ({ ...current, count: option.value }))}
-                            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                              toolDraft.count === option.value
-                                ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
-                                : "bg-white/10"
-                            }`}
-                          >
-                            {option.label}
-                          </button>
-                        ))}
+                    {toolDraft.action !== "notes" ? (
+                      <div className="mt-5">
+                        <p className="text-sm font-medium">Number of items</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {[
+                            { label: "Fewer", value: Math.max(3, createToolDraft(toolDraft.action).count - 2) },
+                            { label: "Standard", value: createToolDraft(toolDraft.action).count },
+                            {
+                              label: "More",
+                              value: Math.min(toolDraft.action === "exam" ? 18 : 12, createToolDraft(toolDraft.action).count + 3)
+                            }
+                          ].map((option) => (
+                            <button
+                              key={`${toolDraft.action}-${option.label}`}
+                              type="button"
+                              onClick={() => setToolDraft((current) => ({ ...current, count: option.value }))}
+                              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                                toolDraft.count === option.value
+                                  ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
+                                  : "bg-white/10"
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    ) : null}
 
                     {toolDraft.action === "exam" ? (
                       <div className="mt-5">
@@ -6709,25 +6713,27 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
                       </div>
                     ) : null}
 
-                    <div className="mt-5">
-                      <p className="text-sm font-medium">Difficulty</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {(["foundation", "exam"] as const).map((level) => (
-                          <button
-                            key={level}
-                            type="button"
-                            onClick={() => setToolDraft((current) => ({ ...current, difficulty: level }))}
-                            className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                              toolDraft.difficulty === level
-                                ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
-                                : "bg-white/10"
-                            }`}
-                          >
-                            {level === "foundation" ? "Foundation" : "Exam"}
-                          </button>
-                        ))}
+                    {toolDraft.action !== "notes" ? (
+                      <div className="mt-5">
+                        <p className="text-sm font-medium">Difficulty</p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {(["foundation", "exam"] as const).map((level) => (
+                            <button
+                              key={level}
+                              type="button"
+                              onClick={() => setToolDraft((current) => ({ ...current, difficulty: level }))}
+                              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+                                toolDraft.difficulty === level
+                                  ? "bg-[linear-gradient(135deg,rgba(255,125,89,0.24),rgba(57,208,255,0.2))]"
+                                  : "bg-white/10"
+                              }`}
+                            >
+                              {level === "foundation" ? "Foundation" : "Exam"}
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
+                    ) : null}
 
                     <div className="mt-5">
                       <p className="text-sm font-medium">What should it focus on?</p>

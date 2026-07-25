@@ -15,9 +15,10 @@ const navItems = [
   { href: "/settings", label: "Settings" }
 ];
 
-export function DashboardHeader({ email }: { email?: string }) {
+export function DashboardHeader({ email, firstName }: { email?: string; firstName?: string }) {
   const pathname = usePathname();
   const ownerHostShortcut = isHostOwner(email);
+  const displayName = firstName?.trim();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
@@ -59,7 +60,7 @@ export function DashboardHeader({ email }: { email?: string }) {
           </Link>
           <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-2 md:flex">
             <UserCircle2 className="h-4 w-4" />
-            <span className="max-w-44 truncate text-xs font-medium">{email || "Account"}</span>
+            <span className="max-w-44 truncate text-xs font-medium">{displayName ? `Hello, ${displayName}` : email || "Account"}</span>
           </div>
           <button
             type="button"

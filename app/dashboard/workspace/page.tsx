@@ -33,7 +33,10 @@ export default async function WorkspacePage() {
 
   return (
     <>
-      <DashboardHeader email={user.email} />
+      <DashboardHeader
+        email={user.email}
+        firstName={typeof user.user_metadata?.first_name === "string" ? user.user_metadata.first_name : undefined}
+      />
       <StudyWorkspace
         sessions={sessions.map((s) => ({ id: s.id, title: s.title }))}
         initialSessionId={activeSessionId}

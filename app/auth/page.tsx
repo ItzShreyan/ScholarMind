@@ -25,7 +25,7 @@ import { getAuthErrorMessage, logAuthFailure, type AuthOperation } from "@/lib/a
 const authRequestTimeoutMs = 20_000;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-type FieldErrors = Partial<Record<"email" | "password", string>>;
+type FieldErrors = Partial<Record<"firstName" | "lastName" | "email" | "password", string>>;
 
 function passwordValidationMessage(password: string) {
   if (password.length < 8) return "Use at least 8 characters.";
@@ -75,6 +75,8 @@ export default function AuthPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [message, setMessage] = useState("");
@@ -108,6 +110,11 @@ export default function AuthPage() {
       nextErrors.email = "Enter your email address.";
     } else if (!emailPattern.test(normalizedEmail)) {
       nextErrors.email = "Enter a valid email address.";
+    }
+
+    if (mode === "signup") {
+      if (!firstName.trim()) nextErrors.firstName = "Enter your first name.";
+      if (!lastName.trim()) nextErrors.lastName = "Enter your last name.";
     }
 
     if (!password) {
@@ -177,6 +184,10 @@ export default function AuthPage() {
             email: email.trim(),
             password,
             options: {
+              data: {
+                first_name: firstName.trim(),
+                last_name: lastName.trim()
+              },
               emailRedirectTo: getAuthRedirectTo()
             }
           })
@@ -195,6 +206,8 @@ export default function AuthPage() {
 
         setEmail("");
         setPassword("");
+        setFirstName("");
+        setLastName("");
         setShowPassword(false);
         setFieldErrors({});
         setStatus("success");
@@ -365,6 +378,58 @@ export default function AuthPage() {
             </div>
 
             <form onSubmit={onSubmit} noValidate className="space-y-4" aria-busy={status === "loading"}>
+              {mode === "signup" ? (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-medium">First name</span>
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={(event) => {
+                        setFirstName(event.target.value);
+                        clearFieldError("firstName");
+                      }}
+                      autoComplete="given-name"
+                      aria-invalid={Boolean(fieldErrors.firstName)}
+                      aria-describedby={fieldErrors.firstName ? "auth-first-name-error" : undefined}
+                      className={`w-full rounded-[22px] border bg-white/25 px-4 py-3.5 outline-none transition focus:bg-white/40 ${
+                        fieldErrors.firstName ? "border-[rgba(244,63,94,0.9)]" : "border-white/20 focus:border-[var(--accent-sky)]"
+                      }`}
+                      required
+                    />
+                    {fieldErrors.firstName ? (
+                      <span id="auth-first-name-error" className="mt-2 block text-xs text-[rgb(253,164,175)]">
+                        {fieldErrors.firstName}
+                      </span>
+                    ) : null}
+                  </label>
+
+                  <label className="block">
+                    <span className="mb-2 block text-sm font-medium">Last name</span>
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={(event) => {
+                        setLastName(event.target.value);
+                        clearFieldError("lastName");
+                      }}
+                      autoComplete="family-name"
+                      aria-invalid={Boolean(fieldErrors.lastName)}
+                      aria-describedby={fieldErrors.lastName ? "auth-last-name-error" : undefined}
+                      className={`w-full rounded-[22px] border bg-white/25 px-4 py-3.5 outline-none transition focus:bg-white/40 ${
+                        fieldErrors.lastName ? "border-[rgba(244,63,94,0.9)]" : "border-white/20 focus:border-[var(--accent-sky)]"
+                      }`}
+                      required
+                    />
+                    {fieldErrors.lastName ? (
+                      <span id="auth-last-name-error" className="mt-2 block text-xs text-[rgb(253,164,175)]">
+                        {fieldErrors.lastName}
+                      </span>
+                    ) : null}
+                  </label>
+                </div>
+              ) : null}
+
               <label className="block">
                 <span className="mb-2 block text-sm font-medium">Email</span>
                 <input
