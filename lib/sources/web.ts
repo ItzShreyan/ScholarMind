@@ -1,5 +1,6 @@
 import { getFileExtension, isImageDocument, isPdfDocument } from "@/lib/documents/formats";
 import { cleanStudySourceText } from "@/lib/documents/clean";
+import { assertSafeTarget } from "@/lib/security/ssrf";
 
 export type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
 
@@ -588,6 +589,7 @@ async function fetchGoogleResults(query: string): Promise<{ results: WebSourceRe
 
 async function fetchReadablePreview(url: string) {
   try {
+    await assertSafeTarget(new URL(url));
     const response = await fetchWithTimeout(url, {
       headers: {
         Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
@@ -812,6 +814,14 @@ export async function extractWebSourceText({
   url: string;
   snippet?: string;
 }) {
+  try {
+    await assertSafeTarget(new URL(url));
+  } catch (error) {
+    throw new Error(
+      error instanceof Error ? error.message : "The requested URL is not a valid or safe target."
+    );
+  }
+
   const extension = getFileExtension(url);
 
   try {
