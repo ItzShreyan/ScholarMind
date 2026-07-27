@@ -137,9 +137,10 @@ function makeHtmlResponse(html: string, status = 200) {
 }
 
 function browserDocumentCsp() {
-  // The document is intentionally placed in an iframe without allow-same-origin.
-  // This permissive resource policy lets the target retain its own assets and app
-  // behavior while the iframe sandbox keeps it isolated from ScholarMind.
+  // The iframe allows same-origin so modern sites can hydrate without opaque-origin
+  // storage failures. This permissive resource policy lets targets retain their
+  // own assets and app behavior while the remaining iframe sandbox flags limit
+  // navigation and browser capabilities.
   return [
     "default-src * data: blob:",
     "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",

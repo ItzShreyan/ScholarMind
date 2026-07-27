@@ -1003,16 +1003,18 @@ export function StudyWorkspace({
   // On mobile the workspace and chat are mutually exclusive tabs. On desktop the
   // two panels are visible together, which is the only state where a selection
   // can be sent without moving the student away from the workspace.
-  const isStudioWorkspaceTabActive = tab === "chat";
   const isAIChatOpenAndVisible = isDesktopViewport && !workspaceFullscreen && !chatFullscreen;
+  const isMobileAIChatTabActive = !isDesktopViewport && tab === "chat";
   const canAskAIAboutSelection =
-    isStudioWorkspaceTabActive && selectedEditorText.length > 0 && isAIChatOpenAndVisible;
-  const askAIDisabledReason = !isStudioWorkspaceTabActive
-    ? "Open the Studio Workspace tab to ask about selected text."
-    : !selectedEditorText.length
-      ? "Select text in the Studio Workspace first."
-      : !isAIChatOpenAndVisible
+    selectedEditorText.length > 0 && (isAIChatOpenAndVisible || isMobileAIChatTabActive);
+  const askAIDisabledReason = !selectedEditorText.length
+    ? "Select text in the Studio Workspace first."
+    : isDesktopViewport
+      ? !isAIChatOpenAndVisible
         ? "Keep AI Chat open beside the Studio Workspace to ask about this selection."
+        : ""
+      : !isMobileAIChatTabActive
+        ? "Open the AI Chat tab to ask about selected text."
         : "";
 
   const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
@@ -1058,7 +1060,10 @@ export function StudyWorkspace({
         return;
       }
       const range = selection.getRangeAt(0);
-      if (!workspaceScrollRef.current?.contains(range.commonAncestorContainer)) {
+      const selectionNode = range.commonAncestorContainer;
+      const isSelectionInWorkspace = workspaceScrollRef.current?.contains(selectionNode);
+      const isSelectionInChat = chatViewportRef.current?.contains(selectionNode);
+      if (!isSelectionInWorkspace && !isSelectionInChat) {
         setAskAIPopup(null);
         setSelectedEditorText("");
         return;
@@ -4310,7 +4315,7 @@ export function StudyWorkspace({
               loading="lazy"
               referrerPolicy="strict-origin-when-cross-origin"
               className="h-[min(72vh,900px)] w-full rounded-[24px] border border-white/10 bg-white"
-              sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts"
+              sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
               allow="autoplay; fullscreen; picture-in-picture"
             />
           </div>
