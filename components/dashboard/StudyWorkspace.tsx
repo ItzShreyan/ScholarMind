@@ -2092,6 +2092,94 @@ export function StudyWorkspace({
       .join(" ");
   }, []);
 
+  const shouldDescribeVisibleWorkspace = useCallback((question: string) => {
+    const lower = question.toLowerCase();
+    return /\b(this|these|that|here|screen|visible|shown|looking at|look at|current (?:tab|page|note|file|workspace)|open (?:tab|page|note|file)|above|diagram|image|table|chart|graph)\b/.test(lower);
+  }, []);
+
+  const captureWorkspaceImage = useCallback(async () => {
+    const element = workspaceScrollRef.current;
+    if (!element || typeof window === "undefined") return "";
+
+    const rect = element.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    const maxDimension = 1400;
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
+    const cloned = element.cloneNode(true) as HTMLElement;
+
+    cloned.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    cloned.style.width = `${width}px`;
+    cloned.style.height = `${height}px`;
+    cloned.style.overflow = "hidden";
+    cloned.style.transform = `translate(${-element.scrollLeft}px, ${-element.scrollTop}px)`;
+    cloned.style.transformOrigin = "top left";
+
+    const cssText = Array.from(document.styleSheets)
+      .map((sheet) => {
+        try {
+          return Array.from(sheet.cssRules).map((rule) => rule.cssText).join("\n");
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean)
+      .join("\n");
+
+    if (cssText) {
+      const style = document.createElement("style");
+      style.textContent = cssText;
+      cloned.prepend(style);
+    }
+
+    const serialized = new XMLSerializer().serializeToString(cloned);
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <foreignObject width="100%" height="100%">${serialized}</foreignObject>
+      </svg>`;
+    const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Unable to render workspace screenshot."));
+        img.src = svgUrl;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.floor(width * scale));
+      canvas.height = Math.max(1, Math.floor(height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) return "";
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/png", 0.82);
+    } catch (error) {
+      console.warn("workspace_screenshot_capture_failed", error);
+      return "";
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }, []);
+
+  const requestVisibleWorkspaceDescription = useCallback(async (question: string) => {
+    const imageDataUrl = await captureWorkspaceImage();
+    if (!imageDataUrl) return "";
+
+    const response = await fetch("/api/ai/screen-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: { question, imageDataUrl } })
+    });
+
+    if (!response.ok) {
+      const json = await readJsonResponse(response);
+      throw new Error(normalizeErrorMessage(json.error, `Screen context failed: ${response.status}`));
+    }
+
+    const json = await readJsonResponse(response);
+    return sanitizeDisplayText(json.description, "");
+  }, [captureWorkspaceImage]);
+
   const buildScreenContext = useCallback(() => {
     const openResultLabel = output
       ? `${actionButtons.find((item) => item.key === activeAction)?.label || activeAction}: ${clipText(
@@ -3685,6 +3773,25 @@ export function StudyWorkspace({
       maxCharacters: 6500,
       maxChunks: 8
     });
+    const baseScreenContext = buildScreenContext();
+    let visualScreenContext = "";
+
+    if (shouldDescribeVisibleWorkspace(question)) {
+      setStatusNote("Reading the visible workspace for context…");
+      try {
+        visualScreenContext = await requestVisibleWorkspaceDescription(question);
+      } catch (error) {
+        console.warn("workspace_screen_context_failed", error);
+      }
+    }
+
+    const screenContext = [
+      baseScreenContext,
+      visualScreenContext ? `Visual description of the visible workspace:
+${visualScreenContext}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const enrichedPrompt = historySnapshot.length
       ? [
           currentSession?.title ? `Current studio: ${currentSession.title}` : "",
@@ -3735,7 +3842,7 @@ export function StudyWorkspace({
             message: enrichedPrompt,
             history: providerHistory,
             context: chatContext,
-            screenContext: buildScreenContext(),
+            screenContext,
             mode: "chat",
             sessionId: activeSessionId ?? undefined
           }
@@ -3805,7 +3912,7 @@ export function StudyWorkspace({
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
