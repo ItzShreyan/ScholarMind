@@ -14,7 +14,7 @@ import { useMusicPlayback } from "@/components/dashboard/MusicPlaybackContext";
 import { formatTrackDuration } from "@/lib/music/spotify-catalog";
 import { BeatReactiveBorder } from "@/components/dashboard/BeatReactiveBorder";
 import { useBeatAnalyserNode } from "@/hooks/useBeatAnalyserNode";
-import { useSpotifyBeatClock, stringToHue } from "@/hooks/useSpotifyBeatClock";
+import { useSpotifyBeatClock } from "@/hooks/useSpotifyBeatClock";
 import type { BeatSignal } from "@/hooks/useSpotifyBeatClock";
 
 type SystemAudioTrack = {
@@ -774,7 +774,7 @@ const progressPct = uploadedTrackDuration > 0
 
   // ── Beat-reactive animation: dual-path signal computation ──────────────
   // Path 1: Local/uploaded tracks → Web Audio AnalyserNode
-  const { intensityRef: beatIntensityRef } = useBeatAnalyserNode(
+  const { intensityRef: beatIntensityRef, signalRef: uploadAnalyserSignalRef } = useBeatAnalyserNode(
     audioRef,
     beatReactiveEnabled && isUploadActive
   );
@@ -827,25 +827,24 @@ const progressPct = uploadedTrackDuration > 0
       return;
     }
 
-    const currentTrackName = currentTrack?.name ?? "uploaded";
-    const trackHash = stringToHue(currentTrackName + (currentTrack?.id ?? ""));
-
     const tick = () => {
-      const raw = beatIntensityRef.current;
+      const analyserSignal = uploadAnalyserSignalRef.current;
+      const raw = analyserSignal.intensity || beatIntensityRef.current;
 
       if (raw > 0.005) {
-        // Detect beat onset: sudden jump in bass energy
-        if (raw > previousIntensityRef.current * 1.6 && raw > 0.08) {
-          beatFlashEndRef.current = performance.now() + 120;
+        // Keep a fallback onset detector here in case an older analyser signal is
+        // sampled before the hook has populated its own onBeat flag.
+        if (raw > previousIntensityRef.current * 1.55 && raw > 0.08) {
+          beatFlashEndRef.current = performance.now() + 90;
         }
       }
 
       const now = performance.now();
-      const onBeat = now < beatFlashEndRef.current;
-      const intensity = Math.min(1, raw * 1.2);
+      const onBeat = analyserSignal.onBeat || now < beatFlashEndRef.current;
+      const intensity = Math.min(1, raw * 1.18);
       previousIntensityRef.current = raw;
 
-      const nextSignal = { intensity, hue: trackHash, onBeat };
+      const nextSignal = { ...analyserSignal, intensity, onBeat };
       const previousSignal = lastPublishedUploadSignalRef.current;
 
       // The analyser keeps sampling at display refresh rate, but React only
@@ -853,6 +852,9 @@ const progressPct = uploadedTrackDuration > 0
       // rerendering the entire player 60 times per second.
       if (
         Math.abs(nextSignal.intensity - previousSignal.intensity) >= 0.02 ||
+        Math.abs((nextSignal.bass ?? 0) - (previousSignal.bass ?? 0)) >= 0.04 ||
+        Math.abs((nextSignal.mid ?? 0) - (previousSignal.mid ?? 0)) >= 0.04 ||
+        Math.abs((nextSignal.treble ?? 0) - (previousSignal.treble ?? 0)) >= 0.04 ||
         nextSignal.onBeat !== previousSignal.onBeat ||
         nextSignal.hue !== previousSignal.hue
       ) {
@@ -871,7 +873,7 @@ const progressPct = uploadedTrackDuration > 0
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [beatReactiveEnabled, isUploadActive, isPlaying, currentTrack?.id, currentTrack?.name]);
+  }, [beatReactiveEnabled, isUploadActive, isPlaying]);
 
   // Compose the final signal: upload (path 1) takes priority over Spotify (path 2)
   const beatSignal: BeatSignal | null = beatReactiveEnabled

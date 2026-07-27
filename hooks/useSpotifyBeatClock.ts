@@ -30,18 +30,26 @@ type AudioAnalysis = {
 // ─── Output signal shape (same as BeatReactiveBorder expects) ─────────────────
 
 export type BeatSignal = {
-  /** 0–1 intensity: amplitude of current beat flash, decays between beats */
+  /** 0–1 intensity: smoothed music energy driving the base border wave */
   intensity: number;
-  /** Hue (0–360) driven by track + section identity */
+  /** Hue (0–360) derived from the dominant frequency band or Spotify analysis metadata */
   hue: number;
-  /** true during the 120 ms peak window right after a beat */
+  /** true during the short peak window right after a beat */
   onBeat: boolean;
+  /** Optional normalized bass energy for real-time analyser sources */
+  bass?: number;
+  /** Optional normalized mid energy for real-time analyser sources */
+  mid?: number;
+  /** Optional normalized treble energy for real-time analyser sources */
+  treble?: number;
+  /** Optional BPM used by visualizers for wave speed */
+  tempo?: number;
 };
 
 // ─── Module-level cache: track id → analysis (never refetched) ────────────────
 const analysisCache = new Map<string, AudioAnalysis>();
-const BEAT_FLASH_MS = 120;
-const FALLOFF_HALF_LIFE_MS = 350;
+const BEAT_FLASH_MS = 80;
+const FALLOFF_HALF_LIFE_MS = 280;
 
 // ─── Binary search: last beat whose start ≤ elapsedSec ───────────────────────
 function findBeatIndex(beats: SpotifyBeat[], elapsedSec: number): number {
@@ -67,6 +75,23 @@ export function stringToHue(s: string): number {
     h = (h * 31 + s.charCodeAt(i)) & 0xffffffff;
   }
   return Math.abs(h) % 360;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function keyToHue(key: number, mode: number) {
+  if (key < 0) return 190;
+  const circleOfFifthsStep = [0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5][key % 12] ?? 0;
+  return (circleOfFifthsStep * 30 + (mode === 0 ? 18 : 0)) % 360;
+}
+
+function loudnessToHueOffset(loudness: number) {
+  // Spotify section loudness is usually negative dB. Louder sections nudge the
+  // color toward warmer hues while quieter passages drift cooler.
+  const normalized = clamp((loudness + 42) / 36, 0, 1);
+  return (normalized - 0.5) * 52;
 }
 
 /**
@@ -201,14 +226,20 @@ export function useSpotifyBeatClock(
         intensity = decayFactor * confidence;
       }
 
-      // Determine hue from current section
-      const sectionIdx = analysis.sections.findIndex(
+      // Determine hue from current section metadata. Spotify does not expose
+      // real-time spectral bins for DRM playback, so key/mode/loudness provide
+      // the closest music-derived color source available here.
+      const section = analysis.sections.find(
         (s) => s.start <= elapsedSec && elapsedSec < s.start + s.duration
       );
-      const sectionHueOffset = sectionIdx >= 0 ? (sectionIdx * 37) % 360 : 0;
-      const hue = (baseHueRef.current + sectionHueOffset) % 360;
+      const tempo = section?.tempo && section.tempo > 0 ? section.tempo : undefined;
+      const sectionHue = section
+        ? keyToHue(section.key, section.mode) + loudnessToHueOffset(section.loudness)
+        : baseHueRef.current;
+      const beatAccent = onBeat ? 10 : 0;
+      const hue = (sectionHue + beatAccent + 360) % 360;
 
-      setSignal({ intensity: Math.min(1, intensity), hue, onBeat });
+      setSignal({ intensity: Math.min(1, intensity), hue, onBeat, tempo });
 
       rafRef.current = requestAnimationFrame(tick);
     };
