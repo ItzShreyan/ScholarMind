@@ -26,25 +26,37 @@ function stripTrailingCommas(s: string): string {
   return result === s ? result : stripTrailingCommas(result);
 }
 
-export function stripReasoningPreamble(text: string): string {
+export function extractReasoningPreamble(text: string): { text: string; reasoning: string } {
   let cleaned = (text || "").trim();
-  if (!cleaned) return "";
+  if (!cleaned) return { text: "", reasoning: "" };
+
+  const reasoningParts: string[] = [];
 
   for (const prefix of reasoningPrefixes) {
+    const match = cleaned.match(prefix);
+    if (!match?.[0]) continue;
     const before = cleaned;
     cleaned = cleaned.replace(prefix, "").trim();
-    if (cleaned !== before) break;
+    if (cleaned !== before) {
+      reasoningParts.push(match[0].trim());
+      break;
+    }
   }
 
   const firstSubstantive = cleaned.match(/(```(?:json)?\s*|^#|^\{|^\[|^---)/m);
   if (firstSubstantive && firstSubstantive.index !== undefined && firstSubstantive.index > 0) {
     const beforeMatch = cleaned.slice(0, firstSubstantive.index).trim();
     if (beforeMatch.length < 120 && /I\s+(?:will|shall|can|would|am|'ll)/i.test(beforeMatch)) {
+      reasoningParts.push(beforeMatch);
       cleaned = cleaned.slice(firstSubstantive.index).trim();
     }
   }
 
-  return cleaned;
+  return { text: cleaned, reasoning: reasoningParts.filter(Boolean).join("\n\n") };
+}
+
+export function stripReasoningPreamble(text: string): string {
+  return extractReasoningPreamble(text).text;
 }
 
 function tryParseJson(value: string) {
@@ -128,6 +140,39 @@ export function extractStructuredOutput(text: string): string {
 
   // Return the cleaned text as-is for markdown responses
   return cleaned;
+}
+
+export function extractStructuredOutputWithReasoning(text: string): { text: string; reasoning: string } {
+  const preambleResult = extractReasoningPreamble(text);
+  const cleaned = preambleResult.text;
+  if (!cleaned) return { text: "", reasoning: preambleResult.reasoning };
+
+  const withReasoning = (output: string) => ({
+    text: output,
+    reasoning: output === cleaned ? preambleResult.reasoning : [preambleResult.reasoning, cleaned.replace(output, "").trim()].filter(Boolean).join("\n\n")
+  });
+
+  // Try ```json fenced blocks first
+  const fenced = cleaned.match(/```json\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    const stripped = stripTrailingCommas(fenced[1].trim());
+    const parsed = tryParseJson(stripped);
+    if (parsed) return withReasoning(stripped);
+  }
+
+  // Try direct JSON parse (with trailing comma cleanup)
+  const direct = tryParseJson(cleaned);
+  if (direct) return withReasoning(cleaned);
+
+  // Try finding balanced JSON array or object
+  const arrayPayload = findBalancedJson(cleaned, "[");
+  if (arrayPayload) return withReasoning(arrayPayload);
+
+  const objectPayload = findBalancedJson(cleaned, "{");
+  if (objectPayload) return withReasoning(objectPayload);
+
+  // Return the cleaned text as-is for markdown responses
+  return withReasoning(cleaned);
 }
 
 /**

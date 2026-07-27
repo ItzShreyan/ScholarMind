@@ -77,7 +77,7 @@ type FileItem = {
   storage_path: string;
   source_enabled?: boolean;
 };
-type ChatMessage = { role: "user" | "ai"; content: string };
+type ChatMessage = { role: "user" | "ai"; content: string; reasoning?: string; startedAt?: number; completedAt?: number };
 type ChatThread = {
   id: string;
   title: string;
@@ -377,22 +377,24 @@ function normalizeAIResponseText(value: unknown): string {
   return normalizeAIText(value);
 }
 
-function parseSSEChunk(chunk: string): string {
+function parseSSEChunk(chunk: string): { content: string; reasoning: string } {
   const lines = chunk.split(/\r?\n/);
-  let extracted = "";
+  let content = "";
+  let reasoning = "";
   for (const line of lines) {
     if (!line.startsWith("data:")) continue;
     const payload = line.replace(/^data:\s*/, "").trim();
     if (payload === "[DONE]") continue;
     try {
       const data = JSON.parse(payload);
-      const delta = data?.choices?.[0]?.delta?.content;
-      extracted += normalizeAIText(delta);
+      const delta = data?.choices?.[0]?.delta;
+      content += normalizeAIText(delta?.content);
+      reasoning += normalizeAIText(delta?.reasoning);
     } catch {
       // not JSON: ignore
     }
   }
-  return extracted;
+  return { content, reasoning };
 }
 
 function normalizeLine(line: string) {
@@ -1004,7 +1006,7 @@ export function StudyWorkspace({
   // two panels are visible together, which is the only state where a selection
   // can be sent without moving the student away from the workspace.
   const isAIChatOpenAndVisible = isDesktopViewport && !workspaceFullscreen && !chatFullscreen;
-  const isMobileAIChatTabActive = !isDesktopViewport && tab === "chat";
+  const isMobileAIChatTabActive = !isDesktopViewport && tab === "tools";
   const canAskAIAboutSelection =
     selectedEditorText.length > 0 && (isAIChatOpenAndVisible || isMobileAIChatTabActive);
   const askAIDisabledReason = !selectedEditorText.length
@@ -1052,34 +1054,48 @@ export function StudyWorkspace({
   }, []);
 
   useEffect(() => {
+    const clearSelectionContext = () => {
+      setAskAIPopup(null);
+      setSelectedEditorText("");
+    };
+
+    const isSelectionEndpointIn = (root: HTMLElement | null, node: Node | null) =>
+      Boolean(root && node && root.contains(node));
+
     const handleSelection = () => {
       const selection = window.getSelection();
-      if (!selection || selection.isCollapsed) {
-        setAskAIPopup(null);
-        setSelectedEditorText("");
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        clearSelectionContext();
         return;
       }
+
       const range = selection.getRangeAt(0);
-      const selectionNode = range.commonAncestorContainer;
-      const isSelectionInWorkspace = workspaceScrollRef.current?.contains(selectionNode);
-      const isSelectionInChat = chatViewportRef.current?.contains(selectionNode);
-      if (!isSelectionInWorkspace && !isSelectionInChat) {
-        setAskAIPopup(null);
-        setSelectedEditorText("");
+      const workspaceRoot = workspaceScrollRef.current;
+      const chatRoot = chatViewportRef.current;
+      const selectionStartsInWorkspace = isSelectionEndpointIn(workspaceRoot, selection.anchorNode);
+      const selectionEndsInWorkspace = isSelectionEndpointIn(workspaceRoot, selection.focusNode);
+      const selectionStartsInChat = isSelectionEndpointIn(chatRoot, selection.anchorNode);
+      const selectionEndsInChat = isSelectionEndpointIn(chatRoot, selection.focusNode);
+      const isSelectionInWorkspace = selectionStartsInWorkspace && selectionEndsInWorkspace;
+      const isSelectionInChat = selectionStartsInChat && selectionEndsInChat;
+      const canUseWorkspaceSelection = isDesktopViewport || tab === "chat";
+      const canUseChatSelection = isDesktopViewport || tab === "tools";
+
+      if ((!isSelectionInWorkspace || !canUseWorkspaceSelection) && (!isSelectionInChat || !canUseChatSelection)) {
+        clearSelectionContext();
         return;
       }
+
       const text = selection.toString().trim();
       if (!text.length) {
-        setAskAIPopup(null);
-        setSelectedEditorText("");
+        clearSelectionContext();
         return;
       }
       const rect = range.getBoundingClientRect();
-      
+
       // Do not show popup if selection is hidden/zero-sized
       if (rect.width === 0 || rect.height === 0) {
-        setAskAIPopup(null);
-        setSelectedEditorText("");
+        clearSelectionContext();
         return;
       }
 
@@ -1095,8 +1111,7 @@ export function StudyWorkspace({
       // The old global dismissal ran before the button's click event, so Ask AI
       // could never submit the selected text.
       if (event.target instanceof Node && askAIPopupRef.current?.contains(event.target)) return;
-      setAskAIPopup(null);
-      setSelectedEditorText("");
+      clearSelectionContext();
     };
 
     document.addEventListener("mouseup", handleSelection);
@@ -1108,7 +1123,7 @@ export function StudyWorkspace({
       document.removeEventListener("keyup", handleSelection);
       document.removeEventListener("mousedown", handleMouseDown);
     };
-  }, []);
+  }, [isDesktopViewport, tab]);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -1144,7 +1159,7 @@ export function StudyWorkspace({
           setMessages(
             json.messages
               .filter((message: ChatMessage) => message?.role && typeof message.content === "string")
-              .map((message: ChatMessage) => ({ role: message.role, content: message.content }))
+              .map((message: ChatMessage) => ({ role: message.role, content: message.content, reasoning: message.reasoning }))
           );
         } else {
           setMessages([]);
@@ -3827,7 +3842,7 @@ ${visualScreenContext}` : ""
     setStatusNote("");
 
     try {
-      setMessages((current) => [...current, { role: "ai", content: "" }]);
+      setMessages((current) => [...current, { role: "ai", content: "", startedAt: Date.now() }]);
 
       const providerHistory = historySnapshot.map((message) => ({
         role: message.role === "ai" ? "assistant" : "user",
@@ -3865,6 +3880,7 @@ ${visualScreenContext}` : ""
 
       const decoder = new TextDecoder();
       let accumulated = "";
+      let accumulatedReasoning = "";
       let streamBuffer = "";
 
       while (true) {
@@ -3875,7 +3891,9 @@ ${visualScreenContext}` : ""
         streamBuffer = parts.pop() || "";
 
         for (const part of parts) {
-          accumulated += parseSSEChunk(part);
+          const parsedChunk = parseSSEChunk(part);
+          accumulated += parsedChunk.content;
+          accumulatedReasoning += parsedChunk.reasoning;
         }
 
         const safeAccumulated = sanitizeDisplayText(accumulated, "");
@@ -3883,16 +3901,31 @@ ${visualScreenContext}` : ""
           const next = [...current];
           const lastIndex = next.length - 1;
           if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
-            next[lastIndex] = { ...next[lastIndex], content: safeAccumulated };
+            next[lastIndex] = { ...next[lastIndex], content: safeAccumulated, reasoning: sanitizeDisplayText(accumulatedReasoning, "") || next[lastIndex].reasoning };
           }
           return next;
         });
       }
 
       if (streamBuffer) {
-        accumulated += parseSSEChunk(streamBuffer);
+        const parsedChunk = parseSSEChunk(streamBuffer);
+        accumulated += parsedChunk.content;
+        accumulatedReasoning += parsedChunk.reasoning;
       }
 
+      setMessages((current) => {
+        const next = [...current];
+        const lastIndex = next.length - 1;
+        if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
+          next[lastIndex] = {
+            ...next[lastIndex],
+            content: sanitizeDisplayText(accumulated, "") || next[lastIndex].content,
+            reasoning: sanitizeDisplayText(accumulatedReasoning, "") || next[lastIndex].reasoning,
+            completedAt: Date.now()
+          };
+        }
+        return next;
+      });
       setStatusNote("");
     } catch (error) {
       const message = sanitizeDisplayText(error, "Unable to generate a reply.");
@@ -3900,7 +3933,7 @@ ${visualScreenContext}` : ""
         const next = [...current];
         const lastIndex = next.length - 1;
         if (lastIndex >= 0 && next[lastIndex]?.role === "ai" && !next[lastIndex]?.content) {
-          next[lastIndex] = { ...next[lastIndex], content: message };
+          next[lastIndex] = { ...next[lastIndex], content: message, completedAt: Date.now() };
           return next;
         }
         return [...current, { role: "ai", content: message }];
@@ -6218,29 +6251,137 @@ ${visualScreenContext}` : ""
                   </div>
                 </div>
               ) : (
-                messages.map((message, index) => (
-                  <motion.div
-                    key={`${message.role}-${index}`}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className={`rounded-[24px] px-4 py-3 ${
-                      message.role === "user"
-                        ? "ml-auto max-w-[88%] bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
-                        : "max-w-[95%] bg-white/16"
-                    }`}
-                  >
-                    {message.role === "user" ? (
-                      <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
-                    ) : !message.content.trim() ? (
-                      <div className="flex items-center gap-2 text-sm">
-                        <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                        <p className="font-semibold">Thinking through the sources...</p>
-                      </div>
-                    ) : (
-                      <RichStudyText content={sanitizeDisplayText(message.content, "Unable to generate that reply.")} />
-                    )}
-                  </motion.div>
-                ))
+                messages.map((message, index) => {
+                  const previousUserMessage =
+                    message.role === "ai"
+                      ? messages
+                          .slice(0, index)
+                          .reverse()
+                          .find((item) => item.role === "user")
+                      : undefined;
+                  const assistantActionId = `chat-message-${index}`;
+                  const reasoningText = sanitizeDisplayText(message.reasoning || "", "");
+                  const thoughtSeconds = message.startedAt
+                    ? Math.max(1, Math.round(((message.completedAt || Date.now()) - message.startedAt) / 1000))
+                    : null;
+
+                  return (
+                    <motion.div
+                      key={`${message.role}-${index}`}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`rounded-[24px] px-4 py-3 ${
+                        message.role === "user"
+                          ? "ml-auto max-w-[88%] bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
+                          : "max-w-[95%] bg-white/16"
+                      }`}
+                    >
+                      {message.role === "user" ? (
+                        <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
+                      ) : !message.content.trim() ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 text-sm">
+                            <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
+                            <motion.p
+                              className="bg-[linear-gradient(90deg,rgba(255,255,255,0.48),rgba(57,208,255,0.95),rgba(255,255,255,0.48))] bg-[length:220%_100%] bg-clip-text font-semibold text-transparent"
+                              animate={{ backgroundPosition: ["220% 0", "0% 0"] }}
+                              transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
+                            >
+                              Reading sources and drafting a focused answer...
+                            </motion.p>
+                          </div>
+                          <details className="group rounded-[18px] border border-white/10 bg-white/8 px-3 py-2 text-xs">
+                            <summary className="cursor-pointer list-none text-white/60 transition hover:text-white/85">
+                              Thinking…
+                            </summary>
+                            <p className="mt-2 whitespace-pre-wrap text-white/55">
+                              Checking the current chat, enabled sources, and visible workspace context before answering.
+                            </p>
+                          </details>
+                        </div>
+                      ) : (
+                        <>
+                          {reasoningText ? (
+                            <details className="mb-3 rounded-[18px] border border-white/10 bg-white/8 px-3 py-2 text-xs">
+                              <summary className="cursor-pointer list-none text-white/60 transition hover:text-white/85">
+                                Thought{thoughtSeconds ? ` for ${thoughtSeconds}s` : ""}
+                              </summary>
+                              <p className="mt-2 whitespace-pre-wrap text-white/55">{reasoningText}</p>
+                            </details>
+                          ) : null}
+                          <RichStudyText content={sanitizeDisplayText(message.content, "Unable to generate that reply.")} />
+                          <div className="mt-3 flex justify-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!navigator.clipboard) return;
+                                void navigator.clipboard.writeText(message.content).then(() => {
+                                  setCopyingStudioId(assistantActionId);
+                                  window.setTimeout(() => setCopyingStudioId(null), 1200);
+                                });
+                              }}
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/16 hover:text-white"
+                              aria-label="Copy assistant response"
+                              title="Copy response"
+                            >
+                              {copyingStudioId === assistantActionId ? <CheckCircle2 className="h-4 w-4 text-[var(--accent-mint)]" /> : <Copy className="h-4 w-4" />}
+                            </button>
+                            {previousUserMessage ? (
+                              <div className="group relative">
+                                <button
+                                  type="button"
+                                  onClick={() => void submitChatQuestion(previousUserMessage.content)}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/16 hover:text-white"
+                                  aria-label="Retry assistant response"
+                                  title="Retry response"
+                                >
+                                  <RefreshCw className="h-4 w-4" />
+                                </button>
+                                <div className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-72 rounded-[20px] border border-white/12 bg-[rgba(8,14,28,0.96)] p-3 opacity-0 shadow-2xl transition group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+                                  <button
+                                    type="button"
+                                    onClick={() => void submitChatQuestion(previousUserMessage.content)}
+                                    className="flex w-full items-center gap-2 rounded-[14px] bg-white/10 px-3 py-2 text-left text-xs font-semibold transition hover:bg-white/16"
+                                  >
+                                    <RefreshCw className="h-3.5 w-3.5" />
+                                    Retry
+                                  </button>
+                                  <form
+                                    className="mt-2 space-y-2"
+                                    onSubmit={(event) => {
+                                      event.preventDefault();
+                                      const form = event.currentTarget;
+                                      const formData = new FormData(form);
+                                      const instructions = String(formData.get("retryInstructions") || "").trim();
+                                      if (!instructions) return;
+                                      form.reset();
+                                      void submitChatQuestion(
+                                        `${previousUserMessage.content}\n\nRedo the previous answer. Additional instruction: ${instructions}`
+                                      );
+                                    }}
+                                  >
+                                    <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50" htmlFor={`${assistantActionId}-instructions`}>
+                                      Add instructions for this retry
+                                    </label>
+                                    <input
+                                      id={`${assistantActionId}-instructions`}
+                                      name="retryInstructions"
+                                      className="min-h-10 w-full rounded-[14px] border border-white/12 bg-white/10 px-3 py-2 text-xs outline-none transition focus:border-[var(--accent-sky)]"
+                                      placeholder="e.g. make it shorter or add examples"
+                                    />
+                                    <Button type="submit" size="sm" variant="secondary" className="w-full justify-center text-xs">
+                                      Retry with instructions
+                                    </Button>
+                                  </form>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </>
+                      )}
+                    </motion.div>
+                  );
+                })
               )}
               {chatLoading ? (
                 <div className="rounded-[24px] bg-white/16 px-4 py-3 text-sm">
