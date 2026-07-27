@@ -8,6 +8,7 @@ import {
   reserveChatUsage
 } from "@/lib/ai/limits";
 import { getSiteSettings } from "@/lib/site-settings";
+import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/server";
 import { geminiProvider } from "@/lib/ai/providers/gemini";
 import { loadVisionAttachments } from "@/lib/ai/image-attachments";
@@ -152,7 +153,7 @@ export async function POST(req: Request) {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
+          "HTTP-Referer": getSiteUrl(),
           "X-Title": "ScholarMind"
         },
         body: JSON.stringify({

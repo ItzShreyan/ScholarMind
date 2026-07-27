@@ -1,6 +1,7 @@
 import { AIProvider } from "@/lib/ai/types";
 import { buildPrompt } from "@/lib/ai/prompt";
 import { fetchWithTimeout, retries } from "@/lib/ai/providers/shared";
+import { getSiteUrl } from "@/lib/site-url";
 
 export const openRouterProvider: AIProvider = {
   name: "openrouter",
@@ -16,7 +17,7 @@ export const openRouterProvider: AIProvider = {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
-            "HTTP-Referer": process.env.APP_URL || "http://localhost:3000",
+            "HTTP-Referer": getSiteUrl(),
             "X-Title": "ScholarMind"
           },
           body: JSON.stringify({

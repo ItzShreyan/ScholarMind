@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
+import type { BeatSignal } from "@/hooks/useSpotifyBeatClock";
 
 /**
  * useBeatAnalyserNode
  *
  * Attaches a Web Audio AnalyserNode to an existing HTMLAudioElement and provides
- * a ref that is updated every animation frame with the current bass/mid intensity
- * (0–1). The ref never causes React re-renders; the consumer samples it inside its
- * own rAF loop.
+ * refs that are updated every animation frame with the current band energy and
+ * derived BeatSignal. The refs never cause React re-renders; consumers sample
+ * them inside their own rAF loops.
  *
  * IMPORTANT: this only works for audio playing through an HTMLAudioElement owned
  * by this page. It cannot capture Spotify's DRM-protected audio output.
@@ -19,14 +20,17 @@ import { useCallback, useEffect, useRef } from "react";
 export function useBeatAnalyserNode(
   audioRef: React.RefObject<HTMLAudioElement | null>,
   enabled: boolean
-): { intensityRef: React.RefObject<number> } {
+): { intensityRef: React.RefObject<number>; signalRef: React.RefObject<BeatSignal> } {
   const intensityRef = useRef<number>(0);
+  const signalRef = useRef<BeatSignal>({ intensity: 0, hue: 180, onBeat: false, bass: 0, mid: 0, treble: 0 });
   const ctxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   // Track the MediaElementSourceNode to avoid double-connecting the same element
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const rafRef = useRef<number>(0);
   const dataRef = useRef<Uint8Array | null>(null);
+  const previousBassRef = useRef(0);
+  const beatFlashEndRef = useRef(0);
 
   const stopLoop = useCallback(() => {
     if (rafRef.current) {
@@ -34,34 +38,64 @@ export function useBeatAnalyserNode(
       rafRef.current = 0;
     }
     intensityRef.current = 0;
+    signalRef.current = { ...signalRef.current, intensity: 0, onBeat: false, bass: 0, mid: 0, treble: 0 };
+  }, []);
+
+  const averageBand = useCallback((data: Uint8Array, ctx: AudioContext, analyser: AnalyserNode, minHz: number, maxHz: number) => {
+    const nyquist = ctx.sampleRate / 2;
+    const startHz = Math.max(0, Math.min(nyquist, minHz));
+    const endHz = Math.max(startHz, Math.min(nyquist, maxHz));
+    const startBin = Math.max(0, Math.floor((startHz / nyquist) * data.length));
+    const endBin = Math.min(data.length - 1, Math.ceil((endHz / nyquist) * data.length));
+    let sum = 0;
+    let count = 0;
+
+    for (let index = startBin; index <= endBin; index += 1) {
+      sum += data[index] ?? 0;
+      count += 1;
+    }
+
+    const average = count ? sum / count / 255 : 0;
+    const smoothingLift = 1 - analyser.smoothingTimeConstant * 0.22;
+    return Math.min(1, average ** 0.72 * smoothingLift * 1.2);
   }, []);
 
   const startLoop = useCallback(() => {
     const analyser = analyserRef.current;
     const data = dataRef.current;
-    if (!analyser || !data) return;
+    const ctx = ctxRef.current;
+    if (!analyser || !data || !ctx) return;
 
     const tick = () => {
       analyser.getByteFrequencyData(data as Uint8Array<ArrayBuffer>);
 
-      // Average bass/low-mid frequencies (roughly 60–300 Hz).
-      // The FFT size is 1024 at sample rate 44100 → each bin ≈ 43 Hz.
-      // Bins 1–7 cover ~43–300 Hz.
-      let sum = 0;
-      const lo = 1;
-      const hi = 7;
-      for (let i = lo; i <= hi; i++) {
-        sum += data[i] ?? 0;
+      const bass = averageBand(data, ctx, analyser, 20, 250);
+      const mid = averageBand(data, ctx, analyser, 250, 4000);
+      const treble = averageBand(data, ctx, analyser, 4000, ctx.sampleRate / 2);
+      const intensity = Math.min(1, bass * 0.56 + mid * 0.28 + treble * 0.22);
+      const now = performance.now();
+
+      if (bass > previousBassRef.current * 1.45 && bass > 0.09) {
+        beatFlashEndRef.current = now + 90;
       }
-      const avg = sum / (hi - lo + 1);
-      // Normalise 0→255 to 0→1, apply mild exponent for better dynamics
-      intensityRef.current = Math.min(1, (avg / 255) ** 0.7);
+      previousBassRef.current = bass;
+
+      const dominantHue = bass >= mid && bass >= treble
+        ? 18 + bass * 28
+        : mid >= treble
+          ? 145 + mid * 58
+          : 230 + treble * 74;
+      const hue = dominantHue % 360;
+      const onBeat = now < beatFlashEndRef.current;
+
+      intensityRef.current = intensity;
+      signalRef.current = { intensity, hue, onBeat, bass, mid, treble };
 
       rafRef.current = requestAnimationFrame(tick);
     };
 
     rafRef.current = requestAnimationFrame(tick);
-  }, []);
+  }, [averageBand]);
 
   const connect = useCallback(() => {
     const audio = audioRef.current;
@@ -87,8 +121,8 @@ export function useBeatAnalyserNode(
 
       if (!analyserRef.current) {
         const analyser = ctx.createAnalyser();
-        analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.75;
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.58;
         analyserRef.current = analyser;
         dataRef.current = new Uint8Array(analyser.frequencyBinCount);
 
@@ -112,6 +146,7 @@ export function useBeatAnalyserNode(
   const disconnect = useCallback(() => {
     stopLoop();
     intensityRef.current = 0;
+    signalRef.current = { ...signalRef.current, intensity: 0, onBeat: false, bass: 0, mid: 0, treble: 0 };
   }, [stopLoop]);
 
   useEffect(() => {
@@ -152,5 +187,5 @@ export function useBeatAnalyserNode(
     };
   }, [stopLoop]);
 
-  return { intensityRef };
+  return { intensityRef, signalRef };
 }

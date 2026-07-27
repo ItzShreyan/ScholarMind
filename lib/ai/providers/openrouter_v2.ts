@@ -9,6 +9,7 @@ import {
   getOpenRouterModel,
   type OpenRouterContent
 } from "@/lib/ai/providers/openrouter-content";
+import { getSiteUrl } from "@/lib/site-url";
 
 type OpenRouterMessage = {
   role: "user" | "assistant";
@@ -61,7 +62,7 @@ export async function describeWorkspaceScreenshot({
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
+          "HTTP-Referer": getSiteUrl(),
           "X-Title": "ScholarMind"
         },
         body: JSON.stringify({
