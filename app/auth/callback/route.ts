@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getAuthErrorMessage, logAuthFailure } from "@/lib/auth/error-messages";
 import { createClient } from "@/lib/supabase/server";
+import { getSafeRedirect } from "@/lib/security/mind-security";
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
   const nextParam = requestUrl.searchParams.get("next");
-  const next = nextParam?.startsWith("/") ? nextParam : "/dashboard";
+  const next = getSafeRedirect(nextParam, "/dashboard");
   const error = requestUrl.searchParams.get("error");
   const errorDescription = requestUrl.searchParams.get("error_description");
 
