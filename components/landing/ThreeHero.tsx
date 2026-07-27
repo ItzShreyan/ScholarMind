@@ -163,13 +163,18 @@ export function ThreeHero() {
     let pointerX = 0;
     let pointerY = 0;
     let scrollFactor = 0;
+    let isIntersecting = false;
+    let isLoopRunning = false;
 
+    // PERFORMANCE OPTIMIZATION: Short-circuit event computations if the 3D canvas is off-screen.
     const onMove = (event: MouseEvent) => {
+      if (!isIntersecting) return;
       pointerX = (event.clientX / window.innerWidth) * 2 - 1;
       pointerY = (event.clientY / window.innerHeight) * 2 - 1;
     };
 
     const onScroll = () => {
+      if (!isIntersecting) return;
       scrollFactor = Math.min(window.scrollY / 1600, 1);
     };
 
@@ -190,6 +195,7 @@ export function ThreeHero() {
 
     let rafId = 0;
     const animate = () => {
+      if (cancelled) return;
       const time = performance.now() * 0.001;
 
       aura.rotation.z += 0.0034;
@@ -216,11 +222,47 @@ export function ThreeHero() {
       rafId = requestAnimationFrame(animate);
     };
 
-    animate();
+    // PERFORMANCE OPTIMIZATION: Control WebGL animation loop starting/stopping dynamically based on visibility.
+    const startLoop = () => {
+      if (!isLoopRunning) {
+        isLoopRunning = true;
+        rafId = requestAnimationFrame(animate);
+      }
+    };
+
+    const stopLoop = () => {
+      if (isLoopRunning) {
+        isLoopRunning = false;
+        cancelAnimationFrame(rafId);
+      }
+    };
+
+    let observer: IntersectionObserver | null = null;
+    if (typeof window !== "undefined" && "IntersectionObserver" in window) {
+      observer = new IntersectionObserver(
+        ([entry]) => {
+          isIntersecting = entry.isIntersecting;
+          if (isIntersecting) {
+            startLoop();
+          } else {
+            stopLoop();
+          }
+        },
+        { threshold: 0.01 } // Trigger immediately when even a tiny part enters/leaves the viewport
+      );
+      observer.observe(mount);
+    } else {
+      // Fallback if IntersectionObserver is not supported, just run the loop.
+      isIntersecting = true;
+      startLoop();
+    }
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(rafId);
+      stopLoop();
+      if (observer) {
+        observer.disconnect();
+      }
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onResize);
