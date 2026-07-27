@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
+import { extractStructuredOutputWithReasoning } from "@/lib/ai/strip-reasoning";
 import { getOpenRouterKeys, isOpenRouterKeyLimitError } from "@/lib/ai/openrouter-keys";
 import {
   formatChatLimitMessage,
@@ -57,10 +58,10 @@ function buildSystemPrompt(context: string, screenContext: string) {
     .join("\n\n");
 }
 
-function makeSseResponse(text: string) {
+function makeSseResponse(text: string, reasoning = "") {
   const encoder = new TextEncoder();
   const payload = JSON.stringify({
-    choices: [{ delta: { content: text } }]
+    choices: [{ delta: { content: text, reasoning } }]
   });
   const body = new ReadableStream({
     start(controller) {
@@ -198,7 +199,8 @@ export async function POST(req: Request) {
             sessionId: input?.sessionId,
             imageCount: vision.attachments.length
           });
-          return makeSseResponse(result.text);
+          const normalizedResult = extractStructuredOutputWithReasoning(result.text);
+          return makeSseResponse(normalizedResult.text, normalizedResult.reasoning);
         }
         failures.push("gemini: empty response");
       } catch (error) {
@@ -224,7 +226,10 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: `All OpenRouter keys failed. ${failures.join(" | ")}` }, { status: 400 });
     }
 
-    const text = normalizeAIText(data.choices?.[0]?.message?.content);
+    const rawText = normalizeAIText(data.choices?.[0]?.message?.content);
+    const normalizedResult = extractStructuredOutputWithReasoning(rawText);
+    const text = normalizedResult.text;
+    const reasoning = normalizedResult.reasoning;
     if (!text) {
       await releaseChatUsage({
         supabase,
@@ -236,7 +241,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "OpenRouter returned an empty chat message." }, { status: 400 });
     }
 
-    return makeSseResponse(text);
+    return makeSseResponse(text, reasoning);
   } catch (error) {
     return NextResponse.json(
       { error: normalizeErrorMessage(error, "Unable to contact the AI tutor.") },
