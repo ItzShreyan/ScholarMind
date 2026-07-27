@@ -15,6 +15,86 @@ type OpenRouterMessage = {
   content: OpenRouterContent;
 };
 
+const openRouterVisionModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
+
+type WorkspaceScreenshotDescriptionInput = {
+  imageBase64: string;
+  mimeType?: string;
+  question: string;
+};
+
+export async function describeWorkspaceScreenshot({
+  imageBase64,
+  mimeType = "image/png",
+  question
+}: WorkspaceScreenshotDescriptionInput) {
+  const apiKeys = getOpenRouterKeys();
+  if (!apiKeys.length) throw new Error("Missing OPENROUTER_API_KEY");
+
+  const prompt = [
+    "Describe what's visible on screen relevant to answering the user's question.",
+    "Focus on the currently visible workspace content, open note/page/tool, diagrams, text, tables, controls, and any visible student work.",
+    "Be concise, factual, and do not answer the user's question directly; provide visual context for another tutor model.",
+    `User question: ${question}`
+  ].join("\n");
+
+  const messages: OpenRouterMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        {
+          type: "image_url",
+          image_url: { url: `data:${mimeType};base64,${imageBase64}` }
+        }
+      ]
+    }
+  ];
+
+  const failures: string[] = [];
+
+  for (const [index, apiKey] of apiKeys.entries()) {
+    const res = await fetchWithTimeout(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000",
+          "X-Title": "ScholarMind"
+        },
+        body: JSON.stringify({
+          model: openRouterVisionModel,
+          messages,
+          temperature: 0.15,
+          max_tokens: 700,
+          reasoning: { exclude: true },
+          include_reasoning: false,
+          stream: false
+        })
+      },
+      30000
+    );
+
+    if (!res.ok) {
+      const details = normalizeErrorMessage(await res.text(), `OpenRouter vision failed: ${res.status}`);
+      failures.push(`key ${index + 1}: ${details}`);
+      if (index < apiKeys.length - 1 && isOpenRouterKeyLimitError(res.status, details)) continue;
+      throw new Error(details);
+    }
+
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+    };
+    const description = normalizeAIText(data?.choices?.[0]?.message?.content);
+    if (!description) throw new Error("OpenRouter vision returned an empty screen description.");
+    return description;
+  }
+
+  throw new Error(`OpenRouter vision keys failed. ${failures.join(" | ")}`);
+}
+
 function buildMessages(input: AIRequest): OpenRouterMessage[] {
   const prompt = buildPrompt(input);
   const history = Array.isArray(input.history) ? input.history.filter((item) => normalizeAIText(item.content)) : [];

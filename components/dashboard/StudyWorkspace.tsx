@@ -1003,16 +1003,18 @@ export function StudyWorkspace({
   // On mobile the workspace and chat are mutually exclusive tabs. On desktop the
   // two panels are visible together, which is the only state where a selection
   // can be sent without moving the student away from the workspace.
-  const isStudioWorkspaceTabActive = tab === "chat";
   const isAIChatOpenAndVisible = isDesktopViewport && !workspaceFullscreen && !chatFullscreen;
+  const isMobileAIChatTabActive = !isDesktopViewport && tab === "chat";
   const canAskAIAboutSelection =
-    isStudioWorkspaceTabActive && selectedEditorText.length > 0 && isAIChatOpenAndVisible;
-  const askAIDisabledReason = !isStudioWorkspaceTabActive
-    ? "Open the Studio Workspace tab to ask about selected text."
-    : !selectedEditorText.length
-      ? "Select text in the Studio Workspace first."
-      : !isAIChatOpenAndVisible
+    selectedEditorText.length > 0 && (isAIChatOpenAndVisible || isMobileAIChatTabActive);
+  const askAIDisabledReason = !selectedEditorText.length
+    ? "Select text in the Studio Workspace first."
+    : isDesktopViewport
+      ? !isAIChatOpenAndVisible
         ? "Keep AI Chat open beside the Studio Workspace to ask about this selection."
+        : ""
+      : !isMobileAIChatTabActive
+        ? "Open the AI Chat tab to ask about selected text."
         : "";
 
   const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
@@ -1058,7 +1060,10 @@ export function StudyWorkspace({
         return;
       }
       const range = selection.getRangeAt(0);
-      if (!workspaceScrollRef.current?.contains(range.commonAncestorContainer)) {
+      const selectionNode = range.commonAncestorContainer;
+      const isSelectionInWorkspace = workspaceScrollRef.current?.contains(selectionNode);
+      const isSelectionInChat = chatViewportRef.current?.contains(selectionNode);
+      if (!isSelectionInWorkspace && !isSelectionInChat) {
         setAskAIPopup(null);
         setSelectedEditorText("");
         return;
@@ -2086,6 +2091,94 @@ export function StudyWorkspace({
       .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`)
       .join(" ");
   }, []);
+
+  const shouldDescribeVisibleWorkspace = useCallback((question: string) => {
+    const lower = question.toLowerCase();
+    return /\b(this|these|that|here|screen|visible|shown|looking at|look at|current (?:tab|page|note|file|workspace)|open (?:tab|page|note|file)|above|diagram|image|table|chart|graph)\b/.test(lower);
+  }, []);
+
+  const captureWorkspaceImage = useCallback(async () => {
+    const element = workspaceScrollRef.current;
+    if (!element || typeof window === "undefined") return "";
+
+    const rect = element.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    const maxDimension = 1400;
+    const scale = Math.min(1, maxDimension / Math.max(width, height));
+    const cloned = element.cloneNode(true) as HTMLElement;
+
+    cloned.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    cloned.style.width = `${width}px`;
+    cloned.style.height = `${height}px`;
+    cloned.style.overflow = "hidden";
+    cloned.style.transform = `translate(${-element.scrollLeft}px, ${-element.scrollTop}px)`;
+    cloned.style.transformOrigin = "top left";
+
+    const cssText = Array.from(document.styleSheets)
+      .map((sheet) => {
+        try {
+          return Array.from(sheet.cssRules).map((rule) => rule.cssText).join("\n");
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean)
+      .join("\n");
+
+    if (cssText) {
+      const style = document.createElement("style");
+      style.textContent = cssText;
+      cloned.prepend(style);
+    }
+
+    const serialized = new XMLSerializer().serializeToString(cloned);
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <foreignObject width="100%" height="100%">${serialized}</foreignObject>
+      </svg>`;
+    const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Unable to render workspace screenshot."));
+        img.src = svgUrl;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.floor(width * scale));
+      canvas.height = Math.max(1, Math.floor(height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) return "";
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/png", 0.82);
+    } catch (error) {
+      console.warn("workspace_screenshot_capture_failed", error);
+      return "";
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }, []);
+
+  const requestVisibleWorkspaceDescription = useCallback(async (question: string) => {
+    const imageDataUrl = await captureWorkspaceImage();
+    if (!imageDataUrl) return "";
+
+    const response = await fetch("/api/ai/screen-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: { question, imageDataUrl } })
+    });
+
+    if (!response.ok) {
+      const json = await readJsonResponse(response);
+      throw new Error(normalizeErrorMessage(json.error, `Screen context failed: ${response.status}`));
+    }
+
+    const json = await readJsonResponse(response);
+    return sanitizeDisplayText(json.description, "");
+  }, [captureWorkspaceImage]);
 
   const buildScreenContext = useCallback(() => {
     const openResultLabel = output
@@ -3680,6 +3773,25 @@ export function StudyWorkspace({
       maxCharacters: 6500,
       maxChunks: 8
     });
+    const baseScreenContext = buildScreenContext();
+    let visualScreenContext = "";
+
+    if (shouldDescribeVisibleWorkspace(question)) {
+      setStatusNote("Reading the visible workspace for context…");
+      try {
+        visualScreenContext = await requestVisibleWorkspaceDescription(question);
+      } catch (error) {
+        console.warn("workspace_screen_context_failed", error);
+      }
+    }
+
+    const screenContext = [
+      baseScreenContext,
+      visualScreenContext ? `Visual description of the visible workspace:
+${visualScreenContext}` : ""
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const enrichedPrompt = historySnapshot.length
       ? [
           currentSession?.title ? `Current studio: ${currentSession.title}` : "",
@@ -3730,7 +3842,7 @@ export function StudyWorkspace({
             message: enrichedPrompt,
             history: providerHistory,
             context: chatContext,
-            screenContext: buildScreenContext(),
+            screenContext,
             mode: "chat",
             sessionId: activeSessionId ?? undefined
           }
@@ -3800,7 +3912,7 @@ export function StudyWorkspace({
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, runAI, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -4310,7 +4422,7 @@ export function StudyWorkspace({
               loading="lazy"
               referrerPolicy="strict-origin-when-cross-origin"
               className="h-[min(72vh,900px)] w-full rounded-[24px] border border-white/10 bg-white"
-              sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts"
+              sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
               allow="autoplay; fullscreen; picture-in-picture"
             />
           </div>
