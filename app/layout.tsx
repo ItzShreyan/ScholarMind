@@ -6,6 +6,7 @@ import { TelemetryTracker } from "@/components/providers/TelemetryTracker";
 import { GlobalSecurityBadge } from "@/components/common/GlobalSecurityBadge";
 import { MaintenanceBanner } from "@/components/common/MaintenanceBanner";
 import { getSiteUrl } from "@/lib/site-url";
+import { DashboardMusicLayout } from "@/components/dashboard/DashboardMusicLayout";
 
 const siteUrl = getSiteUrl();
 
@@ -79,7 +80,9 @@ export default function RootLayout({
         </Suspense>
         <AuthProvider>
           <TelemetryTracker />
-          {children}
+          <DashboardMusicLayout>
+            {children}
+          </DashboardMusicLayout>
           <GlobalSecurityBadge />
         </AuthProvider>
       </body>

@@ -259,7 +259,107 @@ export async function GET(req: Request) {
       clearTimeout(timeoutId);
     }
 
+    const searchParams = new URL(req.url).searchParams;
+    const isRaw = searchParams.has("raw") || searchParams.get("raw") === "true";
+
     const contentType = page.response.headers.get("content-type") || "";
+
+    if (contentType.includes("application/pdf")) {
+      return new Response(page.response.body, {
+        status: page.response.status,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": "inline",
+          "Content-Security-Policy": browserDocumentCsp(),
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Robots-Tag": "noindex",
+          "Cache-Control": "no-store"
+        }
+      });
+    }
+
+    if (contentType.includes("image/")) {
+      if (isRaw) {
+        return new Response(page.response.body, {
+          status: page.response.status,
+          headers: {
+            "Content-Type": contentType,
+            "Content-Security-Policy": browserDocumentCsp(),
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "SAMEORIGIN",
+            "X-Robots-Tag": "noindex",
+            "Cache-Control": "no-store"
+          }
+        });
+      } else {
+        const proxiedImageUrl = `/api/browse-proxy?url=${encodeURIComponent(targetUrl.href)}&raw=true`;
+        const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(targetUrl.hostname)}</title>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #0f172a;
+    }
+    img {
+      max-width: 95%;
+      max-height: 95%;
+      object-fit: contain;
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <img src="${escapeHtml(proxiedImageUrl)}" alt="${escapeHtml(targetUrl.hostname)}" />
+</body>
+</html>`;
+        return makeHtmlResponse(html);
+      }
+    }
+
+    if (contentType.includes("text/plain")) {
+      const text = await page.response.text();
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(targetUrl.hostname)}</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 1.5rem;
+      background-color: #0f172a;
+      color: #cbd5e1;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <pre>${escapeHtml(text)}</pre>
+</body>
+</html>`;
+      return makeHtmlResponse(html);
+    }
+
     if (!contentType.includes("text/html") && !contentType.includes("application/xhtml")) {
       return makeHtmlResponse(`<h2>${escapeHtml(targetUrl.hostname)}</h2><p>This link is not an HTML page. <a href="${escapeHtml(targetUrl.href)}" target="_blank" rel="noreferrer">Open it in a new tab</a>.</p>`);
     }
