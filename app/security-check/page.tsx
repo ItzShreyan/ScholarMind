@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { Container } from "@/components/ui/Container";
 import { Button } from "@/components/ui/Button";
+import { getSafeRedirect } from "@/lib/security/mind-security";
 
 export default async function SecurityCheckPage({
   searchParams
@@ -9,7 +10,7 @@ export default async function SecurityCheckPage({
   searchParams: Promise<{ next?: string }>;
 }) {
   const params = await searchParams;
-  const next = typeof params.next === "string" && params.next.startsWith("/") ? params.next : "/";
+  const next = getSafeRedirect(params.next, "/");
 
   return (
     <main className="noise min-h-screen px-4 py-10">

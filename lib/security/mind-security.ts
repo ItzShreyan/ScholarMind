@@ -140,3 +140,30 @@ export function securityHeaders() {
     "Permissions-Policy": "camera=(), geolocation=(), payment=(), usb=()"
   };
 }
+
+/**
+ * Safely sanitizes a redirection URL to prevent Open Redirect vulnerabilities.
+ * It enforces that the URL starts with a single '/' and resolves to a local path
+ * when parsed against a dummy base origin, avoiding multi-slash (e.g. '///example.com')
+ * or slash-backslash (e.g. '/\example.com') bypasses.
+ *
+ * @param url The untrusted redirect destination.
+ * @param fallback The default fallback path (defaults to "/dashboard").
+ */
+export function getSafeRedirect(url: string | null | undefined, fallback = "/dashboard"): string {
+  if (!url || typeof url !== "string") return fallback;
+  if (!url.startsWith("/")) return fallback;
+
+  try {
+    // Parse the URL against a mock base origin.
+    const parsed = new URL(url, "http://localhost-base.local");
+    // If the parsed URL resolves to a different origin, it is an external redirect.
+    if (parsed.origin !== "http://localhost-base.local") {
+      return fallback;
+    }
+    // Return path + search + hash ensuring strict relativity.
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch {
+    return fallback;
+  }
+}
