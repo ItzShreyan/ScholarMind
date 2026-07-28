@@ -904,7 +904,13 @@ export function StudyWorkspace({
   const [chatHistoryReadySession, setChatHistoryReadySession] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [tab, setTab] = useState<"files" | "chat" | "tools">("chat");
+  const [chatAtBottom, setChatAtBottom] = useState(true);
+  const chatAtBottomRef = useRef(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
+  const autoSwitchTab = useCallback((next: "files" | "chat" | "tools") => {
+    if (!isDesktopViewport) return;
+    setTab(next);
+  }, [isDesktopViewport]);
   const [workspaceTab, setWorkspaceTab] = useState("home");
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
   const [browseReloadKeys, setBrowseReloadKeys] = useState<Record<string, number>>({});
@@ -1779,9 +1785,9 @@ export function StudyWorkspace({
       nextTab.kind === "canvas-browse" ||
       nextTab.kind === "canvas-source"
     ) {
-      setTab("tools");
+      autoSwitchTab("tools");
     } else {
-      setTab("chat");
+      autoSwitchTab("chat");
     }
   }, []);
 
@@ -1867,7 +1873,7 @@ export function StudyWorkspace({
     setMessages(thread.messages);
     setChat("");
     setShowChatThreads(false);
-    setTab("tools");
+    autoSwitchTab("tools");
     setStatusNote(`Restored chat: ${thread.title}`);
   }, [snapshotCurrentChat]);
 
@@ -1962,7 +1968,7 @@ export function StudyWorkspace({
             closable: true
           });
           setWorkspaceTab(`canvas-source-${file.id}`);
-          setTab("tools");
+          autoSwitchTab("tools");
           return;
         } catch (error) {
           lastError = error;
@@ -2457,10 +2463,29 @@ export function StudyWorkspace({
     const viewport = chatViewportRef.current;
     if (!viewport) return;
 
-    viewport.scrollTo({
-      top: viewport.scrollHeight,
-      behavior: messages.length > 1 ? "smooth" : "auto"
-    });
+    const handleScroll = () => {
+      const isNearBottom =
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 80;
+      setChatAtBottom(isNearBottom);
+      chatAtBottomRef.current = isNearBottom;
+    };
+
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+
+    return () => viewport.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const viewport = chatViewportRef.current;
+    if (!viewport) return;
+
+    if (chatAtBottomRef.current) {
+      viewport.scrollTo({
+        top: viewport.scrollHeight,
+        behavior: messages.length > 1 ? "smooth" : "auto"
+      });
+    }
   }, [chatLoading, messages]);
 
   useEffect(() => {
@@ -2729,7 +2754,7 @@ export function StudyWorkspace({
     setToolDraft(createToolDraft(result.action));
     setOutput(result.output);
     setToolCardIndex(0);
-    setTab("tools");
+    autoSwitchTab("tools");
     upsertWorkspaceTab({
       id: `saved-output-${result.id}`,
       label: result.label,
@@ -2821,7 +2846,7 @@ export function StudyWorkspace({
 
   const openStudio = (sessionId: string) => {
     setActiveSessionId(sessionId);
-    setTab("files");
+    autoSwitchTab("files");
     setShowStudioBrowser(false);
     setStatusNote("");
   };
@@ -2849,7 +2874,7 @@ export function StudyWorkspace({
       );
       setFilesBySession((current) => ({ ...current, [nextSession.id]: current[nextSession.id] ?? [] }));
       setActiveSessionId(nextSession.id);
-      setTab("files");
+      autoSwitchTab("files");
       setStatusNote("Studio ready.");
       return nextSession.id;
     } catch (error) {
@@ -3034,7 +3059,7 @@ export function StudyWorkspace({
         setStatusNote(message);
         setSourceModalError(message);
       }
-      setTab("tools");
+      autoSwitchTab("tools");
     } catch (error) {
       const message = formatSupabaseSetupError((error as Error).message || "Upload failed.");
       setStatusNote(message);
@@ -3223,7 +3248,7 @@ export function StudyWorkspace({
       openBrowseInWorkspace(source.url, source.title);
       setStatusNote(`${source.title} was added to this studio and opened in the workspace browser.`);
       setSourceModalOpen(false);
-      setTab("tools");
+      autoSwitchTab("tools");
     } catch (error) {
       setSourceModalError((error as Error).message || "Unable to import this web source.");
     } finally {
@@ -3257,7 +3282,7 @@ export function StudyWorkspace({
       copiedAt: Date.now()
     });
     setShowStudioBrowser(false);
-    setTab("files");
+    autoSwitchTab("files");
     setStatusNote(`Copied ${sourceStudioTitle} into your source clipboard. Open a studio and paste it into Files when you're ready.`);
   };
 
@@ -3292,7 +3317,7 @@ export function StudyWorkspace({
         ...current,
         [targetSessionId]: json.files ?? current[targetSessionId] ?? []
       }));
-      setTab("files");
+      autoSwitchTab("files");
       setStatusNote(
         json.message ||
           `Copied ${typeof json.copiedCount === "number" ? json.copiedCount : 0} source(s) into this studio.`
@@ -3447,7 +3472,7 @@ export function StudyWorkspace({
     setActiveAction(action);
     setLoading(true);
     setOutput("");
-    setTab("tools");
+    autoSwitchTab("tools");
     setStatusNote("");
 
     const context = buildContextForPrompt(prompt, action);
@@ -3502,7 +3527,7 @@ export function StudyWorkspace({
         closable: true
       });
       setWorkspaceTab(autoTabId);
-      setTab("tools");
+      autoSwitchTab("tools");
       updateMetrics((current) => ({
 
         ...current,
@@ -3556,7 +3581,7 @@ export function StudyWorkspace({
       }
 
       setWorkspaceTab(targetTab.id);
-      setTab("tools");
+      autoSwitchTab("tools");
       setCanvasTool(assist);
       const selected = typeof window !== "undefined" ? window.getSelection()?.toString().trim() || "" : "";
       const assistText = selected || clipText(question.replace(/^(please|can you|could you)\s+/i, "").trim(), 180);
@@ -3582,20 +3607,20 @@ export function StudyWorkspace({
       if (!/\b(open|show|switch to|go to|bring up|display|pull up)\b/.test(lower)) return false;
 
       if (/\b(files?|sources?|uploads?|notes?)\b/.test(lower) && !/\b(ai notes|textbook)\b/.test(lower)) {
-        setTab("files");
+        autoSwitchTab("files");
         setWorkspaceTab("sources");
         setStatusNote("Opened your studio sources.");
         return true;
       }
 
       if (/\b(chat|tutor|messages?)\b/.test(lower)) {
-        setTab("chat");
+        autoSwitchTab("chat");
         setStatusNote("Opened AI chat.");
         return true;
       }
 
       if (/\b(study tools?|tools?)\b/.test(lower)) {
-        setTab("tools");
+        autoSwitchTab("tools");
         setStatusNote("Opened study tools.");
         return true;
       }
@@ -3605,7 +3630,7 @@ export function StudyWorkspace({
       );
       if (toolMatch) {
         setActiveAction(toolMatch.key);
-        setTab("tools");
+        autoSwitchTab("tools");
         const saved = currentToolHistory.find((item) => item.action === toolMatch.key);
         if (saved) openSavedToolResult(saved);
         setStatusNote(`Opened ${toolMatch.label}.`);
@@ -3633,7 +3658,7 @@ export function StudyWorkspace({
       const matchedTab = workspaceTabs.find((tab) => lower.includes(tab.label.toLowerCase()));
       if (matchedTab) {
         setWorkspaceTab(matchedTab.id);
-        setTab("tools");
+        autoSwitchTab("tools");
         setStatusNote(`Switched to ${matchedTab.label}.`);
         return true;
       }
@@ -3667,7 +3692,7 @@ export function StudyWorkspace({
           content: `Timer started for ${Math.max(1, Math.min(240, nextMinutes))} minute(s). I’ll ping softly for breaks and when the full session is done.`
         }
       ]);
-      setTab("tools");
+      autoSwitchTab("tools");
       return true;
     }
 
@@ -3700,7 +3725,7 @@ export function StudyWorkspace({
         if (action === "pause") setMusicPlaying(false);
         if (action === "resume") setMusicPlaying(true);
 
-        setTab("tools");
+        autoSwitchTab("tools");
         return true;
       } catch (error) {
         const message = sanitizeDisplayText(error, "Unable to control playback.");
@@ -3728,7 +3753,7 @@ export function StudyWorkspace({
             "I added that annotation on your open note. I can also see your canvas marks, open tabs, and browsing context while we chat."
         }
       ]);
-      setTab("tools");
+      autoSwitchTab("tools");
       return true;
     }
 
@@ -3736,7 +3761,7 @@ export function StudyWorkspace({
       const message = "Upload sources or files to continue. AI answers stay locked to uploaded material in this workspace.";
       setStatusNote(message);
       openSourceModal(message);
-      setTab("chat");
+      autoSwitchTab("chat");
       return false;
     }
 
@@ -3773,7 +3798,7 @@ export function StudyWorkspace({
       });
 
       setChatLoading(false);
-      setTab("tools");
+      autoSwitchTab("tools");
       return Boolean(generated);
     }
 
@@ -3838,7 +3863,7 @@ ${visualScreenContext}` : ""
     setMessages((current) => [...current, { role: "user", content: question }]);
     setChatLoading(true);
     setScreenAwarePulse(true);
-    setTab("chat");
+    autoSwitchTab("chat");
     setStatusNote("");
 
     try {
@@ -4006,7 +4031,7 @@ ${visualScreenContext}` : ""
 
         setMessages([]);
         setChat("");
-        setTab("chat");
+        autoSwitchTab("chat");
 
         const opened = await submitChatQuestion(
           [
@@ -4082,7 +4107,7 @@ ${visualScreenContext}` : ""
     setActiveAction(action);
     setToolDraft(createToolDraft(action));
     setOutput("");
-    setTab("tools");
+    autoSwitchTab("tools");
 
     if (toolsLocked) {
       const message = "Upload at least one file or add a web source to unlock summaries, quizzes, flashcards, exam generation, and the other study tools.";
@@ -4643,7 +4668,7 @@ ${visualScreenContext}` : ""
                                   const quote = `> **Question:** ${row.question}\n> **My answer:** ${row.selected}\n> **Correct answer:** ${row.correct}\n\nExplain why my answer is wrong and how to get to the correct answer.`;
                                   return current ? `${quote}\n\n${current}` : quote;
                                 });
-                                setTab("chat");
+                                autoSwitchTab("chat");
                               }}
                               variant="ghost"
                               size="sm"
@@ -6208,9 +6233,10 @@ ${visualScreenContext}` : ""
               </motion.div>
             ) : null}
 
+          <div className="relative mt-4">
             <div
               ref={chatViewportRef}
-              className={`hide-scrollbar mt-4 space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-3 sm:p-4 ${
+              className={`hide-scrollbar space-y-3 overflow-auto rounded-[26px] bg-[rgba(12,18,34,0.12)] p-3 sm:p-4 ${
                 chatFullscreen || workspaceExpanded
                   ? "min-h-[calc(100svh-10rem)] max-h-[calc(100svh-10rem)] md:min-h-[calc(100vh-12rem)] md:max-h-[calc(100vh-12rem)]"
                   : "min-h-[42svh] max-h-[56svh] md:min-h-[34rem] md:max-h-[calc(100vh-18rem)]"
@@ -6290,14 +6316,6 @@ ${visualScreenContext}` : ""
                               Reading sources and drafting a focused answer...
                             </motion.p>
                           </div>
-                          <details className="group rounded-[18px] border border-white/10 bg-white/8 px-3 py-2 text-xs">
-                            <summary className="cursor-pointer list-none text-white/60 transition hover:text-white/85">
-                              Thinking…
-                            </summary>
-                            <p className="mt-2 whitespace-pre-wrap text-white/55">
-                              Checking the current chat, enabled sources, and visible workspace context before answering.
-                            </p>
-                          </details>
                         </div>
                       ) : (
                         <>
@@ -6392,8 +6410,27 @@ ${visualScreenContext}` : ""
                 </div>
               ) : null}
             </div>
+            {!chatAtBottom && (
+              <button
+                type="button"
+                onClick={() => {
+                  const viewport = chatViewportRef.current;
+                  if (viewport) {
+                    viewport.scrollTo({
+                      top: viewport.scrollHeight,
+                      behavior: "smooth"
+                    });
+                  }
+                }}
+                className="absolute bottom-4 right-4 z-10 flex h-9 w-9 items-center justify-center rounded-full bg-[rgba(15,23,42,0.85)] text-white shadow-lg backdrop-blur-sm transition hover:bg-[rgba(15,23,42,0.95)] border border-white/10"
+                aria-label="Scroll to bottom"
+              >
+                <ChevronDown className="h-5 w-5" />
+              </button>
+            )}
+          </div>
 
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <input
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}

@@ -46,7 +46,7 @@ interface DynamicIslandMusicPlayerProps {
 export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerRef }: DynamicIslandMusicPlayerProps) {
   const spotifyContext = useSpotifyPlaybackContext();
   const { setPlayback } = useMusicPlayback();
-  const [isMinimized, setIsMinimized] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(true);
   const [systemAudio, setSystemAudio] = useState<SystemAudioTrack | null>(null);
   const [externalAudioActive, setExternalAudioActive] = useState(false);
   const [unlinking, setUnlinking] = useState(false);
@@ -885,7 +885,7 @@ const progressPct = uploadedTrackDuration > 0
     : null;
 
   // ── Visibility rule: render nothing when idle and no media is active ──
-  const shouldShowPlayer = Boolean(isPlaying);
+  const shouldShowPlayer = Boolean(isPlaying) || Boolean(currentTrack) || Boolean(hasSpotify) || Boolean(systemAudio);
 
   if (!shouldShowPlayer) return null;
 
