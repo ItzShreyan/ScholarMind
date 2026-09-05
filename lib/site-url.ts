@@ -15,10 +15,10 @@ function normalizeUrl(value?: string | null) {
 
 export function getSiteUrl() {
   return (
-    normalizeUrl(process.env.APP_URL) ||
     normalizeUrl(process.env.NEXT_PUBLIC_SITE_URL) ||
     normalizeUrl(process.env.URL) ||
     normalizeUrl(process.env.DEPLOY_PRIME_URL) ||
+    normalizeUrl(process.env.APP_URL !== 'http://localhost:3000' ? process.env.APP_URL : undefined) ||
     "https://scholarmindai.netlify.app"
   );
 }

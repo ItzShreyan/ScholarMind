@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { mindSecurityCookie, securityHeaders, getSafeRedirect } from "@/lib/security/mind-security";
+import { mindSecurityCookie, securityHeaders, getSafeRedirect, signChallengeCookie } from "@/lib/security/mind-security";
 
 export async function POST(req: Request) {
   const form = await req.formData();
@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   }
 
   const response = NextResponse.redirect(new URL(next, req.url));
-  response.cookies.set(mindSecurityCookie, "1", {
+  response.cookies.set(mindSecurityCookie, await signChallengeCookie(), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -25,3 +25,4 @@ export async function POST(req: Request) {
   Object.entries(securityHeaders()).forEach(([key, value]) => response.headers.set(key, value));
   return response;
 }
+

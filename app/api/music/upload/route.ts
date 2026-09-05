@@ -89,7 +89,14 @@ export async function POST(req: Request) {
         }
 
         const arrayBuffer = await file.arrayBuffer();
-        const storagePath = `${user.id}/${Date.now()}-${file.name}`;
+        const safeName = file.name
+          .normalize("NFKC")
+          .replace(/[\\/?%*:|"<>\u0000-\u001f]/g, "-")
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/^\.+/, "")
+          .slice(0, 180) || "upload";
+        const storagePath = `${user.id}/${Date.now()}-${safeName}`;
 
         const { error: storageError } = await supabase.storage
           .from("user-audio")

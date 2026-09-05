@@ -317,9 +317,22 @@ function PresentationRenderer({ text, fileName }: { text: string; fileName?: str
 
 /* ─── Word document renderer: styled HTML from mammoth ─── */
 
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/<object[\s\S]*?<\/object>/gi, '')
+    .replace(/<embed[\s\S]*?\/>/gi, '')
+    .replace(/<form[\s\S]*?<\/form>/gi, '')
+    .replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '')
+    .replace(/\son\w+\s*=\s*\S+/gi, '')
+    .replace(/javascript\s*:/gi, 'blocked:');
+}
+
 function DocxRenderer({ html, text, fileName }: { html: string; text: string; fileName?: string }) {
   // If we have mammoth-generated HTML, render it with app-typography styling
   if (html) {
+    const cleanHtml = sanitizeHtml(html);
     return (
       <div className="flex flex-col rounded-[24px] border border-white/10 bg-black/10 overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/8 px-4 py-3">
@@ -331,7 +344,7 @@ function DocxRenderer({ html, text, fileName }: { html: string; text: string; fi
         <div className="flex-1 overflow-auto bg-[rgba(0,0,0,0.12)] p-4 min-h-[60vh] prose prose-invert prose-sm max-w-none">
           <div
             className="docx-preview"
-            dangerouslySetInnerHTML={{ __html: html }}
+            dangerouslySetInnerHTML={{ __html: cleanHtml }}
             style={{
               fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
               lineHeight: 1.7,

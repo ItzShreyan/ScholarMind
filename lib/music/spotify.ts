@@ -78,7 +78,7 @@ export function getSpotifyClientCredentials() {
 export function encryptSpotifyTokens(tokens: SpotifyTokenBundle) {
   const key = getEncryptionKey();
   if (!key) {
-    return Buffer.from(JSON.stringify(tokens)).toString("base64url");
+    throw new Error("SPOTIFY_TOKEN_ENCRYPTION_KEY is required for secure token storage.");
   }
 
   const iv = randomBytes(12);

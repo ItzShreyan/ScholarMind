@@ -16,6 +16,8 @@ const schema = z.object({
   trustLabel: z.string().optional()
 });
 
+import { assertSafeUrl } from "@/lib/security/ssrf-guard";
+
 export async function POST(req: Request) {
   try {
     const supabase = await createClient();
@@ -40,6 +42,7 @@ export async function POST(req: Request) {
       throw new Error("Open or create a studio before importing web sources.");
     }
 
+    await assertSafeUrl(body.url);
     const extractedText = await extractWebSourceText(body);
     if (
       extractedText.length < 120 ||

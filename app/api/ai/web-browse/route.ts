@@ -4,7 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
+import { assertSafeUrl } from '@/lib/security/ssrf-guard';
+
 async function fetchWithTimeout(url: string, timeoutMs = 15000) {
+  await assertSafeUrl(url);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -14,7 +17,7 @@ async function fetchWithTimeout(url: string, timeoutMs = 15000) {
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 ScholarMind/1.0",
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       },
-      redirect: "follow",
+      redirect: "manual",
       signal: controller.signal
     });
     return response;

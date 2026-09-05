@@ -99,6 +99,7 @@ async function fetchPage(initialUrl: URL, signal: AbortSignal): Promise<{ respon
 
   for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
     await assertSafeTarget(currentUrl);
+    await assertSafeUrl(currentUrl.href);
     let response: Response | null = null;
 
     for (const headers of BROWSER_HEADERS) {
@@ -232,7 +233,17 @@ function prepareDocument(html: string, pageUrl: string) {
   return `<!doctype html><html><head>${injectedHead}</head><body>${document}</body></html>`;
 }
 
+import { assertSafeUrl } from "@/lib/security/ssrf-guard";
+import { createClient } from "@/lib/supabase/server";
+
 export async function GET(req: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+
   const url = new URL(req.url).searchParams.get("url");
   if (!url) {
     return makeHtmlResponse("<h2>No URL provided</h2><p>Pass a ?url= parameter to browse.</p>", 400);

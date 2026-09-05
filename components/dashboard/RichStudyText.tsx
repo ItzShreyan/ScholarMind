@@ -54,7 +54,7 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
         mermaid.initialize({
           startOnLoad: false,
           theme: document.documentElement.classList.contains("light") ? "default" : "dark",
-          securityLevel: "loose",
+          securityLevel: "strict",
           suppressErrorRendering: true
         });
 

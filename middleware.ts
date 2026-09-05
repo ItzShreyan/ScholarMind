@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type SetAllCookies } from "@supabase/ssr";
 import arcjet, { detectBot, shield, slidingWindow } from "@arcjet/next";
-import { assessRequest, mindSecurityCookie, securityHeaders } from "@/lib/security/mind-security";
+import { assessRequest, mindSecurityCookie, securityHeaders, verifyChallengeCookie } from "@/lib/security/mind-security";
 
 const arcjetSecurity = process.env.ARCJET_KEY
   ? arcjet({
@@ -34,7 +34,7 @@ export async function middleware(req: NextRequest) {
 
   if (!isStaticAsset && !isSecurityCheck) {
     const localDecision = assessRequest(req);
-    const verified = req.cookies.get(mindSecurityCookie)?.value === "1";
+    const verified = await verifyChallengeCookie(req.cookies.get(mindSecurityCookie)?.value);
 
     if (!localDecision.allowed && localDecision.challenge && !verified) {
       if (pathname.startsWith("/api/")) {

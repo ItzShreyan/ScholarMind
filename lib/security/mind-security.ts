@@ -6,6 +6,62 @@ type SecurityDecision = {
   score: number;
 };
 
+function getChallengeSecret() {
+  return process.env.MSE_CHALLENGE_SECRET || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "scholarmind-fallback-secret";
+}
+
+async function computeHmacHex(secret: string, data: string): Promise<string> {
+  // Prefer Web Crypto (Edge/runtime-safe) when available.
+  const maybeGlobal = globalThis as unknown as { crypto?: { subtle: SubtleCrypto } };
+  if (maybeGlobal.crypto?.subtle) {
+    const subtle = maybeGlobal.crypto.subtle as SubtleCrypto;
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const key = await subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = await subtle.sign("HMAC", key, encoder.encode(data));
+    const arr = new Uint8Array(signature as ArrayBuffer);
+    return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  // Fallback: dynamically import Node's crypto when Web Crypto isn't available.
+  const modName = ["c", "r", "y", "p", "t", "o"].join("");
+  const { createHmac } = await import(modName);
+  return createHmac("sha256", secret).update(data).digest("hex");
+}
+
+/**
+ * Creates an HMAC-signed challenge cookie value.
+ * The value is `timestamp.signature` so it cannot be forged without the secret.
+ */
+export async function signChallengeCookie(): Promise<string> {
+  const timestamp = Date.now().toString(36);
+  const mac = (await computeHmacHex(getChallengeSecret(), timestamp)).slice(0, 16);
+  return `${timestamp}.${mac}`;
+}
+
+/**
+ * Validates an HMAC-signed challenge cookie value.
+ * Returns true only when the signature is valid and not expired (12 hours).
+ */
+export async function verifyChallengeCookie(value: string | undefined | null): Promise<boolean> {
+  if (!value || typeof value !== "string") return false;
+  const dotIndex = value.indexOf(".");
+  if (dotIndex < 1) return false;
+
+  const timestamp = value.slice(0, dotIndex);
+  const signature = value.slice(dotIndex + 1);
+
+  const expected = (await computeHmacHex(getChallengeSecret(), timestamp)).slice(0, 16);
+
+  if (signature !== expected) return false;
+
+  const created = parseInt(timestamp, 36);
+  if (Number.isNaN(created)) return false;
+
+  const maxAge = 12 * 60 * 60 * 1000; // 12 hours
+  return Date.now() - created < maxAge;
+}
+
 const requestLog = new Map<string, number[]>();
 
 const suspiciousPatterns = [
@@ -134,7 +190,6 @@ export function assessRequest(req: Request): SecurityDecision {
 
 export function securityHeaders() {
   return {
-    "X-Mind-Security": "Mind Security Engine",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), geolocation=(), payment=(), usb=()"

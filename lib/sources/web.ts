@@ -593,7 +593,7 @@ async function fetchReadablePreview(url: string) {
         Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
         "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
       },
-      redirect: "follow"
+      redirect: "manual"
     }, 10000);
 
     if (!response.ok) return "";
@@ -758,7 +758,7 @@ async function fetchRemoteBinary(url: string) {
       Accept: "application/pdf,image/*,application/octet-stream;q=0.9,*/*;q=0.8",
       "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
     },
-    redirect: "follow"
+    redirect: "manual"
   });
 
   if (!response.ok) {
@@ -777,7 +777,7 @@ async function extractReadableArticleText(url: string) {
       Accept: "text/html,application/json,text/plain;q=0.9,*/*;q=0.8",
       "User-Agent": "ScholarMind/1.0 (+https://scholarmind.app)"
     },
-    redirect: "follow"
+    redirect: "manual"
   });
 
   if (!response.ok) {

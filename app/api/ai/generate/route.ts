@@ -50,8 +50,10 @@ export async function POST(req: Request) {
     } = await supabase.auth.getUser();
     const siteSettings = await getSiteSettings(supabase);
 
-    const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-    const actorKey = user?.id || forwardedFor || "anonymous";
+    if (!user) {
+      return NextResponse.json({ error: "Sign in to use study tools." }, { status: 401 });
+    }
+    const actorKey = user.id;
     const practiceExam = body.action === "exam" && body.examMode === "practice";
     const examScope = practiceExam ? "exam_practice" : "exam";
     const examLimit = practiceExam ? siteSettings.examPracticeWeeklyLimit : siteSettings.examWeeklyLimit;

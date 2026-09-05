@@ -19,11 +19,7 @@ import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
 import { Logo } from "@/components/ui/Logo";
-import {
-  defaultExamGeneratorWeeklyLimit,
-  defaultFreePreviewDailyLimit,
-  defaultFreePreviewHourlyLimit
-} from "@/lib/ai/preview";
+
 
 const studyFeatures = [
   {
@@ -227,7 +223,7 @@ export default function LandingPage() {
                 Built to protect student accounts, study files, and shared AI usage.
               </h2>
               <p className="muted text-sm md:text-base">
-                ScholarMind uses the Mind Security Engine with Supabase-backed account rules and optional Arcjet protection to reduce bot traffic, suspicious requests, upload abuse, and attempts to bypass protected routes.
+                ScholarMind uses server-side account rules, rate limiting, and upload verification to protect student data and prevent abuse.
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
@@ -263,10 +259,10 @@ export default function LandingPage() {
               <div className="rounded-[20px] bg-white/20 px-4 py-4 sm:rounded-[24px]">
                 <p className="font-semibold">AI preview cap</p>
                 <p className="muted mt-2">
-                  Up to {defaultFreePreviewHourlyLimit} AI runs per hour and {defaultFreePreviewDailyLimit} per day to keep the shared API budget healthy while features are free.
+                  Sensible per-user AI usage limits to keep the shared API budget healthy while features are free.
                 </p>
                 <p className="muted mt-2">
-                  Full mock exam generation is separately capped at {defaultExamGeneratorWeeklyLimit} per week because it is a heavier AI run.
+                  Full mock exam generation is separately capped because it is a heavier AI run.
                 </p>
               </div>
               <div className="rounded-[20px] bg-white/20 px-4 py-4 sm:rounded-[24px]">
