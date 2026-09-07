@@ -257,7 +257,26 @@ export async function POST(req: Request) {
     // Also check remaining capacity before max stored limit is hit
     const remainingCapacity = existingCount !== null ? MAX_STUDY_FILES_PER_USER - existingCount : filesToProcess.length;
     if (filesToProcess.length > remainingCapacity) {
+      if (remainingCapacity <= 0) {
+        return NextResponse.json(
+          {
+            error: `Storage limit reached (${MAX_STUDY_FILES_PER_USER} files max). Please delete some files before uploading more.`,
+            rejectedFiles: files.map((f) => ({
+              fileName: f.name,
+              reason: `Storage limit reached (${MAX_STUDY_FILES_PER_USER} files max). Delete existing files to upload more.`
+            }))
+          },
+          { status: 400 }
+        );
+      }
       batchWarnings.push(`You can only store ${remainingCapacity} more file(s). Only ${remainingCapacity} file(s) were processed.`);
+      const skipped = filesToProcess.slice(remainingCapacity);
+      skipped.forEach((f) => {
+        rejectedFiles.push({
+          fileName: f.name,
+          reason: `Storage limit reached (${MAX_STUDY_FILES_PER_USER} files max).`
+        });
+      });
       filesToProcess = filesToProcess.slice(0, remainingCapacity);
     }
 

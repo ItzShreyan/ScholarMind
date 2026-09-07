@@ -54,6 +54,13 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   const [localSearch, setLocalSearch] = useState("");
   const pathname = usePathname();
 
+  // Minimize player automatically whenever opening or navigating to the Studio tab
+  useEffect(() => {
+    if (pathname === "/studio" || pathname.startsWith("/studio/")) {
+      setIsMinimized(true);
+    }
+  }, [pathname]);
+
   // ── Beat-reactive border toggle (persisted in localStorage) ─────────────────
   const [beatReactiveEnabled, setBeatReactiveEnabled] = useState(false);
   const beatReactiveLoadedRef = useRef(false);
