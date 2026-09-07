@@ -122,7 +122,8 @@ h3,
     var(--surface);
   border: 1px solid var(--surface-border);
   box-shadow: var(--shadow);
-  @apply backdrop-blur-2xl;
+  backdrop-filter: blur(12px);
+  transform: translateZ(0);
 }
 
 .panel {
@@ -131,7 +132,8 @@ h3,
     var(--surface-strong);
   border: 1px solid var(--surface-border);
   box-shadow: var(--shadow);
-  @apply backdrop-blur-2xl;
+  backdrop-filter: blur(12px);
+  transform: translateZ(0);
 }
 
 .text-gradient {

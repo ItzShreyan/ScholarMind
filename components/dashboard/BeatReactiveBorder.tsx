@@ -181,13 +181,6 @@ export function BeatReactiveBorder({ signal, enabled }: BeatReactiveBorderProps)
           <stop ref={stopTwoRef} offset="52%" />
           <stop ref={stopThreeRef} offset="100%" />
         </linearGradient>
-        <filter id={glowId} x="-6%" y="-6%" width="112%" height="112%">
-          <feGaussianBlur stdDeviation="0.75" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
       </defs>
       <path
         ref={basePathRef}
@@ -204,7 +197,6 @@ export function BeatReactiveBorder({ signal, enabled }: BeatReactiveBorderProps)
         strokeLinecap="round"
         strokeLinejoin="round"
         vectorEffect="non-scaling-stroke"
-        filter={`url(#${glowId})`}
       />
     </svg>
   );

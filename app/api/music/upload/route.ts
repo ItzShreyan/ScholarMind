@@ -7,6 +7,12 @@ export const maxDuration = 120;
 
 /** Maximum audio tracks a single user may upload. Adjust here to change the limit. */
 const MAX_AUDIO_UPLOADS_PER_USER = 20;
+/** Maximum audio files allowed per single upload request */
+const MAX_AUDIO_BATCH_FILES = 10;
+
+function sanitizeText(str: string): string {
+  return str.replace(/\u0000/g, "");
+}
 
 function isUploadedFile(entry: FormDataEntryValue): entry is File {
   return (
@@ -57,12 +63,18 @@ export async function POST(req: Request) {
 
     const errors: string[] = [];
 
+    let batchFiles = files;
+    if (files.length > MAX_AUDIO_BATCH_FILES) {
+      errors.push(`A maximum of ${MAX_AUDIO_BATCH_FILES} songs can be uploaded at once. Only the first ${MAX_AUDIO_BATCH_FILES} were processed.`);
+      batchFiles = files.slice(0, MAX_AUDIO_BATCH_FILES);
+    }
+
     // Don't allow uploading more files than remaining capacity
-    const remaining = existingCount !== null ? MAX_AUDIO_UPLOADS_PER_USER - existingCount : files.length;
-    const filesToProcess = files.slice(0, remaining);
-    if (filesToProcess.length < files.length) {
+    const remaining = existingCount !== null ? MAX_AUDIO_UPLOADS_PER_USER - existingCount : batchFiles.length;
+    const filesToProcess = batchFiles.slice(0, remaining);
+    if (filesToProcess.length < batchFiles.length) {
       errors.push(
-        `Upload limit reached. Only ${remaining} of ${files.length} file(s) were processed. Delete some tracks to upload more.`
+        `Upload limit reached. Only ${remaining} of ${batchFiles.length} song(s) were processed. Delete some tracks to upload more.`
       );
     }
 
@@ -110,14 +122,17 @@ export async function POST(req: Request) {
           continue;
         }
 
+        const cleanFileName = sanitizeText(file.name);
+        const cleanName = sanitizeText(file.name.replace(/\.[^/.]+$/, ""));
+
         const { data: track, error: dbError } = await supabase
           .from("user_audio_tracks")
           .insert([
             {
               user_id: user.id,
-              name: file.name.replace(/\.[^/.]+$/, ""),
+              name: cleanName,
               artist: "Uploaded audio",
-              file_name: file.name,
+              file_name: cleanFileName,
               file_type: mimeType,
               storage_path: storagePath,
               duration: 0

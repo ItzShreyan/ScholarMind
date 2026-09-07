@@ -39,6 +39,13 @@ function trustBadgeTone(trustLabel: string) {
   return "bg-white/10 text-[var(--fg)]";
 }
 
+export type FileProgressItem = {
+  name: string;
+  progress: number;
+  status: "pending" | "uploading" | "completed" | "error";
+  error?: string;
+};
+
 export type SourceModalProps = {
   sourceModalReason: string;
   sourceModalMode: "upload" | "web";
@@ -53,6 +60,7 @@ export type SourceModalProps = {
   importingSourceId: string | null;
   uploading: boolean;
   uploadProgress: number;
+  fileProgressItems?: FileProgressItem[];
   onClose: () => void;
   onSetSourceModalMode: (mode: "upload" | "web") => void;
   onSetSourceResultFilter: (filter: "all" | "verified" | "scholar" | "open_web") => void;
@@ -75,6 +83,7 @@ export function SourceModal({
   importingSourceId,
   uploading,
   uploadProgress,
+  fileProgressItems,
   onClose,
   onSetSourceModalMode,
   onSetSourceResultFilter,
@@ -158,6 +167,28 @@ export function SourceModal({
                     animate={{ width: `${uploadProgress}%` }}
                   />
                 </div>
+                {fileProgressItems && fileProgressItems.length > 0 ? (
+                  <div className="mt-3 space-y-2 max-h-40 overflow-auto pr-1">
+                    {fileProgressItems.map((item, idx) => (
+                      <div key={`${item.name}-${idx}`} className="text-xs">
+                        <div className="flex justify-between mb-1">
+                          <span className="truncate max-w-[220px] text-white/80">{item.name}</span>
+                          <span className="text-white/50">
+                            {item.status === "completed" ? "Completed" : item.status === "error" ? "Error" : `${item.progress}%`}
+                          </span>
+                        </div>
+                        <div className="h-1 rounded-full bg-black/20 overflow-hidden">
+                          <div
+                            className={`h-full transition-all duration-300 ${
+                              item.status === "error" ? "bg-[var(--accent-coral)]" : "bg-[var(--accent-mint)]"
+                            }`}
+                            style={{ width: `${item.progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : null}
 

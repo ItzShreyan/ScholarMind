@@ -10,6 +10,16 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 const FILE_PROCESSING_TIMEOUT_MS = 40_000;
 
+/** Maximum files allowed per single upload request */
+const MAX_BATCH_FILES = 10;
+/** Maximum study files stored per user */
+const MAX_STUDY_FILES_PER_USER = 100;
+
+function sanitizeText(str: string): string {
+  // Removes null bytes \u0000 which cause PostgreSQL "invalid byte sequence" errors
+  return str.replace(/\u0000/g, "");
+}
+
 function withFileTimeout<T>(promise: Promise<T>, fileName: string, stage: string): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -198,6 +208,27 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No files or session ID" }, { status: 400 });
     }
 
+    // ── Check overall stored files count limit ───────────────────────────
+    const { count: existingCount, error: countError } = await supabase
+      .from("study_files")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id);
+
+    if (countError) {
+      return NextResponse.json({ error: "Failed to verify existing file count." }, { status: 500 });
+    }
+
+    if (existingCount !== null && existingCount >= MAX_STUDY_FILES_PER_USER) {
+      return NextResponse.json(
+        {
+          error: `Storage limit reached. You have stored ${existingCount}/${MAX_STUDY_FILES_PER_USER} files. Please delete some files before uploading more.`,
+          limit: MAX_STUDY_FILES_PER_USER,
+          current: existingCount
+        },
+        { status: 429 }
+      );
+    }
+
     const { data: ownedSession, error: sessionError } = await supabase
       .from("study_sessions")
       .select("id")
@@ -214,8 +245,42 @@ export async function POST(req: Request) {
     const maxUploadFileSizeBytes = maxUploadFileSizeMb * 1024 * 1024;
     const uploaded: unknown[] = [];
     const rejectedFiles: { fileName: string; reason: string }[] = [];
+    const batchWarnings: string[] = [];
 
-    for (const [index, file] of files.entries()) {
+    // Enforce max batch size limit
+    let filesToProcess = files;
+    if (files.length > MAX_BATCH_FILES) {
+      batchWarnings.push(`A maximum of ${MAX_BATCH_FILES} files can be uploaded at once. Only the first ${MAX_BATCH_FILES} files were processed.`);
+      filesToProcess = files.slice(0, MAX_BATCH_FILES);
+    }
+
+    // Also check remaining capacity before max stored limit is hit
+    const remainingCapacity = existingCount !== null ? MAX_STUDY_FILES_PER_USER - existingCount : filesToProcess.length;
+    if (filesToProcess.length > remainingCapacity) {
+      if (remainingCapacity <= 0) {
+        return NextResponse.json(
+          {
+            error: `Storage limit reached (${MAX_STUDY_FILES_PER_USER} files max). Please delete some files before uploading more.`,
+            rejectedFiles: files.map((f) => ({
+              fileName: f.name,
+              reason: `Storage limit reached (${MAX_STUDY_FILES_PER_USER} files max). Delete existing files to upload more.`
+            }))
+          },
+          { status: 400 }
+        );
+      }
+      batchWarnings.push(`You can only store ${remainingCapacity} more file(s). Only ${remainingCapacity} file(s) were processed.`);
+      const skipped = filesToProcess.slice(remainingCapacity);
+      skipped.forEach((f) => {
+        rejectedFiles.push({
+          fileName: f.name,
+          reason: `Storage limit reached (${MAX_STUDY_FILES_PER_USER} files max).`
+        });
+      });
+      filesToProcess = filesToProcess.slice(0, remainingCapacity);
+    }
+
+    for (const [index, file] of filesToProcess.entries()) {
       let storagePath: string | null = null;
       const startedAt = Date.now();
       const contentType = inferFileMimeType(file.name, file.type);
@@ -297,6 +362,9 @@ export async function POST(req: Request) {
           fileName: file.name
         });
 
+        const cleanFileName = sanitizeText(file.name);
+        const cleanExtractedText = sanitizeText(extraction.text || "");
+
         const { data, error } = await withFileTimeout(
           (async () =>
             supabase
@@ -305,10 +373,10 @@ export async function POST(req: Request) {
                 {
                   session_id: sessionId,
                   user_id: user.id,
-                  file_name: file.name,
+                  file_name: cleanFileName,
                   file_type: contentType,
                   storage_path: realStoragePath,
-                  extracted_text: extraction.text
+                  extracted_text: cleanExtractedText
                 }
               ])
               .select("*")
@@ -364,7 +432,10 @@ export async function POST(req: Request) {
     return NextResponse.json({
       files: savedFiles ?? uploaded,
       uploadedCount: uploaded.length,
-      warnings: rejectedFiles.length ? ["Some files could not be uploaded. The remaining files are ready to use."] : [],
+      warnings: [
+        ...batchWarnings,
+        ...(rejectedFiles.length ? ["Some files could not be uploaded. The remaining files are ready to use."] : [])
+      ],
       rejectedFiles
     });
   } catch (error) {
