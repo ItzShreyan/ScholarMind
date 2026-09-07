@@ -282,9 +282,37 @@ export function AINotesConsole({ content }: { content: string }) {
   };
 
   if (!notes) {
+    // Check if content represents a web source URL or saved browser note
+    const urlMatch = content.match(/Source URL:\s*(https?:\/\/[^\s\n]+)/i) || content.match(/^(https?:\/\/[^\s\n]+)$/i);
+    const webUrl = urlMatch ? urlMatch[1] : null;
+
     return (
-      <div className="rounded-[30px] border border-white/10 bg-white/8 p-5">
-        <RichStudyText content={content} />
+      <div className="space-y-4">
+        {webUrl ? (
+          <div className="overflow-hidden rounded-[26px] border border-white/12 bg-black/10 p-4">
+            <div className="flex items-center justify-between mb-3 px-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-sky)]">
+                Web Source Preview
+              </span>
+              <a
+                href={webUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-[var(--accent-sky)] hover:underline"
+              >
+                Open link
+              </a>
+            </div>
+            <iframe
+              src={`/api/browse-proxy?url=${encodeURIComponent(webUrl)}`}
+              title="Web note preview"
+              className="h-[60vh] w-full rounded-[18px] border border-white/10 bg-white"
+            />
+          </div>
+        ) : null}
+        <div className="rounded-[30px] border border-white/10 bg-white/8 p-5">
+          <RichStudyText content={content} />
+        </div>
       </div>
     );
   }

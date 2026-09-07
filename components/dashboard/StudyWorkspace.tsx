@@ -896,6 +896,9 @@ export function StudyWorkspace({
   const [uploading, setUploading] = useState(false);
   const [fetchingFiles, setFetchingFiles] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [fileProgressItems, setFileProgressItems] = useState<
+    Array<{ name: string; progress: number; status: "pending" | "uploading" | "completed" | "error"; error?: string }>
+  >([]);
   const [activeAction, setActiveAction] = useState<AIAction>("summary");
   const [toolDraft, setToolDraft] = useState<ToolDraft>(createToolDraft("summary"));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -2990,6 +2993,13 @@ export function StudyWorkspace({
     setActiveSessionId(sessionId);
     setUploading(true);
     setUploadProgress(10);
+    setFileProgressItems(
+      allowedFiles.map((file) => ({
+        name: file.name,
+        progress: 10,
+        status: "uploading"
+      }))
+    );
     setStatusNote("");
     setSourceModalError("");
 
@@ -2999,12 +3009,16 @@ export function StudyWorkspace({
       const rejectedFiles: { fileName: string; reason: string }[] = [];
       let uploadedCount = 0;
 
-  // Batch upload all files in a single request
+      // Batch upload all files in a single request
       const form = new FormData();
       allowedFiles.forEach((file) => form.append("files", file));
       form.append("sessionId", sessionId);
 
-      setUploadProgress(30);
+      setUploadProgress(40);
+      setFileProgressItems((current) =>
+        current.map((item) => ({ ...item, progress: 40 }))
+      );
+
       const response = await fetch("/api/upload", { method: "POST", body: form });
       const json = await readJsonResponse(response);
 
@@ -3012,7 +3026,9 @@ export function StudyWorkspace({
         if (Array.isArray(json.rejectedFiles)) {
           rejectedFiles.push(...json.rejectedFiles);
         } else if (json.error) {
-          allowedFiles.forEach(f => rejectedFiles.push({ fileName: f.name, reason: normalizeErrorMessage(json.error, "Upload failed.") }));
+          allowedFiles.forEach((f) =>
+            rejectedFiles.push({ fileName: f.name, reason: normalizeErrorMessage(json.error, "Upload failed.") })
+          );
         }
       } else {
         nextFiles = Array.isArray(json.files) ? json.files : nextFiles;
@@ -3020,7 +3036,19 @@ export function StudyWorkspace({
         if (Array.isArray(json.warnings)) warnings.push(...json.warnings);
         if (Array.isArray(json.rejectedFiles)) rejectedFiles.push(...json.rejectedFiles);
       }
+
       setUploadProgress(80);
+
+      // Update per-file items state based on response rejected list
+      const rejectedMap = new Map(rejectedFiles.map((r) => [r.fileName, r.reason]));
+      setFileProgressItems((current) =>
+        current.map((item) => {
+          if (rejectedMap.has(item.name)) {
+            return { ...item, progress: 100, status: "error", error: rejectedMap.get(item.name) };
+          }
+          return { ...item, progress: 100, status: "completed" };
+        })
+      );
 
       if (!nextFiles.length) {
         const refreshResponse = await fetch(`/api/sessions?sessionId=${sessionId}`);
@@ -6681,6 +6709,7 @@ ${visualScreenContext}` : ""
           importingSourceId={importingSourceId}
           uploading={uploading}
           uploadProgress={uploadProgress}
+          fileProgressItems={fileProgressItems}
           onClose={closeSourceModal}
           onSetSourceModalMode={setSourceModalMode}
           onSetSourceResultFilter={setSourceResultFilter}

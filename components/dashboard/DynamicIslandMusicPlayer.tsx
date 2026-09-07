@@ -465,13 +465,6 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
     }
   }, []);
 
-  // Auto-play first track when queue becomes non-empty
-  useEffect(() => {
-    if (uploadedTracks.length > 0 && currentQueueIndex < 0 && audioRef.current) {
-      playByRef(0);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uploadedTracks.length]);
 
   const handleFileSelect = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -549,7 +542,18 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   }, [isDragging]);
 
   // Queue management
-  const removeTrackFromQueue = useCallback((index: number) => {
+  const removeTrackFromQueue = useCallback(async (index: number) => {
+    const trackToDelete = uploadedTracks[index];
+    if (trackToDelete?.id && !trackToDelete.id.startsWith("local-")) {
+      try {
+        await fetch(`/api/music/tracks?id=${encodeURIComponent(trackToDelete.id)}`, {
+          method: "DELETE"
+        });
+      } catch (err) {
+        console.error("music_track_delete_failed", err);
+      }
+    }
+
     setUploadedTracks((prev) => {
       const updated = prev.filter((_, i) => i !== index);
       if (index < currentQueueIndex) {
@@ -562,15 +566,10 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
         setCurrentQueueIndex(-1);
         setUploadedTrackCurrentTime(0);
         setUploadedTrackDuration(0);
-        if (updated.length > 0 && index < updated.length) {
-          setTimeout(() => playByRef(index), 50);
-        } else if (updated.length > 0) {
-          setTimeout(() => playByRef(updated.length - 1), 50);
-        }
       }
       return updated;
     });
-  }, [currentQueueIndex, playByRef]);
+  }, [currentQueueIndex, uploadedTracks]);
 
   const moveTrackUp = useCallback((index: number) => {
     if (index === 0) return;
