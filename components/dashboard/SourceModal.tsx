@@ -83,6 +83,7 @@ export function SourceModal({
   importingSourceId,
   uploading,
   uploadProgress,
+  fileProgressItems,
   onClose,
   onSetSourceModalMode,
   onSetSourceResultFilter,
