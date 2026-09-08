@@ -49,6 +49,9 @@ export const metadata: Metadata = {
     title: "ScholarMind | AI Study Companion for Students",
     description:
       "Grounded AI chat, summaries, quizzes, flashcards, mock exams, and revision plans from your notes."
+  },
+  verification: {
+    google: "q5SOhXqO6XZoNQqZm4baL-mhPYtS4z5s08L-wtu8u_E"
   }
 };
 
