@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   }
 
   const signatureHeader = req.headers.get("x-vellumup-signature") || req.headers.get("X-VellumUp-Signature");
-  const secret = process.env.WEBHOOK_SECRET;
+  const secret = process.env.WEBHOOK_SECRET || process.env.VELLUMUP_WEBHOOK_SECRET;
 
   const verification = verifyVellumUpSignature(rawBody, signatureHeader, secret);
   if (!verification.valid) {
