@@ -25,6 +25,7 @@ const arcjetSecurity = process.env.ARCJET_KEY
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   const isSecurityCheck = pathname.startsWith("/security-check") || pathname.startsWith("/api/security/verify");
+  const isWebhook = pathname.startsWith("/api/vellumup");
   const isStaticAsset =
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
@@ -32,7 +33,7 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith("/sitemap") ||
     /\.[a-z0-9]{2,8}$/i.test(pathname);
 
-  if (!isStaticAsset && !isSecurityCheck) {
+  if (!isStaticAsset && !isSecurityCheck && !isWebhook) {
     const localDecision = assessRequest(req);
     const verified = await verifyChallengeCookie(req.cookies.get(mindSecurityCookie)?.value);
 
