@@ -40,6 +40,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import dynamic from "next/dynamic";
+import { ThinkingOrb } from "thinking-orbs";
 import type { SourceModalProps } from "@/components/dashboard/SourceModal";
 
 const SourceModal = dynamic<SourceModalProps>(
@@ -6333,17 +6334,8 @@ ${visualScreenContext}` : ""
                       {message.role === "user" ? (
                         <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
                       ) : !message.content.trim() ? (
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2 text-sm">
-                            <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                            <motion.p
-                              className="bg-[linear-gradient(90deg,rgba(255,255,255,0.48),rgba(57,208,255,0.95),rgba(255,255,255,0.48))] bg-[length:220%_100%] bg-clip-text font-semibold text-transparent"
-                              animate={{ backgroundPosition: ["220% 0", "0% 0"] }}
-                              transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
-                            >
-                              Reading sources and drafting a focused answer...
-                            </motion.p>
-                          </div>
+                        <div className="flex justify-start py-2">
+                          <ThinkingOrb state="searching" size={20} />
                         </div>
                       ) : (
                         <>
@@ -6431,9 +6423,8 @@ ${visualScreenContext}` : ""
               )}
               {chatLoading ? (
                 <div className="rounded-[24px] bg-white/16 px-4 py-3 text-sm">
-                  <div className="flex items-center gap-2">
-                    <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                    <p className="font-semibold">Building a guided answer...</p>
+                  <div className="flex items-center justify-center py-2">
+                    <ThinkingOrb state="working" size={64} />
                   </div>
                 </div>
               ) : null}
