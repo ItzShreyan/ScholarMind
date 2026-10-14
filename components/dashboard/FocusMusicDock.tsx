@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { ChevronUp, LogOut, Music, Search, X } from "lucide-react";
 import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
 import { SpotifyPlaybackProvider } from "@/components/dashboard/useSpotifyPlayback";
@@ -110,7 +110,7 @@ export function FocusMusicDock() {
             compact
             onPlayingChange={setPlaying}
           />
-          <motion.button
+          <m.button
             type="button"
             onClick={() => setOpen((current) => !current)}
             whileHover={{ scale: 1.1 }}
@@ -120,7 +120,7 @@ export function FocusMusicDock() {
             aria-label="Open dashboard music dock"
           >
             {open ? <X className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </motion.button>
+          </m.button>
         </div>
 
         {open ? (

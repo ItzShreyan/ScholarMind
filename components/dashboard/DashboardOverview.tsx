@@ -10,16 +10,22 @@ import {
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { Container } from "@/components/ui/Container";
 import { StudioShelf } from "@/components/dashboard/StudioShelf";
-import { FocusMusicDock } from "@/components/dashboard/FocusMusicDock";
 
 type Session = { id: string; title: string; created_at?: string };
 
 export function DashboardOverview({
   sessions,
-  fileCount
+  fileCount,
+  reviewSummary
 }: {
   sessions: Session[];
   fileCount: number;
+  /**
+   * The revision region, rendered by the dashboard page so it can be omitted
+   * entirely when there is no review data to show — better than an empty card
+   * promising a streak that does not exist.
+   */
+  reviewSummary?: React.ReactNode;
 }) {
   return (
     <Container className="py-6">
@@ -106,10 +112,10 @@ export function DashboardOverview({
               </div>
             </CardHeader>
           </Card>
-
-          <FocusMusicDock />
         </div>
       </section>
+
+      {reviewSummary}
 
       <StudioShelf initialStudios={sessions} />
     </Container>

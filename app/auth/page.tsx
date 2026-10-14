@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import {
   AlertCircle,
   ArrowLeft,
@@ -289,7 +289,7 @@ export default function AuthPage() {
 
           <div className="relative z-10 grid gap-4">
             {highlights.map((item, index) => (
-              <motion.div
+              <m.div
                 key={item.title}
                 initial={{ opacity: 0, x: -18 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -299,12 +299,12 @@ export default function AuthPage() {
                 <item.icon className="mb-3 h-6 w-6 text-[var(--accent-coral)]" />
                 <p className="text-lg font-semibold">{item.title}</p>
                 <p className="muted mt-2 text-sm">{item.copy}</p>
-              </motion.div>
+              </m.div>
             ))}
           </div>
         </section>
 
-        <motion.section
+        <m.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55 }}
@@ -545,7 +545,7 @@ export default function AuthPage() {
               {mode === "signin" ? "Create one" : "Sign in"}
             </button>
           </p>
-        </motion.section>
+        </m.section>
       </div>
     </main>
   );

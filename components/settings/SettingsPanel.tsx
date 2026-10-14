@@ -3,11 +3,14 @@
 import { useEffect, useState } from "react";
 import {
   BellRing,
+  Gauge,
   LogOut,
   Palette,
   Sparkles,
   Stars
 } from "lucide-react";
+import { useMotionTier } from "@/hooks/useMotionTier";
+import type { MotionPreference } from "@/lib/motion-tier";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader } from "@/components/ui/Card";
 import { defaultUserPreferences, type UserPreferences } from "@/lib/preferences/defaults";
@@ -31,6 +34,7 @@ export function SettingsPanel({
   const [subjectTiers, setSubjectTiers] = useState<Record<string, string>>(initialOnboarding?.subject_tiers ?? {});
   const [mounted, setMounted] = useState(false);
   const [saveState, setSaveState] = useState("Synced to your account.");
+  const { preference: motionPreference, setPreference: setMotionPreference, tier: motionTier } = useMotionTier();
 
   useEffect(() => {
     setMounted(true);
@@ -308,6 +312,48 @@ export function SettingsPanel({
             >
               {rememberLastStudio ? "Remember last studio" : "Do not remember"}
             </button>
+          </CardContent>
+        </Card>
+
+        <Card className="md:col-span-2">
+          <CardHeader className="space-y-2">
+            <Gauge className="h-5 w-5 text-[var(--accent-sky)]" />
+            <p className="text-sm font-semibold">Reduce animations</p>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <p className="muted">
+              ScholarMind adapts motion to this device automatically. Override it here if the
+              movement, blur or parallax feels like too much — colour and layout stay exactly the
+              same either way.
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {(
+                [
+                  { value: "auto", label: "Auto", hint: "Match this device" },
+                  { value: "reduced", label: "Reduced", hint: "No travel or blur" },
+                  { value: "off", label: "Off", hint: "No animation" }
+                ] as Array<{ value: MotionPreference; label: string; hint: string }>
+              ).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setMotionPreference(option.value)}
+                  aria-pressed={motionPreference === option.value}
+                  className={`rounded-[18px] px-3 py-3 text-left text-sm font-medium transition ${
+                    motionPreference === option.value ? "bg-[rgba(57,208,255,0.18)]" : "bg-white/12"
+                  }`}
+                >
+                  <span className="block">{option.label}</span>
+                  <span className="muted mt-1 block text-[11px] font-normal">{option.hint}</span>
+                </button>
+              ))}
+            </div>
+            <p className="muted text-xs">
+              Currently active:{" "}
+              <span className="font-semibold text-[var(--text-2)]">
+                {motionTier === "full" ? "full motion" : motionTier === "reduced" ? "reduced motion" : "motion off"}
+              </span>
+            </p>
           </CardContent>
         </Card>
 

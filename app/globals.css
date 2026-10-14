@@ -2,52 +2,201 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * ============================================================================
+ * SCHOLARMIND DESIGN TOKENS
+ * ============================================================================
+ * Three surfaces, three text levels, one amber accent, one cool blue accent.
+ *
+ * Amber (#DCA566) is the light of the learning world: it marks the single
+ * primary action, live status and warm architectural emphasis.
+ * Blue (#88B7CE) is the atmospheric/cool accent: navigation, focus rings,
+ * informational states and links.
+ * Everything else is ink, ivory and stone.
+ *
+ * Do not add new accent hues. If a new state needs colour, reuse a status token.
+ * ============================================================================
+ */
 :root {
   color-scheme: dark;
-  --bg: #07111f;
-  --bg-soft: #142742;
-  --fg: #eef5ff;
-  --muted: #b1c2da;
-  --font-body: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
-  --font-display: "Avenir Next Condensed", "Avenir Next", "Trebuchet MS", sans-serif;
-  --surface: rgba(10, 20, 36, 0.66);
-  --surface-strong: rgba(10, 20, 36, 0.82);
-  --surface-border: rgba(255, 255, 255, 0.14);
-  --shadow: 0 32px 90px rgba(2, 6, 23, 0.45);
-  --accent-coral: #ff8f6b;
-  --accent-gold: #ffe083;
-  --accent-sky: #6bddff;
-  --accent-mint: #7cf0cf;
-  --accent-ink: #0f172a;
-  --glass-top: rgba(255, 255, 255, 0.18);
-  --glass-bottom: rgba(255, 255, 255, 0.04);
-  --panel-top: rgba(255, 255, 255, 0.16);
-  --panel-bottom: rgba(255, 255, 255, 0.04);
-  --grid-line: rgba(255, 255, 255, 0.08);
-  --grid-line-strong: rgba(255, 255, 255, 0.1);
+
+  /* ---- Surfaces -------------------------------------------------------- */
+  --bg: #080d12; /* ink — the world at night */
+  --bg-soft: #101922; /* deep blue-black */
+  --surface-1: #101922;
+  --surface-2: #17232d; /* elevated dark surface */
+  --surface-3: #1f2d38; /* raised control surface */
+
+  /* Kept as translucent fills so existing `.glass`/`.panel` consumers work. */
+  --surface: rgba(16, 25, 34, 0.72);
+  --surface-strong: rgba(23, 35, 45, 0.86);
+  --surface-border: rgba(243, 240, 233, 0.11);
+  --shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
+
+  --glass-top: rgba(243, 240, 233, 0.07);
+  --glass-bottom: rgba(243, 240, 233, 0.02);
+  --panel-top: rgba(243, 240, 233, 0.06);
+  --panel-bottom: rgba(243, 240, 233, 0.015);
+
+  --grid-line: rgba(243, 240, 233, 0.045);
+  --grid-line-strong: rgba(243, 240, 233, 0.07);
+
+  /* ---- Text ------------------------------------------------------------ */
+  --fg: #f3f0e9; /* primary text on dark */
+  --text-1: #f3f0e9;
+  --text-2: #c6ccce; /* secondary — body copy */
+  --text-3: #94a3ae; /* tertiary — meta, hints, captions */
+  --muted: #94a3ae;
+
+  /* ---- Accents --------------------------------------------------------- */
+  --accent-coral: #dca566; /* warm amber lighting — primary */
+  --accent-gold: #e9ce9a; /* lighter amber, for text on dark */
+  --accent-sky: #88b7ce; /* cool atmospheric blue — focus, links, nav */
+  --accent-mint: #8fc2ac; /* muted sage — success-adjacent accent */
+  --accent-ink: #080d12;
+
+  /* Single primary-action gradient. Amber, lit from the top left. */
+  --primary-from: #e9ce9a;
+  --primary-via: #dca566;
+  --primary-to: #b8843f;
+  --primary-fg: #1a1208;
+
+  /* ---- Status (functional, distinct, accessible on ink) ---------------- */
+  --success: #74c197;
+  --warning: #dca85c;
+  --danger: #e2796c;
+  --info: #88b7ce;
+
+  /* ---- Editorial (warm ivory) ------------------------------------------
+   * A meaningful contrasting surface for reading, documents and editorial
+   * statements. Deliberately identical in both themes: ivory is ivory.
+   * -------------------------------------------------------------------- */
+  --editorial-bg: #f1ede4;
+  --editorial-bg-soft: #e6e0d3;
+  --editorial-bg-raise: #faf7f1;
+  --editorial-fg: #18212a;
+  --editorial-fg-soft: #3d4a55;
+  --editorial-muted: #5b666f;
+  --editorial-border: rgba(24, 33, 42, 0.13);
+  --editorial-accent: #9c6c34;
+
+  /* ---- Radius ---------------------------------------------------------- */
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-pill: 999px;
+
+  /* ---- Spacing --------------------------------------------------------- */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --space-10: 8rem;
+
+  /* ---- Type scale ------------------------------------------------------ */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: 2.25rem;
+  --text-4xl: 3rem;
+  --text-5xl: 3.875rem;
+  --text-6xl: 5rem;
+
+  /* ---- Motion ----------------------------------------------------------
+   * Mirrors lib/motion.ts. CSS animations use these; JS uses the module.
+   * -------------------------------------------------------------------- */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
+  --motion-cinematic: 600ms;
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-cinematic: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  /* ---- Typography ------------------------------------------------------
+   * next/font/google registers --font-inter / --font-manrope / --font-fraunces
+   * on <html>. Referencing them lazily keeps a usable system fallback if the
+   * font files ever fail to load.
+   * -------------------------------------------------------------------- */
+  --font-body: var(--font-inter), "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: var(--font-manrope), "Manrope", var(--font-inter), system-ui, sans-serif;
+  --font-editorial: var(--font-fraunces), "Fraunces", Georgia, "Times New Roman", serif;
+
+  /* ---- Learning world -------------------------------------------------- */
+  --world-ground: #0b1219;
+  --world-ground-high: #141e28;
+  --world-stone: #2b3843;
+  --world-stone-light: #3d4c58;
+  --world-ivory: #e8e2d6;
+  --world-amber: #dca566;
+  --world-blue: #88b7ce;
+  --world-foliage: #3c5a4c;
+  --world-fog: #080d12;
 }
 
+/*
+ * Light theme = the warm editorial half of the brand. Same structure, same
+ * accent roles, retuned so every text/accent pair passes AA.
+ */
 html.light {
   color-scheme: light;
-  --bg: #f3eee7;
-  --bg-soft: #e4d8ca;
-  --fg: #172233;
-  --muted: #55657b;
-  --surface: rgba(252, 248, 242, 0.8);
-  --surface-strong: rgba(249, 244, 237, 0.92);
-  --surface-border: rgba(93, 76, 56, 0.12);
-  --shadow: 0 28px 70px rgba(118, 92, 70, 0.12);
-  --accent-coral: #ec8a68;
-  --accent-gold: #e8c875;
-  --accent-sky: #4db9da;
-  --accent-mint: #73d2b4;
-  --accent-ink: #0f172a;
-  --glass-top: rgba(255, 250, 245, 0.62);
-  --glass-bottom: rgba(248, 240, 231, 0.34);
-  --panel-top: rgba(253, 248, 242, 0.78);
-  --panel-bottom: rgba(240, 231, 220, 0.4);
-  --grid-line: rgba(86, 78, 67, 0.05);
-  --grid-line-strong: rgba(86, 78, 67, 0.07);
+
+  --bg: #f1ede4; /* warm ivory */
+  --bg-soft: #e4dccd;
+  --surface-1: #faf7f1;
+  --surface-2: #f4efe6;
+  --surface-3: #ebe4d7;
+
+  --surface: rgba(250, 247, 241, 0.86);
+  --surface-strong: rgba(244, 239, 230, 0.95);
+  --surface-border: rgba(24, 33, 42, 0.12);
+  --shadow: 0 20px 50px rgba(24, 33, 42, 0.1);
+
+  --glass-top: rgba(255, 253, 249, 0.7);
+  --glass-bottom: rgba(240, 233, 222, 0.4);
+  --panel-top: rgba(255, 253, 250, 0.82);
+  --panel-bottom: rgba(238, 231, 219, 0.5);
+
+  --grid-line: rgba(24, 33, 42, 0.045);
+  --grid-line-strong: rgba(24, 33, 42, 0.065);
+
+  --fg: #18212a;
+  --text-1: #18212a;
+  --text-2: #3d4a55;
+  --text-3: #5b666f;
+  --muted: #5b666f;
+
+  /* Amber and blue darkened so they stay legible as text on ivory. */
+  --accent-coral: #9c6c34;
+  --accent-gold: #8a6a2f;
+  --accent-sky: #2f6f8f;
+  --accent-mint: #3f7a63;
+  --accent-ink: #18212a;
+
+  --primary-from: #c8933f;
+  --primary-via: #a9753a;
+  --primary-to: #82562a;
+  --primary-fg: #ffffff;
+
+  --success: #2f7d55;
+  --warning: #96631c;
+  --danger: #b23f34;
+  --info: #2f6f8f;
+
+  /* Editorial surfaces stay ivory in light mode too — they already are. */
+  --editorial-bg: #faf7f1;
+  --editorial-bg-soft: #f0eade;
+  --editorial-bg-raise: #ffffff;
+  --editorial-border: rgba(24, 33, 42, 0.12);
 }
 
 html {
@@ -64,26 +213,26 @@ body {
   @apply antialiased transition-colors duration-300;
 }
 
+/*
+ * Ambient page light. Two sources only — one warm, one cool — so the app reads
+ * as a lit place rather than a rainbow. Kept as static CSS (no canvas, no JS).
+ */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(circle at 12% 14%, rgba(255, 125, 89, 0.26), transparent 28%),
-    radial-gradient(circle at 86% 8%, rgba(57, 208, 255, 0.22), transparent 24%),
-    radial-gradient(circle at 74% 78%, rgba(98, 232, 191, 0.22), transparent 26%),
-    radial-gradient(circle at 22% 88%, rgba(255, 209, 102, 0.18), transparent 26%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 28%);
+    radial-gradient(ellipse 70% 45% at 76% 0%, rgba(220, 165, 102, 0.13), transparent 62%),
+    radial-gradient(ellipse 60% 40% at 8% 12%, rgba(136, 183, 206, 0.1), transparent 60%),
+    linear-gradient(180deg, rgba(243, 240, 233, 0.04), transparent 32%);
 }
 
 html.light body::before {
   background:
-    radial-gradient(circle at 12% 14%, rgba(236, 138, 104, 0.18), transparent 30%),
-    radial-gradient(circle at 86% 10%, rgba(77, 185, 218, 0.16), transparent 26%),
-    radial-gradient(circle at 74% 80%, rgba(115, 210, 180, 0.14), transparent 28%),
-    radial-gradient(circle at 22% 88%, rgba(232, 200, 117, 0.12), transparent 26%),
-    linear-gradient(180deg, rgba(255, 250, 245, 0.74), rgba(238, 232, 224, 0.9));
+    radial-gradient(ellipse 70% 45% at 76% 0%, rgba(169, 117, 58, 0.1), transparent 62%),
+    radial-gradient(ellipse 60% 40% at 8% 12%, rgba(47, 111, 143, 0.08), transparent 60%),
+    linear-gradient(180deg, rgba(255, 253, 249, 0.6), transparent 34%);
 }
 
 body::after {
@@ -136,14 +285,12 @@ h3,
   transform: translateZ(0);
 }
 
+/*
+ * The one gradient used on text: amber light falling to cool blue. Never used
+ * as a card or button background.
+ */
 .text-gradient {
-  background-image: linear-gradient(
-    135deg,
-    var(--accent-coral) 0%,
-    var(--accent-gold) 28%,
-    var(--accent-sky) 63%,
-    var(--accent-mint) 100%
-  );
+  background-image: linear-gradient(122deg, var(--accent-gold) 0%, var(--accent-coral) 46%, var(--accent-sky) 100%);
   @apply bg-clip-text text-transparent;
 }
 
@@ -166,9 +313,8 @@ h3,
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(circle at 16% 18%, rgba(255, 125, 89, 0.22), transparent 28%),
-    radial-gradient(circle at 82% 24%, rgba(57, 208, 255, 0.2), transparent 24%),
-    radial-gradient(circle at 54% 86%, rgba(98, 232, 191, 0.2), transparent 24%);
+    radial-gradient(ellipse 55% 45% at 18% 10%, rgba(220, 165, 102, 0.14), transparent 64%),
+    radial-gradient(ellipse 50% 40% at 86% 26%, rgba(136, 183, 206, 0.1), transparent 62%);
 }
 
 .mesh-overlay {
@@ -190,6 +336,10 @@ h3,
   position: relative;
 }
 
+/*
+ * Hairline highlight instead of the old four-colour neon rim. A single warm
+ * sweep at the top-left corner, fading to nothing.
+ */
 .panel-border::after {
   content: "";
   position: absolute;
@@ -197,11 +347,10 @@ h3,
   border-radius: inherit;
   padding: 1px;
   background: linear-gradient(
-    140deg,
-    rgba(255, 255, 255, 0.45),
-    rgba(255, 255, 255, 0.08) 38%,
-    rgba(57, 208, 255, 0.28) 70%,
-    rgba(255, 125, 89, 0.28)
+    135deg,
+    rgba(233, 206, 154, 0.26),
+    rgba(243, 240, 233, 0.08) 34%,
+    transparent 62%
   );
   -webkit-mask:
     linear-gradient(#fff 0 0) content-box,
@@ -209,6 +358,15 @@ h3,
   -webkit-mask-composite: xor;
   mask-composite: exclude;
   pointer-events: none;
+}
+
+html.light .panel-border::after {
+  background: linear-gradient(
+    135deg,
+    rgba(156, 108, 52, 0.2),
+    rgba(24, 33, 42, 0.06) 36%,
+    transparent 64%
+  );
 }
 
 .perspective-stage {
@@ -387,11 +545,14 @@ a,
   background: rgba(255, 255, 255, 0.25);
 }
 
-/* Premium focus ring */
+/*
+ * Focus ring. Uses the cool accent so it never collides with the amber
+ * primary action, and is identical in both themes for predictability.
+ */
 :focus-visible {
-  outline: 2px solid rgba(107, 221, 255, 0.7);
+  outline: 2px solid var(--accent-sky);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 /* Stagger in animation for lists */
@@ -428,4 +589,447 @@ a,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+/* ==========================================================================
+   MOTION TIERS
+   --------------------------------------------------------------------------
+   The tier is set on <html> before first paint by the boot script in
+   app/layout.tsx, and kept in sync by MotionTierProvider.
+
+     full    → everything runs
+     reduced → colours and layout intact; blur, glows, infinite animation and
+               stagger removed
+     off     → no animation at all
+
+   Rule for anything new: animate transform and opacity only. Never animate
+   blur, box-shadow, width, height or gradient stops.
+   ========================================================================== */
+
+/* Backdrop blur is the single most expensive thing on a weak GPU. */
+html[data-motion="reduced"] .glass,
+html[data-motion="reduced"] .panel,
+html[data-motion="off"] .glass,
+html[data-motion="off"] .panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Large decorative blurs become flat colour fields instead of blurring. */
+html:not([data-motion="full"]) [class*="blur-3xl"],
+html:not([data-motion="full"]) [class*="blur-2xl"] {
+  filter: none !important;
+}
+
+/* `will-change` is a promise, not a default. Only honour it on the full tier. */
+html:not([data-motion="full"]) .interactive-card,
+html:not([data-motion="full"]) .track-row {
+  will-change: auto;
+}
+
+/* Continuous, decorative motion is the first thing to go. */
+html:not([data-motion="full"]) .floaty,
+html:not([data-motion="full"]) .pulse-glow,
+html:not([data-motion="full"]) .playful-bob,
+html:not([data-motion="full"]) .playful-pop,
+html:not([data-motion="full"]) .playful-sway,
+html:not([data-motion="full"]) .stagger-child,
+html:not([data-motion="full"]) .motion-infinite,
+html:not([data-motion="full"]) .world-hotspot-ring {
+  animation: none !important;
+}
+
+/* `off` collapses transitions too, but keeps hover/focus colours intact. */
+html[data-motion="off"] *,
+html[data-motion="off"] ::before,
+html[data-motion="off"] ::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+}
+
+/* ==========================================================================
+   SURFACES AND TEXT LEVELS
+   ========================================================================== */
+
+.surface-1 { background-color: var(--surface-1); }
+.surface-2 { background-color: var(--surface-2); }
+.surface-3 { background-color: var(--surface-3); }
+
+.text-secondary { color: var(--text-2); }
+.text-tertiary { color: var(--text-3); }
+
+/* A quiet hairline divider. Use instead of full borders where possible. */
+.rule {
+  border: 0;
+  border-top: 1px solid var(--surface-border);
+}
+
+/* ==========================================================================
+   EDITORIAL SURFACES — the warm ivory half of the brand
+   --------------------------------------------------------------------------
+   Used for reading, documents, product statements and pull quotes. Works in
+   both themes: ivory is a deliberate, meaningful contrast against the ink
+   product shell, not a light-mode-only variant.
+   ========================================================================== */
+
+.editorial {
+  background-color: var(--editorial-bg);
+  color: var(--editorial-fg);
+  border-color: var(--editorial-border);
+}
+
+.editorial-soft { background-color: var(--editorial-bg-soft); }
+.editorial-raise { background-color: var(--editorial-bg-raise); }
+.editorial-border { border-color: var(--editorial-border); }
+
+.editorial .muted,
+.editorial-muted { color: var(--editorial-muted); }
+
+.editorial-accent { color: var(--editorial-accent); }
+
+/* Restrained serif for editorial statements and document headings. */
+.editorial-serif {
+  font-family: var(--font-editorial), Georgia, "Times New Roman", serif;
+  letter-spacing: -0.012em;
+  font-weight: 500;
+}
+
+/*
+ * Reading surface for documents, notes and long-form output. Used inside the
+ * dark product shell so study material stays maximally legible.
+ */
+.reading-surface {
+  background-color: var(--editorial-bg-raise);
+  color: var(--editorial-fg);
+  border: 1px solid var(--editorial-border);
+}
+
+.reading-surface .muted,
+.reading-surface .text-secondary { color: var(--editorial-muted); }
+
+/* Editorial markdown rendered into an ivory surface. */
+.reading-surface .rich-study-text {
+  color: var(--editorial-fg);
+}
+
+.reading-surface .rich-study-text h1,
+.reading-surface .rich-study-text h2,
+.reading-surface .rich-study-text h3 {
+  color: var(--editorial-fg);
+}
+
+.reading-surface .rich-study-text a {
+  color: var(--editorial-accent);
+}
+
+.reading-surface .rich-study-text code {
+  background-color: rgba(24, 33, 42, 0.07);
+  color: var(--editorial-accent);
+}
+
+/* ==========================================================================
+   TYPE HELPERS
+   ========================================================================== */
+
+.font-editorial { font-family: var(--font-editorial), Georgia, serif; }
+
+/*
+ * Display headline. Fluid so the landing page never needs breakpoint
+ * overrides for its largest text.
+ */
+.display-hero {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 0.95;
+  font-size: clamp(2.5rem, 7.4vw, 5.25rem);
+}
+
+.display-section {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.04;
+  font-size: clamp(1.9rem, 4vw, 3.25rem);
+}
+
+/*
+ * Label. Small, uppercase, tracked — used sparingly and always for a real
+ * grouping, never as decoration on every card.
+ */
+.label {
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+/* ==========================================================================
+   LEARNING WORLD UI
+   ========================================================================== */
+
+.world-stage {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse 62% 52% at 50% 34%, rgba(220, 165, 102, 0.16), transparent 66%),
+    radial-gradient(ellipse 70% 46% at 50% 96%, rgba(136, 183, 206, 0.2), transparent 70%),
+    linear-gradient(180deg, #0a1017 0%, #080d12 58%, #060a0e 100%);
+}
+
+.world-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: grab;
+}
+
+.world-canvas:active { cursor: grabbing; }
+
+/* Hotspot labels are real DOM buttons layered over the canvas. */
+.world-hotspot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(243, 240, 233, 0.18);
+  background: rgba(8, 13, 18, 0.72);
+  color: var(--text-1);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    border-color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard),
+    transform var(--motion-fast) var(--ease-standard);
+}
+
+.world-hotspot:hover,
+.world-hotspot:focus-visible {
+  border-color: rgba(220, 165, 102, 0.6);
+  background: rgba(8, 13, 18, 0.9);
+  transform: translate(-50%, -50%) scale(1.03);
+}
+
+.world-hotspot[data-active="true"] {
+  border-color: var(--accent-coral);
+  background: rgba(23, 35, 45, 0.94);
+}
+
+.world-hotspot-dot {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--accent-coral);
+  box-shadow: 0 0 0 3px rgba(220, 165, 102, 0.16);
+}
+
+@keyframes world-hotspot-ring {
+  0% { opacity: 0.55; transform: scale(0.85); }
+  70% { opacity: 0; transform: scale(1.6); }
+  100% { opacity: 0; transform: scale(1.6); }
+}
+
+.world-hotspot-ring {
+  position: absolute;
+  inset: -2px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent-coral);
+  animation: world-hotspot-ring 2.8s ease-out infinite;
+  pointer-events: none;
+}
+
+/* Non-WebGL fallback: a plain, complete list of the same destinations. */
+.world-fallback-card {
+  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom)), var(--surface-strong);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+}
+
+/* ==========================================================================
+   SECTION RHYTHM
+   ========================================================================== */
+
+/* Generous, consistent vertical rhythm. Prefer this over per-section padding. */
+.section-y { padding-top: var(--space-9); padding-bottom: var(--space-9); }
+.section-y-tight { padding-top: var(--space-7); padding-bottom: var(--space-7); }
+
+@media (min-width: 1024px) {
+  .section-y { padding-top: var(--space-10); padding-bottom: var(--space-10); }
+}
+
+/* ==========================================================================
+   INTERACTION STATES
+   ========================================================================== */
+
+/* Disabled controls read as disabled without relying on colour alone. */
+[aria-disabled="true"],
+[data-disabled="true"] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Progress is never communicated by colour alone — always paired with text. */
+.status-success { color: var(--success); }
+.status-warning { color: var(--warning); }
+.status-danger { color: var(--danger); }
+.status-info { color: var(--info); }
+
+/* ==========================================================================
+   TAILWIND UTILITY EXTENSIONS
+   ========================================================================== */
+
+@layer utilities {
+  .rounded-token-sm { border-radius: var(--radius-sm); }
+  .rounded-token-md { border-radius: var(--radius-md); }
+  .rounded-token-lg { border-radius: var(--radius-lg); }
+  .rounded-token-xl { border-radius: var(--radius-xl); }
+
+  /* Keeps long words and equations from overflowing narrow panels. */
+  .wrap-anywhere { overflow-wrap: anywhere; }
+}
+/* ==========================================================================
+   CHAT ANSWER BLOCKS
+   --------------------------------------------------------------------------
+   Styles for the five custom fence blocks rendered by
+   components/dashboard/chat-blocks/. Kept in CSS rather than Tailwind
+   arbitrary values so dark and light themes stay guaranteed-correct and the
+   components stay readable.
+   ========================================================================== */
+
+.block-card {
+  margin: 1rem 0;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.block-card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--surface-border);
+  padding: 0.625rem 1rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.block-row {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--surface-border);
+}
+
+.block-row:first-child { border-top: 0; }
+
+/*
+ * Number tiles. The colour only decorates — the step number itself carries the
+ * meaning, so nothing here depends on colour alone.
+ */
+.tile {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  height: 1.75rem;
+  min-width: 1.75rem;
+  padding: 0 0.375rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-mint {
+  background: rgba(143, 194, 172, 0.16);
+  background: color-mix(in srgb, var(--accent-mint) 16%, transparent);
+  color: var(--accent-mint);
+}
+
+.tile-sky {
+  background: rgba(136, 183, 206, 0.16);
+  background: color-mix(in srgb, var(--accent-sky) 16%, transparent);
+  color: var(--accent-sky);
+}
+
+.tile-coral {
+  background: rgba(220, 165, 102, 0.16);
+  background: color-mix(in srgb, var(--accent-coral) 16%, transparent);
+  color: var(--accent-coral);
+}
+
+.tile-gold {
+  background: rgba(233, 206, 154, 0.16);
+  background: color-mix(in srgb, var(--accent-gold) 16%, transparent);
+  color: var(--accent-gold);
+}
+
+/* Final answer: a bordered pill, never a glow. */
+.answer-pill {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--accent-mint) 40%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-mint) 10%, transparent);
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+/* Practice input. 44px tall so it is usable on touch. */
+.block-input {
+  min-height: 44px;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--surface-border);
+  background: var(--surface-1);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-1);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-standard);
+}
+
+.block-input:focus {
+  border-color: var(--accent-sky);
+  outline: 2px solid var(--accent-sky);
+  outline-offset: 2px;
+}
+
+.block-input::placeholder { color: var(--text-3); }
+
+/* Blocks are interactive, so they must work on an ivory reading surface too. */
+.reading-surface .block-card,
+.editorial .block-card {
+  background: var(--editorial-bg-raise);
+  color: var(--editorial-fg);
+  border-color: var(--editorial-border);
+}
+
+.reading-surface .block-card-header,
+.editorial .block-card-header {
+  border-color: var(--editorial-border);
+  color: var(--editorial-muted);
+}
+
+.reading-surface .block-row,
+.editorial .block-row {
+  border-color: var(--editorial-border);
+}
+
+.reading-surface .block-input,
+.editorial .block-input {
+  background: #ffffff;
+  color: var(--editorial-fg);
+  border-color: var(--editorial-border);
 }

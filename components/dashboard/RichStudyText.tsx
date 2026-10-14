@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { BlockActionContext, readBlockLanguage, renderChatBlock } from "@/components/dashboard/chat-blocks";
 
 const latexCommandPattern =
   /\\(?:text|frac|sqrt|cos|sin|tan|log|ln|theta|alpha|beta|gamma|delta|pi|sigma|phi|omega|times|cdot|pm|leq|geq|neq|infty|sum|int|vec|hat|bar|left|right|mathrm|mathbf|overline|underline|approx|propto|partial|nabla|mu|lambda|rho|epsilon|degree)/i;
@@ -65,7 +66,7 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
           setSvg(svg);
           setFailed(false);
         }
-      } catch (err) {
+      } catch {
         // Clean up orphaned error nodes that mermaid might have appended to the body
         const errorNode = document.getElementById(`dmermaid-${chartId}`);
         if (errorNode) {
@@ -114,10 +115,17 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
 
 export const RichStudyText = memo(function RichStudyText({
   content,
-  compact = false
+  compact = false,
+  onAction
 }: {
   content: string;
   compact?: boolean;
+  /**
+   * Optional. Supplied only by the chat message render, which is the one place
+   * with a send function. When absent, interactive blocks render their static
+   * form so no button ever leads nowhere.
+   */
+  onAction?: (text: string) => void;
 }) {
   const normalized = useMemo(() => prepareMathContent(normalizeStudyContent(content)), [content]);
   const markdownComponents = useMemo<Components>(
@@ -125,6 +133,7 @@ export const RichStudyText = memo(function RichStudyText({
       a: (props) => (
         <a {...props} target="_blank" rel="noreferrer" className="text-[var(--accent-sky)] underline underline-offset-4" />
       ),
+      pre: ({ children }) => <>{children}</>,
       code: ({ className, children, ...props }) => {
         const codeText = String(children).replace(/\n$/, "");
         const inline = !className;
@@ -138,6 +147,17 @@ export const RichStudyText = memo(function RichStudyText({
 
         if ((className || "").includes("language-mermaid")) {
           return <MermaidBlock chart={codeText} />;
+        }
+
+        /*
+         * Custom answer blocks. A parser that cannot read the fence returns
+         * null, and we fall through to the plain code renderer so the student
+         * always sees something readable.
+         */
+        const blockLanguage = readBlockLanguage(className);
+        if (blockLanguage) {
+          const block = renderChatBlock(blockLanguage, codeText);
+          if (block) return block;
         }
 
         return (
@@ -204,16 +224,18 @@ export const RichStudyText = memo(function RichStudyText({
   );
 
   return (
-    <div
-      className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[16px] leading-8 md:text-[17px] md:leading-9"} [&_.katex]:text-[1.05em] [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:rounded-[18px] [&_.katex-display]:bg-white/8 [&_.katex-display]:px-4 [&_.katex-display]:py-3 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
-    >
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-        components={markdownComponents}
+    <BlockActionContext.Provider value={onAction ?? null}>
+      <div
+        className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[16px] leading-8 md:text-[17px] md:leading-9"} [&_.katex]:text-[1.05em] [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:rounded-[18px] [&_.katex-display]:bg-white/8 [&_.katex-display]:px-4 [&_.katex-display]:py-3 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
       >
-        {normalized}
-      </ReactMarkdown>
-    </div>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm, remarkMath]}
+          rehypePlugins={[rehypeKatex]}
+          components={markdownComponents}
+        >
+          {normalized}
+        </ReactMarkdown>
+      </div>
+    </BlockActionContext.Provider>
   );
 });

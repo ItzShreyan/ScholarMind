@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
@@ -297,7 +297,7 @@ export function ThreeHero() {
         className="relative z-10 min-h-[320px] w-full rounded-[26px] sm:min-h-[400px] sm:rounded-[30px] lg:min-h-[500px]"
       />
 
-      <motion.div
+      <m.div
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.18, duration: 0.55 }}
@@ -307,9 +307,9 @@ export function ThreeHero() {
           Lecture Notes
         </p>
         <p className="mt-1 text-sm font-medium">Upload once. Revise with summaries, questions, and flashcards.</p>
-      </motion.div>
+      </m.div>
 
-      <motion.div
+      <m.div
         initial={{ opacity: 0, x: 24 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.28, duration: 0.55 }}
@@ -317,7 +317,7 @@ export function ThreeHero() {
       >
         <p className="text-xs text-[var(--accent-sky)]">Text, images, PDFs</p>
         <p className="mt-1 text-sm font-medium">Ask questions on your own material and step into active recall.</p>
-      </motion.div>
+      </m.div>
 
       <div className="glass pulse-glow playful-pop absolute right-4 top-4 rounded-full px-4 py-2 text-xs font-medium">
         Summary • Quiz • Flashcards
