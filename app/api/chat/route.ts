@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { normalizeAIText, normalizeErrorMessage } from "@/lib/ai/util";
 import { extractStructuredOutputWithReasoning } from "@/lib/ai/strip-reasoning";
-import { getOpenRouterKeys, isOpenRouterKeyLimitError } from "@/lib/ai/openrouter-keys";
+import { getOpenRouterKeys } from "@/lib/ai/openrouter-keys";
 import {
   formatChatLimitMessage,
   releaseChatUsage,
@@ -12,16 +12,22 @@ import { getSiteUrl } from "@/lib/site-url";
 import { createClient } from "@/lib/supabase/server";
 import { geminiProvider } from "@/lib/ai/providers/gemini";
 import { loadVisionAttachments } from "@/lib/ai/image-attachments";
+import { buildOpenRouterContent } from "@/lib/ai/providers/openrouter-content";
 import {
-  buildOpenRouterContent,
-  getOpenRouterModel,
-  type OpenRouterContent
-} from "@/lib/ai/providers/openrouter-content";
-
-type ProviderMessage = {
-  role: "system" | "user" | "assistant";
-  content: OpenRouterContent;
-};
+  CHAT_MODELS,
+  getModelChain,
+  normalizeModelChoice,
+  resolveChatModel,
+  type ChatModelChoice
+} from "@/lib/ai/models";
+import {
+  streamChatCompletion,
+  type ChatStreamEvent,
+  type ProviderMessage
+} from "@/lib/ai/openrouter-stream";
+import { buildChatSystemPrompt } from "@/lib/ai/prompts/chat-system";
+import { shouldResearchWeb } from "@/lib/ai/research-intent";
+import { researchWeb, type WebCitation, type WebResearch } from "@/lib/ai/web-research";
 
 function normalizeHistory(history: unknown): Array<{ role: "user" | "assistant"; content: string }> {
   if (!Array.isArray(history)) return [];
@@ -36,48 +42,42 @@ function normalizeHistory(history: unknown): Array<{ role: "user" | "assistant";
       return [{
         role: record?.role === "assistant" || record?.role === "ai" ? "assistant" : "user",
         content
-      } satisfies ProviderMessage];
+      } satisfies { role: "user" | "assistant"; content: string }];
     });
 }
 
-function buildSystemPrompt(context: string, screenContext: string) {
-  return [
-    "You are ScholarMind Tutor, a screen-aware AI tutor for students.",
-    "Respond like a normal helpful chat message, not JSON. Never return objects or tool wrappers.",
-    "If the user says hi, hey, asks how you are, or makes casual conversation, reply warmly in 1-2 short sentences.",
-    "For study questions, answer directly first, then teach step by step. Keep responses concise unless the student asks for depth.",
-    "If the student is answering a quiz, exam question, practice question, or asks you to help with a specific question, do not immediately reveal the final answer. Give hints, ask one guiding question, show the method, and only reveal the final answer after they explicitly ask for it or after they have attempted it.",
-    "If the student asks to be quizzed inside chat, create exactly one mini question with no answer shown yet, then wait for their attempt.",
-    "Use the uploaded/source-enabled material as the main evidence base. If a source does not contain enough information, say what is missing instead of guessing.",
-    "When useful, use clean headings, tables, formulas, or simple ASCII/markdown diagrams. Wrap maths in $...$ for inline or $$...$$ for block equations (e.g. $W = Fd\\cos\\theta$, $$P = \\frac{W}{t}$$).",
-    "You can suggest tools like AI Notes, Quiz, Flashcards, or Exam Generator when they help, but do not claim to run a tool unless the frontend has asked you to.",
-    "When the student asks to open a file, website, quiz, chat, or workspace tab, the frontend may handle navigation automatically. Acknowledge what they asked to open.",
-    context ? `Uploaded source context:\n${context}` : "",
-    screenContext ? `Current screen context:\n${screenContext}` : ""
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+type ScholarMindMeta = {
+  model: string;
+  tier: string;
+  choice: ChatModelChoice;
+  auto: boolean;
+  reason: string;
+  /**
+   * Live web sources that informed this answer. Present only when a search
+   * actually ran and returned something, so the UI can list real citations
+   * rather than implying research that never happened.
+   */
+  sources?: WebCitation[];
+};
+
+/** One SSE frame in the exact shape the client already parses. */
+function sseFrame(
+  delta: { content?: string; reasoning?: string },
+  meta?: ScholarMindMeta
+): string {
+  return `data: ${JSON.stringify({
+    choices: [{ delta: { content: delta.content ?? "", reasoning: delta.reasoning ?? "" } }],
+    ...(meta ? { scholarMind: meta } : {})
+  })}\n\n`;
 }
 
-function makeSseResponse(text: string, reasoning = "") {
-  const encoder = new TextEncoder();
-  const payload = JSON.stringify({
-    choices: [{ delta: { content: text, reasoning } }]
-  });
-  const body = new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      controller.close();
-    }
-  });
-
-  return new Response(body, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-store, must-revalidate"
-    }
-  });
+function buildMeta(
+  model: string,
+  tier: string,
+  choice: ChatModelChoice,
+  reason: string
+): ScholarMindMeta {
+  return { model, tier, choice, auto: choice === "auto", reason };
 }
 
 export async function POST(req: Request) {
@@ -120,132 +120,292 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: formatChatLimitMessage(siteSettings.chatDailyLimit) }, { status: 429 });
     }
 
+    const releaseUsage = async () => {
+      await releaseChatUsage({
+        supabase,
+        actorKey,
+        userId: user.id,
+        token: chatReservation.token,
+        persisted: chatReservation.persisted
+      });
+    };
+
     const context = normalizeAIText(input?.context || "");
     const screenContext = normalizeAIText(input?.screenContext || "");
     const vision = await loadVisionAttachments(user.id, input?.sessionId);
+    const history = normalizeHistory(input?.history || input?.messages);
+
+    /*
+     * Model selection.
+     *
+     * The client sends the student's Pro/Flash/Auto choice. The server resolves
+     * it authoritatively — Auto is classified on the *latest user question*
+     * only, not the whole enriched prompt, so accumulated context does not
+     * drag every follow-up onto the heavy model.
+     */
+    const choice = normalizeModelChoice(input?.modelChoice);
+    const hasImages = vision.attachments.length > 0;
+    const resolved = resolveChatModel(choice, message, hasImages);
+    const models = hasImages
+      ? getModelChain("vision")
+      : choice === "auto"
+        ? Array.from(new Set([resolved.modelId, ...getModelChain(resolved.tier as "pro" | "flash")]))
+        : getModelChain(choice);
+
+    /*
+     * Live web research.
+     *
+     * The tutor is grounded in the uploaded material, but a question about
+     * something recent — or any real question in a studio that has no sources
+     * yet — cannot be answered honestly from the model's memory alone.
+     *
+     * The decision comes from `shouldResearchWeb`, the same pure function the
+     * chat UI uses to label this stage, so the label can never describe work
+     * that was skipped. Failure or timeout is not an error: the answer simply
+     * proceeds without web evidence.
+     */
+    let research: WebResearch = { used: false, summary: "", citations: [] };
+    if (shouldResearchWeb(message, { hasSourceContext: Boolean(context.trim()) })) {
+      research = await researchWeb(message);
+    }
+
+    const meta: ScholarMindMeta = {
+      ...buildMeta(
+        resolved.modelId,
+        resolved.tier,
+        choice,
+        resolved.decision
+          ? `Auto chose ${CHAT_MODELS[resolved.decision.tier].label}${
+              resolved.decision.signals.length ? ` — this ${resolved.decision.signals.join(", ")}` : ""
+            }`
+          : `${CHAT_MODELS[choice as "pro" | "flash"]?.label ?? "Selected"} model`
+      ),
+      ...(research.used ? { sources: research.citations } : {})
+    };
 
     const messages: ProviderMessage[] = [
-      { role: "system", content: buildSystemPrompt(context, screenContext) },
-      ...normalizeHistory(input?.history || input?.messages),
+      { role: "system", content: buildChatSystemPrompt(context, screenContext, research.summary) },
+      ...history.map((item) => ({ role: item.role, content: item.content } satisfies ProviderMessage)),
       { role: "user", content: buildOpenRouterContent(message, vision.attachments) }
     ];
 
-    let data: { choices?: Array<{ message?: { content?: unknown; reasoning?: unknown } }> } | null = null;
-    const failures: string[] = [];
-    const model = getOpenRouterModel(vision.attachments, "chat");
-
-    if (vision.attachments.length) {
+    if (hasImages) {
       console.info("openrouter_vision_chat_request", {
         userId: user.id,
         sessionId: input?.sessionId,
         imageCount: vision.attachments.length,
-        model
+        model: resolved.modelId
       });
     }
 
-    for (const [index, apiKey] of apiKeys.entries()) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          "HTTP-Referer": getSiteUrl(),
-          "X-Title": "ScholarMind"
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: 0.35,
-          max_tokens: 1200,
-          reasoning: { exclude: true },
-          include_reasoning: false,
-          stream: false
-        })
+    if (!apiKeys.length) {
+      return await respondWithGeminiFallback({
+        userId: user.id,
+        message,
+        context,
+        screenContext,
+        history,
+        vision,
+        releaseUsage
       });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const detail = normalizeErrorMessage(await response.text(), `OpenRouter failed with status ${response.status}.`);
-        failures.push(`key ${index + 1}: ${detail}`);
-        if (index < apiKeys.length - 1 && isOpenRouterKeyLimitError(response.status, detail)) {
-          continue;
-        }
-        return NextResponse.json({ error: detail }, { status: response.status || 400 });
-      }
-
-      data = await response.json();
-      break;
     }
 
-    // Gemini remains a fallback for both visual and text chat if every
-    // OpenRouter key is unavailable, rate-limited, or rejects the request.
-    if (!data && geminiConfigured) {
-      try {
-        const result = await geminiProvider.generate({
-          action: "chat",
-          prompt: message,
-          context: [context, screenContext].filter(Boolean).join("\n\n"),
-          history: normalizeHistory(input?.history || input?.messages),
-          sessionId: typeof input?.sessionId === "string" ? input.sessionId : undefined,
-          imageAttachments: vision.attachments
-        });
-        if (result.text.trim()) {
-          console.info("chat_gemini_fallback_succeeded", {
-            userId: user.id,
-            sessionId: input?.sessionId,
-            imageCount: vision.attachments.length
-          });
-          const normalizedResult = extractStructuredOutputWithReasoning(result.text);
-          return makeSseResponse(normalizedResult.text, normalizedResult.reasoning);
-        }
-        failures.push("gemini: empty response");
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : "Unknown Gemini error";
-        console.error("chat_gemini_fallback_failed", {
+    /*
+     * Peek the first event before committing to a streaming response.
+     *
+     * This is what keeps correct HTTP semantics: if every model and key fails
+     * we can still return a JSON 400 and release the reserved usage, instead of
+     * opening a 200 stream that immediately dies.
+     */
+    const iterator = streamChatCompletion({
+      messages,
+      models,
+      apiKeys,
+      tier: resolved.tier,
+      temperature: 0.35,
+      maxTokens: 1400,
+      includeReasoning: resolved.tier !== "vision" || hasImages,
+      referer: getSiteUrl()
+    });
+
+    const first = await iterator.next();
+
+    const firstFailure = first.done
+      ? "The AI stream ended before producing anything."
+      : first.value.type === "error"
+        ? first.value.message
+        : null;
+
+    if (firstFailure) {
+      if (geminiConfigured) {
+        return await respondWithGeminiFallback({
           userId: user.id,
-          sessionId: input?.sessionId,
-          imageCount: vision.attachments.length,
-          message: detail
+          message,
+          context,
+          screenContext,
+          history,
+          vision,
+          releaseUsage,
+          priorFailure: firstFailure
         });
-        failures.push(`gemini: ${detail}`);
       }
+
+      await releaseUsage();
+      return NextResponse.json({ error: firstFailure }, { status: 400 });
     }
 
-    if (!data) {
-      await releaseChatUsage({
-        supabase,
-        actorKey,
-        userId: user.id,
-        token: chatReservation.token,
-        persisted: chatReservation.persisted
-      });
-      return NextResponse.json({ error: `All OpenRouter keys failed. ${failures.join(" | ")}` }, { status: 400 });
+    /*
+     * `IteratorResult` types `value` as `ChatStreamEvent | void`, so `done` has
+     * to be narrowed before the event can be read off it. At this point the
+     * first event is known to be a real `model` event.
+     */
+    const firstEvent = first.done ? undefined : (first.value as ChatStreamEvent);
+    if (!firstEvent || firstEvent.type !== "model") {
+      await releaseUsage();
+      return NextResponse.json({ error: "The AI stream returned an unexpected first event." }, { status: 400 });
     }
 
-    const rawText = normalizeAIText(data.choices?.[0]?.message?.content);
-    const normalizedResult = extractStructuredOutputWithReasoning(rawText);
-    const text = normalizedResult.text;
-    const reasoning = normalizedResult.reasoning;
-    if (!text) {
-      await releaseChatUsage({
-        supabase,
-        actorKey,
-        userId: user.id,
-        token: chatReservation.token,
-        persisted: chatReservation.persisted
-      });
-      return NextResponse.json({ error: "OpenRouter returned an empty chat message." }, { status: 400 });
-    }
+    const encoder = new TextEncoder();
 
-    return makeSseResponse(text, reasoning);
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        let closed = false;
+        try {
+          controller.enqueue(encoder.encode(sseFrame({}, { ...meta, model: firstEvent.model })));
+
+          for await (const event of iterator) {
+            if (event.type === "model") {
+              controller.enqueue(encoder.encode(sseFrame({}, { ...meta, model: event.model })));
+              continue;
+            }
+
+            if (event.type === "error") {
+              // Tokens already reached the student, so surface this in-band
+              // rather than pretending the answer was complete.
+              controller.enqueue(encoder.encode(sseFrame({ content: `\n\n_${event.message}_` })));
+              continue;
+            }
+
+            controller.enqueue(
+              encoder.encode(sseFrame({ content: event.content, reasoning: event.reasoning }))
+            );
+          }
+
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        } catch (error) {
+          controller.enqueue(
+            encoder.encode(
+              sseFrame({ content: `\n\n_${normalizeErrorMessage(error, "The answer stopped early.")}_` })
+            )
+          );
+        } finally {
+          if (!closed) {
+            closed = true;
+            controller.close();
+          }
+        }
+      }
+    });
+
+    return new Response(body, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        Connection: "keep-alive",
+        // Disable proxy buffering so tokens actually arrive incrementally.
+        "X-Accel-Buffering": "no"
+      }
+    });
   } catch (error) {
     return NextResponse.json(
       { error: normalizeErrorMessage(error, "Unable to contact the AI tutor.") },
+      { status: 400 }
+    );
+  }
+}
+
+/**
+ * Gemini is the last-resort provider. Used only when every OpenRouter key and
+ * model failed, and only when nothing has been streamed yet — so it can never
+ * restarts an answer the student is already reading.
+ */
+async function respondWithGeminiFallback({
+  userId,
+  message,
+  context,
+  screenContext,
+  history,
+  vision,
+  releaseUsage,
+  priorFailure
+}: {
+  userId: string;
+  message: string;
+  context: string;
+  screenContext: string;
+  history: Array<{ role: "user" | "assistant"; content: string }>;
+  vision: Awaited<ReturnType<typeof loadVisionAttachments>>;
+  releaseUsage: () => Promise<void>;
+  priorFailure?: string;
+}) {
+  try {
+    const result = await geminiProvider.generate({
+      action: "chat",
+      prompt: message,
+      context: [context, screenContext].filter(Boolean).join("\n\n"),
+      history,
+      sessionId: undefined,
+      imageAttachments: vision.attachments
+    });
+
+    const normalized = extractStructuredOutputWithReasoning(result.text);
+    if (normalized.text.trim()) {
+      console.info("chat_gemini_fallback_succeeded", {
+        userId,
+        imageCount: vision.attachments.length,
+        priorFailure: priorFailure ? "yes" : "no"
+      });
+
+      const encoder = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              sseFrame(
+                {},
+                buildMeta("gemini-fallback", "gemini", "auto", "OpenRouter was unavailable, so Gemini answered")
+              )
+            )
+          );
+          controller.enqueue(
+            encoder.encode(sseFrame({ content: normalized.text, reasoning: normalized.reasoning }))
+          );
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        }
+      });
+
+      return new Response(body, {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          "X-Accel-Buffering": "no"
+        }
+      });
+    }
+
+    await releaseUsage();
+    return NextResponse.json({ error: "Gemini returned an empty chat message." }, { status: 400 });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown Gemini error";
+    console.error("chat_gemini_fallback_failed", {
+      userId,
+      imageCount: vision.attachments.length,
+      message: detail
+    });
+    await releaseUsage();
+    return NextResponse.json(
+      { error: priorFailure ? `${priorFailure} | gemini: ${detail}` : `gemini: ${detail}` },
       { status: 400 }
     );
   }

@@ -85,8 +85,17 @@ const nextConfig: NextConfig = {
       {
         // This must follow the catch-all rule so it replaces the app CSP rather
         // than intersecting with `base-uri 'self'` on the proxied document.
+        //
+        // X-Frame-Options is repeated here on purpose. Proxied pages are
+        // rendered inside the studio's sandboxed iframe, so the app-wide DENY
+        // would blank it out. Everything else stays inherited from the
+        // catch-all rule above — only this one header is loosened, and only
+        // for this route.
         source: "/api/browse-proxy",
-        headers: [{ key: "Content-Security-Policy", value: browseProxyCsp }]
+        headers: [
+          { key: "Content-Security-Policy", value: browseProxyCsp },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" }
+        ]
       }
     ];
   }

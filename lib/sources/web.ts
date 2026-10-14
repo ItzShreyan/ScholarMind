@@ -172,18 +172,6 @@ function uniqueResults(results: WebSourceResult[], query: string) {
     .sort((a, b) => scoreResult(b, query) - scoreResult(a, query));
 }
 
-function flattenDuckTopics(items: unknown[]): Array<{ Text?: string; FirstURL?: string }> {
-  return items.flatMap((item) => {
-    if (!item || typeof item !== "object") return [];
-
-    if ("Topics" in item && Array.isArray(item.Topics)) {
-      return flattenDuckTopics(item.Topics);
-    }
-
-    return [item as { Text?: string; FirstURL?: string }];
-  });
-}
-
 function cleanReadableText(text: string) {
   const articleOnly = text
     .replace(/```[\s\S]*?```/g, " ")

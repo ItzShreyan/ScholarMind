@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, useReducedMotion, useScroll, useSpring, useTransform } from "framer-motion";
+import { m, useReducedMotion, useScroll, useSpring, useTransform } from "framer-motion";
 
 const sceneCards = [
   {
@@ -114,7 +114,7 @@ export function ScrollShowcase() {
                       <span>{item.value}</span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-[rgba(16,23,39,0.08)]">
-                      <motion.div
+                      <m.div
                         style={{ width: item.width }}
                         className="h-full rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                       />
@@ -158,11 +158,11 @@ export function ScrollShowcase() {
 
       <div className="panel panel-border relative overflow-hidden rounded-[34px] px-5 py-6 sm:px-6 lg:px-8 lg:py-8">
         <div className="mesh-overlay absolute inset-0 opacity-30" />
-        <motion.div
+        <m.div
           style={{ scale: auraScale, opacity: auraOpacity }}
           className="pointer-events-none absolute left-1/2 top-1/2 h-[18rem] w-[18rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(255,209,102,0.28),rgba(255,125,89,0.1)_44%,transparent_70%)] blur-2xl sm:h-[22rem] sm:w-[22rem] lg:h-[25rem] lg:w-[25rem]"
         />
-        <motion.div
+        <m.div
           style={{ scale: auraScale }}
           className="pointer-events-none absolute inset-x-8 top-8 h-24 rounded-full bg-[rgba(57,208,255,0.14)] blur-3xl sm:inset-x-12 sm:h-28 lg:inset-x-16 lg:h-32"
         />
@@ -183,7 +183,7 @@ export function ScrollShowcase() {
         </div>
 
         <div className="perspective-stage relative z-10 mt-6 grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)_15rem] lg:grid-rows-[1fr_auto]">
-          <motion.article
+          <m.article
             style={{ y: leftCardY, rotate: leftCardRotate }}
             className="glass will-change-transform self-center rounded-[28px] p-4 shadow-[0_24px_60px_rgba(255,125,89,0.18)]"
           >
@@ -193,9 +193,9 @@ export function ScrollShowcase() {
             </p>
             <h3 className="mt-2 text-lg font-semibold">{sceneCards[0].title}</h3>
             <p className="muted mt-2 text-sm">{sceneCards[0].copy}</p>
-          </motion.article>
+          </m.article>
 
-          <motion.div
+          <m.div
             style={{
               rotateX: boardRotateX,
               rotateY: boardRotateY,
@@ -256,7 +256,7 @@ export function ScrollShowcase() {
                           <span>{item.value}</span>
                         </div>
                         <div className="h-2 overflow-hidden rounded-full bg-[rgba(16,23,39,0.08)]">
-                          <motion.div
+                          <m.div
                             style={{ width: item.width }}
                             className="h-full rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                           />
@@ -267,10 +267,10 @@ export function ScrollShowcase() {
                 </div>
               </div>
             </div>
-          </motion.div>
+          </m.div>
 
           <div className="grid gap-4">
-          <motion.article
+          <m.article
             style={{ y: rightCardY, rotate: rightCardRotate }}
             className="glass will-change-transform rounded-[28px] p-4 shadow-[0_24px_60px_rgba(57,208,255,0.18)]"
           >
@@ -280,9 +280,9 @@ export function ScrollShowcase() {
               </p>
               <h3 className="mt-2 text-lg font-semibold">{sceneCards[1].title}</h3>
               <p className="muted mt-2 text-sm">{sceneCards[1].copy}</p>
-            </motion.article>
+            </m.article>
 
-            <motion.article
+            <m.article
               style={{ y: bottomCardY, scale: bottomCardScale }}
               className="glass will-change-transform rounded-[30px] p-4 shadow-[0_30px_80px_rgba(15,23,42,0.18)]"
             >
@@ -308,7 +308,7 @@ export function ScrollShowcase() {
                   </span>
                 ))}
               </div>
-            </motion.article>
+            </m.article>
           </div>
 
           <div className="relative z-10 flex items-center justify-between gap-4 lg:col-span-3">

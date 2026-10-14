@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ListMusic, LoaderCircle, LogOut, Pause, Play, Radio, Search, SkipBack, SkipForward, X } from "lucide-react";
-import { motion } from "framer-motion";
+import { ArrowLeft, ListMusic, LoaderCircle, LogOut, Pause, Play, Search, SkipBack, SkipForward, X } from "lucide-react";
+import { m } from "framer-motion";
 import { formatTrackDuration } from "@/lib/music/spotify-catalog";
 import { useSpotifyPlaybackContext } from "@/components/dashboard/useSpotifyPlayback";
 
@@ -41,9 +41,6 @@ function useSystemAudioTrack() {
         // MediaSession not available
       }
     };
-
-    const handlePlay = () => setSystemAudio((current) => (current ? { ...current, isPlaying: true } : current));
-    const handlePause = () => setSystemAudio((current) => (current ? { ...current, isPlaying: false } : current));
 
     updateMetadata();
 
@@ -583,7 +580,7 @@ function TrackRow({
   onPlay: () => void;
 }) {
   return (
-    <motion.button
+    <m.button
       type="button"
       onClick={onPlay}
       whileHover={{ x: 3, scale: 1.01 }}
@@ -606,6 +603,6 @@ function TrackRow({
       <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]">
         {formatTrackDuration(track.durationMs)}
       </span>
-    </motion.button>
+    </m.button>
   );
 }

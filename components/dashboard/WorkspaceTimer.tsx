@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { Play, Timer } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
@@ -183,7 +183,7 @@ export function WorkspaceTimer({
         </div>
       ) : null}
       {breakPopupOpen && timerPhase === "break" ? (
-        <motion.div
+        <m.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[24px] border border-[rgba(121,247,199,0.24)] bg-[linear-gradient(135deg,rgba(121,247,199,0.16),rgba(57,208,255,0.14))] px-4 py-3 text-sm"
@@ -214,7 +214,7 @@ export function WorkspaceTimer({
               Close
             </Button>
           </div>
-        </motion.div>
+        </m.div>
       ) : null}
     </>
   );

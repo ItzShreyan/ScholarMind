@@ -11,22 +11,27 @@ function getChallengeSecret() {
 }
 
 async function computeHmacHex(secret: string, data: string): Promise<string> {
-  // Prefer Web Crypto (Edge/runtime-safe) when available.
-  const maybeGlobal = globalThis as unknown as { crypto?: { subtle: SubtleCrypto } };
-  if (maybeGlobal.crypto?.subtle) {
-    const subtle = maybeGlobal.crypto.subtle as SubtleCrypto;
-    const encoder = new TextEncoder();
-    const keyData = encoder.encode(secret);
-    const key = await subtle.importKey("raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    const signature = await subtle.sign("HMAC", key, encoder.encode(data));
-    const arr = new Uint8Array(signature as ArrayBuffer);
-    return Array.from(arr).map((b) => b.toString(16).padStart(2, "0")).join("");
-  }
-
-  // Fallback: dynamically import Node's crypto when Web Crypto isn't available.
-  const modName = ["c", "r", "y", "p", "t", "o"].join("");
-  const { createHmac } = await import(modName);
-  return createHmac("sha256", secret).update(data).digest("hex");
+  /*
+   * Web Crypto is present in both runtimes this module executes in: the Edge
+   * middleware runtime, and Node 18+ (which exposes `crypto.subtle` as a
+   * global). There is deliberately no Node-`crypto` fallback: reaching for it
+   * required a dynamic, non-static import specifier that made the bundler emit
+   * a "Critical dependency: the request of a dependency is an expression"
+   * warning on every build while never actually executing.
+   */
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(data));
+  const bytes = new Uint8Array(signature);
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
