@@ -37,6 +37,7 @@
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "tesseract.js": "^5.1.1",
+    "thinking-orbs": "^0.3.1",
     "three": "^0.171.0",
     "xlsx": "^0.18.5",
     "zod": "^3.24.1"
