@@ -1,117 +1,96 @@
 "use client";
 
-import React, { memo, useEffect, useId, useMemo, useState } from "react";
+import React, { memo, useMemo } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { ExternalLink } from "lucide-react";
 import { BlockActionContext, readBlockLanguage, renderChatBlock } from "@/components/dashboard/chat-blocks";
+import { StudyCodeBlock } from "@/components/dashboard/study-text/StudyCodeBlock";
+import { StudyMermaid } from "@/components/dashboard/study-text/StudyMermaid";
+import { StudyCallout, type CalloutKind } from "@/components/dashboard/study-text/StudyCallout";
+import { extractCallouts, readCalloutFenceLanguage } from "@/lib/markdown-callouts";
+import { prepareStudyContent } from "@/lib/markdown-math";
+import { isSafeHref } from "@/lib/safe-markup";
 
-const latexCommandPattern =
-  /\\(?:text|frac|sqrt|cos|sin|tan|log|ln|theta|alpha|beta|gamma|delta|pi|sigma|phi|omega|times|cdot|pm|leq|geq|neq|infty|sum|int|vec|hat|bar|left|right|mathrm|mathbf|overline|underline|approx|propto|partial|nabla|mu|lambda|rho|epsilon|degree)/i;
+/**
+ * The tutor's answer, typeset.
+ *
+ * This is the most-read surface in ScholarMind, so it is built like a page of a
+ * textbook rather than like a chat bubble:
+ *
+ *   - measure is constrained, so lines stay readable at any panel width
+ *   - headings carry hierarchy instead of being bold paragraphs
+ *   - tables scroll horizontally rather than pushing the panel wider
+ *   - display equations get their own line and never overflow
+ *   - code is labelled and copyable
+ *   - callouts are annotated, not shouted
+ *
+ * Two rendering rules matter for safety:
+ *   1. links are only rendered as links when `isSafeHref` approves the target;
+ *      anything else becomes plain text rather than a dead or dangerous anchor
+ *   2. fenced blocks are handled by the `pre` override alone. React Markdown
+ *      applies overrides recursively, so overriding `code` as well would mean a
+ *      block reached `pre` already wrapped — inline code is styled by CSS.
+ */
 
-function normalizeStudyContent(content: string) {
-  const normalized = content.replace(/^Local fallback response\s*/i, "").trim();
+/** Flatten rendered children back to text (used for callout/label detection). */
+function nodeToText(node: React.ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
 
-  if (!normalized || normalized === "[object Object]" || normalized === "{}") {
-    return "Something went wrong generating that reply. Please try again.";
-  }
+  if (Array.isArray(node)) return node.map(nodeToText).join("");
 
-  return normalized;
+  const element = node as React.ReactElement<{ children?: React.ReactNode }>;
+  if (element?.props?.children) return nodeToText(element.props.children);
+
+  return "";
 }
 
-function prepareMathContent(content: string) {
-  let prepared = content;
+const CALLOUT_KIND_MAP: Record<string, CalloutKind> = {
+  note: "NOTE",
+  tip: "TIP",
+  important: "IMPORTANT",
+  warning: "WARNING",
+  caution: "CAUTION"
+};
 
-  prepared = prepared.replace(/\\\(([\\s\\S]+?)\\\)/g, (_, math) => `$${math.trim()}$`);
-  prepared = prepared.replace(/\\\[([\\s\\S]+?)\\\]/g, (_, math) => `$$${math.trim()}$$`);
-
-  prepared = prepared.replace(/\(([^()\n]{1,180})\)/g, (match, inner: string) => {
-    if (inner.includes("$")) return match;
-    if (!latexCommandPattern.test(inner) && !/[=^_\\]/.test(inner)) return match;
-    return `$${inner.trim()}$`;
-  });
-
-  prepared = prepared.replace(/\[(\s*P\s*=\s*[^[\n]{1,80})\]/gi, (_, math) => `$$${math.trim()}$$`);
-
-  return prepared;
+/** Language label for a `<pre>`'s child `<code>`. */
+function readCodeClassName(children: React.ReactNode): string | undefined {
+  const first = React.Children.toArray(children)[0] as
+    | React.ReactElement<{ className?: string }>
+    | undefined;
+  return first?.props?.className;
 }
 
-const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
-  const chartId = useId().replace(/:/g, "-");
-  const [svg, setSvg] = useState("");
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let ignore = false;
-
-    const renderChart = async () => {
-      try {
-        const mermaidModule = await import("mermaid");
-        const mermaid = mermaidModule.default;
-        
-        // Ensure robust initialization
-        mermaid.initialize({
-          startOnLoad: false,
-          theme: document.documentElement.classList.contains("light") ? "default" : "dark",
-          securityLevel: "strict",
-          suppressErrorRendering: true
-        });
-
-        // Mermaid may sometimes throw during render
-        const { svg } = await mermaid.render(`mermaid-${chartId}`, chart);
-        
-        if (!ignore) {
-          setSvg(svg);
-          setFailed(false);
-        }
-      } catch {
-        // Clean up orphaned error nodes that mermaid might have appended to the body
-        const errorNode = document.getElementById(`dmermaid-${chartId}`);
-        if (errorNode) {
-          errorNode.remove();
-        }
-        
-        if (!ignore) {
-          setFailed(true);
-        }
-      }
-    };
-
-    void renderChart();
-
-    return () => {
-      ignore = true;
-    };
-  }, [chart, chartId]);
-
-  if (failed) {
-    return (
-      <div className="my-4 overflow-hidden rounded-[22px] border border-white/10 bg-black/20 shadow-sm">
-        <div className="flex items-center justify-between border-b border-white/10 bg-white/5 px-4 py-2">
-          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--muted)]">
-            Diagram (Syntax Error)
-          </span>
-        </div>
-        <pre className="overflow-x-auto p-4 text-sm leading-7 text-slate-300">
-          <code className="font-mono">{chart}</code>
-        </pre>
-      </div>
-    );
-  }
-
-  if (!svg) {
-    return <div className="rounded-[20px] bg-black/10 px-4 py-6 text-sm">Rendering diagram...</div>;
-  }
-
+/**
+ * A single markdown render pass.
+ *
+ * Callouts re-enter here with `depth` raised, because a callout body is
+ * markdown in its own right. Depth is capped so a pathological answer cannot
+ * recurse indefinitely.
+ */
+function MarkdownBody({
+  markdown,
+  components,
+  depth
+}: {
+  markdown: string;
+  components: Components;
+  depth: number;
+}) {
   return (
-    <div
-      className="overflow-x-auto rounded-[20px] bg-black/10 p-4"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      components={components}
+    >
+      {markdown}
+    </ReactMarkdown>
   );
-});
+}
 
 export const RichStudyText = memo(function RichStudyText({
   content,
@@ -127,114 +106,99 @@ export const RichStudyText = memo(function RichStudyText({
    */
   onAction?: (text: string) => void;
 }) {
-  const normalized = useMemo(() => prepareMathContent(normalizeStudyContent(content)), [content]);
-  const markdownComponents = useMemo<Components>(
-    () => ({
-      a: (props) => (
-        <a {...props} target="_blank" rel="noreferrer" className="text-[var(--accent-sky)] underline underline-offset-4" />
-      ),
-      pre: ({ children }) => <>{children}</>,
-      code: ({ className, children, ...props }) => {
-        const codeText = String(children).replace(/\n$/, "");
-        const inline = !className;
-        if (inline) {
-          return (
-            <code {...props} className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-[0.95em] text-[var(--accent-gold)]">
-              {children}
-            </code>
-          );
-        }
+  const prepared = useMemo(() => extractCallouts(prepareStudyContent(content)), [content]);
 
-        if ((className || "").includes("language-mermaid")) {
-          return <MermaidBlock chart={codeText} />;
-        }
+  const components = useMemo<Components>(() => {
+    /*
+     * Fenced blocks. The only place blocks are handled — see the file comment
+     * for why `code` is not overridden.
+     */
+    const renderFence = (children: React.ReactNode, depth: number): React.ReactElement | null => {
+      const className = readCodeClassName(children);
+      const code = nodeToText(children).replace(/\n$/, "");
 
-        /*
-         * Custom answer blocks. A parser that cannot read the fence returns
-         * null, and we fall through to the plain code renderer so the student
-         * always sees something readable.
-         */
-        const blockLanguage = readBlockLanguage(className);
-        if (blockLanguage) {
-          const block = renderChatBlock(blockLanguage, codeText);
-          if (block) return block;
-        }
-
+      const calloutKind = readCalloutFenceLanguage(className);
+      if (calloutKind) {
+        const kind = CALLOUT_KIND_MAP[calloutKind];
+        // Re-parse the body so markdown inside a callout still works.
         return (
-          <div className="my-4 overflow-hidden rounded-[22px] border border-white/10 bg-[#111827] shadow-[0_20px_80px_rgba(0,0,0,0.22)]">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-white/6 px-4 py-2">
-              <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--accent-sky)]">
-                Code
-              </span>
-              <span className="rounded-full bg-[rgba(255,178,105,0.16)] px-2 py-1 text-[10px] font-semibold text-[var(--accent-gold)]">
-                AI Code Output May Make Mistakes.
-              </span>
-            </div>
-            <pre className="overflow-x-auto p-4 text-sm leading-7 text-slate-100">
-              <code {...props} className={`${className || ""} font-mono`}>
-                {children}
-              </code>
-            </pre>
-          </div>
-        );
-      },
-      blockquote: (props: React.ComponentPropsWithoutRef<"blockquote"> & { node?: unknown }) => {
-        // Extract text to check for callout types
-        const children = props.children as React.ReactNode | undefined;
-        let text = "";
-        const extractText = (child: unknown): string => {
-          if (typeof child === "string") return child;
-          if (Array.isArray(child)) return child.map(extractText).join("");
-          if (typeof child === "object" && child !== null) {
-            const maybe = child as { props?: { children?: unknown } };
-            if (maybe.props && maybe.props.children) return extractText(maybe.props.children);
-          }
-          return "";
-        };
-        text = extractText(children);
-        
-        const match = text.match(/^\s*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i);
-        if (match) {
-          const type = match[1].toUpperCase();
-          const colors: Record<string, string> = {
-            NOTE: "border-l-blue-500 bg-blue-500/10 text-blue-100",
-            TIP: "border-l-green-500 bg-green-500/10 text-green-100",
-            IMPORTANT: "border-l-purple-500 bg-purple-500/10 text-purple-100",
-            WARNING: "border-l-yellow-500 bg-yellow-500/10 text-yellow-100",
-            CAUTION: "border-l-red-500 bg-red-500/10 text-red-100"
-          };
-          const colorClass = colors[type] || colors.NOTE;
-          
-          return (
-            <blockquote {...props} className={`my-4 overflow-hidden rounded-[18px] border border-white/5 border-l-4 px-5 py-3 ${colorClass}`}>
-              <div className="mb-1 text-[11px] font-bold uppercase tracking-wider opacity-80">{type}</div>
-              <div className="[&>p:first-child]:inline">{children}</div>
-            </blockquote>
-          );
-        }
-
-        return (
-          <blockquote {...props} className="my-4 overflow-hidden rounded-[18px] border border-white/5 border-l-4 border-l-white/20 bg-white/5 px-5 py-3 italic text-white/80">
-            {children}
-          </blockquote>
+          <StudyCallout kind={kind}>
+            {depth < 2 ? (
+              <MarkdownBody markdown={code} components={components} depth={depth + 1} />
+            ) : (
+              <p>{code}</p>
+            )}
+          </StudyCallout>
         );
       }
-    }),
-    []
-  );
+
+      if (/language-mermaid/i.test(className ?? "")) {
+        return <StudyMermaid chart={code} />;
+      }
+
+      const blockLanguage = readBlockLanguage(className);
+      if (blockLanguage) {
+        const block = renderChatBlock(blockLanguage, code);
+        if (block) return block;
+      }
+
+      return <StudyCodeBlock code={code} className={className} />;
+    };
+
+    const build = (depth: number): Components => ({
+      pre: ({ children }) => renderFence(children, depth),
+
+      a: ({ href, children, ...rest }) => {
+        // Never render an unsafe target. The text is still readable.
+        if (!isSafeHref(href)) {
+          return <span className="study-link-blocked">{children}</span>;
+        }
+
+        const isExternal = typeof href === "string" && /^https?:/i.test(href);
+
+        return (
+          <a
+            {...rest}
+            href={href}
+            className="study-link"
+            {...(isExternal ? { target: "_blank", rel: "noreferrer noopener" } : {})}
+          >
+            {children}
+            {isExternal ? (
+              <ExternalLink className="study-link-icon" aria-hidden="true" />
+            ) : null}
+          </a>
+        );
+      },
+
+      table: ({ children }) => (
+        <div className="study-table-wrap" tabIndex={0} role="region" aria-label="Table">
+          <table className="study-table">{children}</table>
+        </div>
+      ),
+
+      img: ({ src, alt }) => {
+        // Answers should not pull remote images into a study page.
+        if (typeof src !== "string" || !isSafeHref(src)) {
+          return alt ? <span className="study-link-blocked">[{alt}]</span> : null;
+        }
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt={alt ?? ""} className="study-image" loading="lazy" />
+        );
+      }
+    });
+
+    return build(0);
+  }, []);
 
   return (
     <BlockActionContext.Provider value={onAction ?? null}>
       <div
-        className={`rich-study-text ${compact ? "text-sm leading-7" : "text-[16px] leading-8 md:text-[17px] md:leading-9"} [&_.katex]:text-[1.05em] [&_.katex-display]:my-4 [&_.katex-display]:overflow-x-auto [&_.katex-display]:rounded-[18px] [&_.katex-display]:bg-white/8 [&_.katex-display]:px-4 [&_.katex-display]:py-3 [&_h1]:mt-6 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_hr]:my-5 [&_hr]:border-white/10 [&_ol]:ml-5 [&_ol]:list-decimal [&_ol]:space-y-2 [&_p]:my-3 [&_pre]:my-4 [&_table]:my-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-white/10 [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-white/10 [&_th]:bg-white/8 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_ul]:ml-5 [&_ul]:list-disc [&_ul]:space-y-2`}
+        className={`rich-study-text ${compact ? "rich-study-text-compact" : ""}`}
+        data-compact={compact ? "true" : "false"}
       >
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[rehypeKatex]}
-          components={markdownComponents}
-        >
-          {normalized}
-        </ReactMarkdown>
+        <MarkdownBody markdown={prepared} components={components} depth={0} />
       </div>
     </BlockActionContext.Provider>
   );

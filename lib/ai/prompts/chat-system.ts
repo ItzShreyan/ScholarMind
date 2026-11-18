@@ -96,11 +96,18 @@ const WEB_RESEARCH_RULES = [
 export function buildChatSystemPrompt(
   context: string,
   screenContext: string,
-  webResearch = ""
+  webResearch = "",
+  /**
+   * The tutor mode the student chose. Its instruction is inserted *after* the
+   * teaching rules so it refines them rather than contradicting them, and it
+   * never replaces the evidence rules above.
+   */
+  modeInstruction = ""
 ): string {
   return [
     ...TEACHING_RULES,
     BLOCK_FORMAT,
+    modeInstruction,
     webResearch ? [...WEB_RESEARCH_RULES, webResearch].join("\n") : "",
     context ? `Uploaded source context:\n${context}` : "",
     screenContext ? `Current screen context:\n${screenContext}` : ""

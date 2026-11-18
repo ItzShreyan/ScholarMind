@@ -26,8 +26,14 @@ import {
   type ProviderMessage
 } from "@/lib/ai/openrouter-stream";
 import { buildChatSystemPrompt } from "@/lib/ai/prompts/chat-system";
-import { shouldResearchWeb } from "@/lib/ai/research-intent";
-import { researchWeb, type WebCitation, type WebResearch } from "@/lib/ai/web-research";
+import { learningModeInstruction, normalizeLearningMode } from "@/lib/ai/learning-modes";
+import {
+  normalizeWebSearchMode,
+  planWebResearch,
+  type WebSearchMode
+} from "@/lib/ai/research-intent";
+import { researchWeb, type WebCitation } from "@/lib/ai/web-research";
+import { researchWebDeep } from "@/lib/ai/deep-research";
 
 function normalizeHistory(history: unknown): Array<{ role: "user" | "assistant"; content: string }> {
   if (!Array.isArray(history)) return [];
@@ -58,6 +64,22 @@ type ScholarMindMeta = {
    * rather than implying research that never happened.
    */
   sources?: WebCitation[];
+  /**
+   * What the research step actually did for this turn. Absent when no search
+   * ran, so the UI can distinguish "found nothing" from "did not look".
+   */
+  research?: {
+    mode: WebSearchMode;
+    depth: "quick" | "deep";
+    /** Queries actually issued, in order. Empty for a quick pass. */
+    queries: string[];
+    /** Independent domains that contributed evidence. */
+    domains: string[];
+    /** True when part of the pass failed, with the reason. */
+    degraded?: string;
+    /** Number of possible conflicts quoted in the brief. */
+    conflicts: number;
+  };
 };
 
 /** One SSE frame in the exact shape the client already parses. */
@@ -136,6 +158,13 @@ export async function POST(req: Request) {
     const history = normalizeHistory(input?.history || input?.messages);
 
     /*
+     * The tutor mode shapes how an answer is conducted; it never changes what
+     * counts as evidence. A client sending something unrecognised gets the
+     * default rather than a failed request.
+     */
+    const modeInstruction = learningModeInstruction(normalizeLearningMode(input?.learningMode));
+
+    /*
      * Model selection.
      *
      * The client sends the student's Pro/Flash/Auto choice. The server resolves
@@ -159,14 +188,79 @@ export async function POST(req: Request) {
      * something recent — or any real question in a studio that has no sources
      * yet — cannot be answered honestly from the model's memory alone.
      *
-     * The decision comes from `shouldResearchWeb`, the same pure function the
-     * chat UI uses to label this stage, so the label can never describe work
-     * that was skipped. Failure or timeout is not an error: the answer simply
-     * proceeds without web evidence.
+     * What runs is decided by `planWebResearch`, a pure dependency-free
+     * function the chat UI imports too, so the stage the student sees is
+     * produced by exactly the same decision that runs here. The student can
+     * override it from the composer; the server still validates the mode.
+     *
+     * Deep mode is a genuinely different pass: several queries, merged and
+     * cross-checked evidence, and quoted conflicts. It is bounded by its own
+     * deadline so an ordinary question stays fast unless deep was asked for.
+     * Failure or timeout is never an error: the answer simply proceeds without
+     * web evidence, and the meta says what actually happened.
      */
-    let research: WebResearch = { used: false, summary: "", citations: [] };
-    if (shouldResearchWeb(message, { hasSourceContext: Boolean(context.trim()) })) {
-      research = await researchWeb(message);
+    const webSearchMode: WebSearchMode = normalizeWebSearchMode(input?.webSearchMode);
+    const researchPlan = planWebResearch(webSearchMode, message, {
+      hasSourceContext: Boolean(context.trim())
+    });
+
+    let researchSummary = "";
+    let researchSources: WebCitation[] = [];
+    let researchMeta: ScholarMindMeta["research"] | undefined;
+
+    if (researchPlan.search && researchPlan.depth === "deep") {
+      const deep = await researchWebDeep(message);
+      if (deep.used) {
+        researchSummary = deep.summary;
+        researchSources = deep.citations.map((citation) => ({
+          title: citation.title,
+          url: citation.url,
+          source: citation.source,
+          trustLabel: citation.trustLabel
+        }));
+        researchMeta = {
+          mode: webSearchMode,
+          depth: "deep",
+          queries: deep.queries,
+          domains: deep.domains,
+          conflicts: deep.tensions.length,
+          ...(deep.degraded ? { degraded: deep.degraded } : {})
+        };
+      } else if (deep.degraded) {
+        researchMeta = {
+          mode: webSearchMode,
+          depth: "deep",
+          queries: deep.queries,
+          domains: [],
+          conflicts: 0,
+          degraded: deep.degraded
+        };
+      }
+    } else if (researchPlan.search) {
+      const quick = await researchWeb(message);
+      if (quick.used) {
+        researchSummary = quick.summary;
+        researchSources = quick.citations;
+        researchMeta = {
+          mode: webSearchMode,
+          depth: "quick",
+          queries: [],
+          domains: Array.from(
+            new Set(
+              quick.citations
+                .map((citation) => {
+                  try {
+                    return new URL(citation.url).hostname.replace(/^www\./, "");
+                  } catch {
+                    return "";
+                  }
+                })
+                .filter(Boolean)
+            )
+          ),
+          conflicts: 0
+        };
+      }
     }
 
     const meta: ScholarMindMeta = {
@@ -180,11 +274,12 @@ export async function POST(req: Request) {
             }`
           : `${CHAT_MODELS[choice as "pro" | "flash"]?.label ?? "Selected"} model`
       ),
-      ...(research.used ? { sources: research.citations } : {})
+      ...(researchSources.length ? { sources: researchSources } : {}),
+      ...(researchMeta ? { research: researchMeta } : {})
     };
 
     const messages: ProviderMessage[] = [
-      { role: "system", content: buildChatSystemPrompt(context, screenContext, research.summary) },
+      { role: "system", content: buildChatSystemPrompt(context, screenContext, researchSummary, modeInstruction) },
       ...history.map((item) => ({ role: item.role, content: item.content } satisfies ProviderMessage)),
       { role: "user", content: buildOpenRouterContent(message, vision.attachments) }
     ];

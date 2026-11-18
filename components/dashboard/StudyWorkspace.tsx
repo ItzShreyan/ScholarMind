@@ -63,9 +63,7 @@ const AINotesConsole = dynamic(() => import("@/components/dashboard/AINotesConso
   loading: () => <SkeletonPanel title="study notes" lines={8} className="m-3" />
 });
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
-import { ChatThinkingIndicator } from "@/components/dashboard/ChatThinkingIndicator";
-import { ReadAloudButton } from "@/components/dashboard/ReadAloudButton";
-import { ShareAnswerButton } from "@/components/dashboard/ShareAnswerButton";
+import { ChatMessageItem } from "@/components/dashboard/chat/ChatMessageItem";
 import type { PreviewKind } from "@/components/dashboard/FileViewer";
 import { SkeletonPanel } from "@/components/ui/Skeleton";
 import { toast } from "@/lib/toast";
@@ -73,7 +71,20 @@ import { fireConfetti } from "@/lib/confetti";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
 import { CHAT_MODELS, normalizeModelChoice, type ChatModelChoice } from "@/lib/ai/models";
-import { shouldResearchWeb, WEB_RESEARCH_STAGE_LABEL } from "@/lib/ai/research-intent";
+import { ModelSelector } from "@/components/dashboard/ModelSelector";
+import { LearningModeSelector } from "@/components/dashboard/LearningModeSelector";
+import {
+  DEFAULT_LEARNING_MODE,
+  normalizeLearningMode,
+  type LearningModeId
+} from "@/lib/ai/learning-modes";
+import {
+  normalizeWebSearchMode,
+  planWebResearch,
+  stageLabelForRun,
+  WEB_SEARCH_MODES,
+  type WebSearchMode
+} from "@/lib/ai/research-intent";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
 import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
@@ -88,185 +99,67 @@ import {
   uploadAcceptAttribute
 } from "@/lib/documents/formats";
 
-type Session = { id: string; title: string };
-type FileItem = {
-  id: string;
-  file_name: string;
-  extracted_text: string;
-  file_type: string;
-  storage_path: string;
-  source_enabled?: boolean;
-};
-type ChatCitation = {
-  title: string;
-  url: string;
-  source: string;
-  trustLabel: string;
-};
-
-type ChatModelMeta = {
-  model: string;
-  tier: string;
-  choice: string;
-  auto: boolean;
-  reason: string;
-  /** Live web sources the answer drew on, when a search ran for this turn. */
-  sources?: ChatCitation[];
-};
-
-type ChatMessage = {
-  role: "user" | "ai";
-  content: string;
-  reasoning?: string;
-  startedAt?: number;
-  completedAt?: number;
-  /** Which model actually answered, reported by the API on the first frame. */
-  meta?: ChatModelMeta;
-};
-type ChatThread = {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-  updatedAt: number;
-};
-type AIAction =
-  | "summary"
-  | "flashcards"
-  | "quiz"
-  | "notes"
-  | "exam"
-  | "insights"
-  | "hard_mode"
-  | "study_plan"
-  | "concepts";
-
-type ToolDraft = {
-  action: AIAction;
-  count: number;
-  difficulty: "foundation" | "exam";
-  examMode?: "full" | "practice";
-  focus: string;
-};
-
-type QuizItem = {
-  question: string;
-  options?: string[];
-  answer?: string;
-  explanation?: string;
-};
-
-type FlashcardItem = {
-  front: string;
-  back: string;
-};
-
-type QuizResult = {
-  question: string;
-  selected: string;
-  correct: string;
-  isCorrect: boolean;
-  explanation: string;
-};
-
-type OutputCard = {
-  title: string;
-  body: string;
-};
-
-type ExamQuestion = {
-  number: string;
-  prompt: string;
-  marks: string;
-};
-
-type ToolHistoryItem = {
-  id: string;
-  action: AIAction;
-  title: string;
-  label: string;
-  preview: string;
-  output: string;
-  createdAt: number;
-};
-
-type WorkspaceDynamicTab = {
-  id: string;
-  label: string;
-  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search" | "browse" | "canvas-browse";
-  closable: true;
-  action?: AIAction;
-  output?: string;
-  file?: FileItem;
-  previewKind?: "text" | "table" | "pdf" | "image" | "audio" | "word" | "presentation";
-  text?: string;
-  url?: string | null;
-  html?: string;
-  query?: string;
-  results?: WebSourceItem[];
-};
-
-type PreviewState = {
-  open: boolean;
-  loading: boolean;
-  file: FileItem | null;
-  kind: "text" | "table" | "pdf" | "image" | "audio" | "word" | "presentation";
-  text: string;
-  url: string | null;
-  error: string;
-};
-
-type WebSourceItem = {
-  id: string;
-  title: string;
-  url: string;
-  snippet: string;
-  source: string;
-  trustLabel: string;
-};
-
-type StudyMetrics = {
-  quizAnswered: number;
-  quizCorrect: number;
-  flashcardsFlipped: number;
-  toolRuns: Record<AIAction, number>;
-  recentQuizResults: QuizResult[];
-};
-
-type RevisionScheduleItem = {
-  day: string;
-  focus: string;
-  task: string;
-  check: string;
-};
-
-type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
-type CopiedSourceClipboard = {
-  sourceSessionId: string;
-  sourceStudioTitle: string;
-  copiedAt: number;
-};
-type CanvasTool = "mouse" | "text" | "highlight" | "draw" | "eraser";
-type CanvasAnnotation = {
-  id: string;
-  tabId: string;
-  tool: Exclude<CanvasTool, "mouse">;
-  text: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  createdAt: number;
-};
-type CanvasPoint = { x: number; y: number; pressure: number };
-type CanvasStroke = {
-  id: string;
-  tabId: string;
-  tool: "highlight" | "draw";
-  color: string;
-  width: number;
-  points: CanvasPoint[];
-  createdAt: number;
-};
+/*
+ * The data contract and every pure parsing/formatting rule now live in
+ * `lib/studio/*`, where they can be read and tested without mounting a
+ * 7,000-line component. What remains here is the workspace itself.
+ */
+import type {
+  AIAction,
+  CanvasAnnotation,
+  CanvasPoint,
+  CanvasStroke,
+  CanvasTool,
+  ChatMessage,
+  ChatModelMeta,
+  ChatThread,
+  CopiedSourceClipboard,
+  ExamQuestion,
+  FileItem,
+  FlashcardItem,
+  OutputCard,
+  PreviewState,
+  QuizItem,
+  QuizResult,
+  RecentWebsite,
+  RevisionScheduleItem,
+  Session,
+  SourceSearchEngine,
+  StudyMetrics,
+  ToolDraft,
+  ToolHistoryItem,
+  WebSourceItem,
+  WorkspaceDynamicTab
+} from "@/lib/studio/types";
+import { buildPerformanceSummary, createEmptyMetrics } from "@/lib/studio/metrics";
+import { parseJsonBlock, parseSSEChunk, readJsonResponse } from "@/lib/studio/api";
+import {
+  cleanGeneratedText,
+  clipText,
+  normalizeAIResponseText,
+  normalizeAIText,
+  normalizeErrorMessage,
+  normalizeLine,
+  sanitizeDisplayText,
+  summarizeGeneratedOutput
+} from "@/lib/studio/text";
+import {
+  detectCanvasAssistRequest,
+  detectChatToolRequest,
+  extractUrlFromText,
+  extractWebUrlFromSourceText,
+  isTutorSmallTalk
+} from "@/lib/studio/intent";
+import {
+  cleanCardText,
+  normalizeFlashcards,
+  normalizeQuizItems,
+  parseFlashcardsFallback,
+  parseOutputCards,
+  parseQuizFallback
+} from "@/lib/studio/quiz";
+import { buildToolPrompt, createToolDraft, looksRichOutput, trustBadgeTone } from "@/lib/studio/tools";
+import { parseExamQuestions, parseMarkdownTableRows, parseRevisionSchedule } from "@/lib/studio/schedule";
 
 const desktopLeftPanelDefault = 360;
 const desktopRightPanelDefault = 520;
@@ -282,16 +175,14 @@ const chatThreadsStoragePrefix = "scholarmind_chat_threads:";
 const recentWebsitesStoragePrefix = "scholarmind_recent_websites:";
 const maxRecentWebsites = 6;
 
-type RecentWebsite = {
-  url: string;
-  label: string;
-  visitedAt: number;
-};
-
 const focusTracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
 
 /** Where the student's Pro / Flash / Auto preference is remembered. */
 const modelChoiceStorageKey = "scholarmind_model_choice";
+/** Where the student's tutor mode is remembered. */
+const learningModeStorageKey = "scholarmind_learning_mode";
+/** Where the student's web-search choice is remembered. */
+const webSearchModeStorageKey = "scholarmind_web_search_mode";
 
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
@@ -313,573 +204,6 @@ const toolTones: Record<AIAction, string> = {
   concepts: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.08)]"
 };
 
-function createToolDraft(action: AIAction): ToolDraft {
-  return {
-    action,
-    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 14 : action === "notes" ? 8 : 5,
-    difficulty: action === "hard_mode" || action === "exam" ? "exam" : "foundation",
-    examMode: action === "exam" ? "full" : undefined,
-    focus: ""
-  };
-}
-
-function parseJsonBlock<T>(text: string): T | null {
-  // Strip BOM, reasoning preamble, and clean up
-  let cleaned = extractStructuredOutput(text).replace(/^\uFEFF/, "").trim();
-  if (!cleaned) return null;
-
-  // Recursively strip trailing commas: keep going until no more matches
-  const stripTrailingCommas = (s: string): string => {
-    const result = s.replace(/,\s*([\]}])/g, "$1");
-    return result === s ? result : stripTrailingCommas(result);
-  };
-  cleaned = stripTrailingCommas(cleaned);
-
-  // Try direct parse first
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    // fall through
-  }
-
-  // Try extracting from code fences
-  const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch) {
-    const jsonStr = stripTrailingCommas(fencedMatch[1].trim());
-    try {
-      return JSON.parse(jsonStr) as T;
-    } catch {
-      // fall through
-    }
-  }
-
-  // Try extracting balanced array or object from the raw text
-  const bracketMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-  if (bracketMatch) {
-    const jsonStr = stripTrailingCommas(bracketMatch[1]);
-    try {
-      return JSON.parse(jsonStr) as T;
-    } catch {
-      // fall through
-    }
-  }
-
-  return null;
-}
-
-function cleanGeneratedText(text: string) {
-  return extractStructuredOutput(text)
-    .replace(/^Local fallback response\s*/i, "")
-    .replace(/```(?:json)?/gi, "")
-    .trim();
-}
-
-function normalizeAIText(value: unknown): string {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed && trimmed !== "[object Object]" && trimmed !== "{}" ? trimmed : "";
-  }
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const preferred = [record.error, record.message, record.text, record.content];
-    for (const item of preferred) {
-      const normalized = normalizeAIText(item);
-      if (normalized) return normalized;
-    }
-    try {
-      const json = JSON.stringify(value);
-      return json === "{}" ? "" : json;
-    } catch {
-      return "";
-    }
-  }
-  return String(value).trim();
-}
-
-function normalizeErrorMessage(value: unknown, fallback = "Unexpected error") {
-  const normalized = normalizeAIText(value);
-  if (!normalized || normalized === "[object Object]" || normalized === "{}") {
-    return fallback;
-  }
-  return normalized;
-}
-
-function sanitizeDisplayText(value: unknown, fallback: string) {
-  const normalized = normalizeErrorMessage(value, fallback);
-  return normalized === "[object Object]" ? fallback : normalized;
-}
-
-function normalizeAIResponseText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(normalizeAIResponseText).filter(Boolean).join("\n");
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    const candidate = normalizeAIText(record.text ?? record.content ?? record.error ?? record.message);
-    return candidate || JSON.stringify(value);
-  }
-  return normalizeAIText(value);
-}
-
-function parseSSEChunk(chunk: string): {
-  content: string;
-  reasoning: string;
-  meta: ChatModelMeta | null;
-} {
-  const lines = chunk.split(/\r?\n/);
-  let content = "";
-  let reasoning = "";
-  let meta: ChatModelMeta | null = null;
-
-  for (const line of lines) {
-    if (!line.startsWith("data:")) continue;
-    const payload = line.replace(/^data:\s*/, "").trim();
-    if (payload === "[DONE]") continue;
-    try {
-      const data = JSON.parse(payload);
-      const delta = data?.choices?.[0]?.delta;
-      content += normalizeAIText(delta?.content);
-      reasoning += normalizeAIText(delta?.reasoning);
-
-      // The server labels the answer on its first frame so the UI can name the
-      // model that actually replied, including which tier Auto settled on.
-      const reported = data?.scholarMind as ChatModelMeta | undefined;
-      if (reported?.model) meta = reported;
-    } catch {
-      // not JSON: ignore
-    }
-  }
-
-  return { content, reasoning, meta };
-}
-
-function normalizeLine(line: string) {
-  return line
-    .replace(/^[-*]\s+/, "")
-    .replace(/^\d+\.\s+/, "")
-    .trim();
-}
-
-function clipText(text: string, limit: number) {
-  return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
-}
-
-function summarizeGeneratedOutput(text: string) {
-  return clipText(
-    cleanGeneratedText(text)
-      .replace(/\n+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim(),
-    180
-  );
-}
-
-function isTutorSmallTalk(text: string) {
-  const normalized = text.trim().toLowerCase();
-  return /^(hi|hey|hello|yo|hiya|good morning|good afternoon|good evening)\b/.test(normalized) ||
-    /how are you( doing)?/i.test(normalized) ||
-    /what'?s up/i.test(normalized);
-}
-
-function detectChatToolRequest(text: string): AIAction | null {
-  const normalized = text.toLowerCase();
-  if (!/\b(make|build|create|generate|turn|give me)\b/.test(normalized)) return null;
-  if (/\bflashcards?\b/.test(normalized)) return "flashcards";
-  if (/\bquiz\b|\bmcq\b|\bmultiple[- ]choice\b/.test(normalized)) return "quiz";
-  if (/\bexam\b|\bmock paper\b|\btest paper\b/.test(normalized)) return "exam";
-  if (/\b(ai notes|long notes|textbook notes|study notes|detailed notes)\b/.test(normalized)) return "notes";
-  if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
-  return null;
-}
-
-function extractUrlFromText(text: string) {
-  const match = text.match(/https?:\/\/[^\s)]+/i);
-  return match?.[0]?.replace(/[.,;]+$/, "") || null;
-}
-
-function extractWebUrlFromSourceText(text: string) {
-  const labeled = text.match(/Source URL:\s*(https?:\/\/[^\s]+)/i);
-  if (labeled?.[1]) return labeled[1].trim();
-  return extractUrlFromText(text);
-}
-
-function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {
-  const lower = text.toLowerCase();
-  if (!/\b(highlight|annotate|annotation|mark up|markup|text box|add a note|mark this)\b/.test(lower)) {
-    return null;
-  }
-  if (/\bhighlight\b/.test(lower)) return "highlight";
-  return "text";
-}
-
-async function readJsonResponse(response: Response) {
-  const text = await response.text();
-
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    const statusMessage = response.status ? ` (${response.status})` : "";
-    throw new Error(
-      response.ok
-        ? `The server returned an unreadable response${statusMessage}. Restart the dev server and try again.`
-        : `The server returned an unexpected response${statusMessage}.`
-    );
-  }
-}
-
-function cleanCardText(text: string) {
-  return cleanGeneratedText(text)
-    .replace(/^question:\s*/i, "")
-    .replace(/^source:\s*[^\n]+/gim, "")
-    .replace(/^source title:\s*[^\n]+/gim, "")
-    .replace(/^source url:\s*[^\n]+/gim, "")
-    .replace(/^summary:\s*[^\n]+/gim, "")
-    .replace(/^trust:\s*[^\n]+/gim, "")
-    .replace(/https?:\/\/\S+/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeFlashcards(items: FlashcardItem[] | null) {
-  if (!items?.length) return null;
-
-  const normalized = items
-    .map((item, index) => {
-      const front = clipText(cleanCardText(item.front || `Flashcard ${index + 1}`), 96);
-      const back = clipText(cleanCardText(item.back || ""), 220);
-      return {
-        front: front || `Flashcard ${index + 1}`,
-        back: back || "Review the uploaded sources and try generating this flashcard again."
-      };
-    })
-    .filter((item) => item.front || item.back);
-
-  return normalized.length ? normalized : null;
-}
-
-function parseFlashcardsFallback(text: string) {
-  const cleaned = cleanGeneratedText(text);
-  const matches = Array.from(
-    cleaned.matchAll(/(?:Flashcard\s*\d+)?\s*Front:\s*([\s\S]+?)\s*Back:\s*([\s\S]+?)(?=(?:Flashcard\s*\d+)?\s*Front:|$)/gi)
-  );
-
-  if (!matches.length) return null;
-
-  return matches.map((match) => ({
-    front: cleanCardText(match[1]),
-    back: cleanCardText(match[2])
-  }));
-}
-
-function normalizeQuizAnswer(answer: string | undefined, options: string[]) {
-  const rawAnswer = cleanCardText(answer || "");
-  if (!rawAnswer) return "";
-
-  const letterMatch = rawAnswer.match(/^[A-D]/i)?.[0]?.toUpperCase();
-  if (!letterMatch) return rawAnswer;
-
-  return options.find((option) => option.trim().toUpperCase().startsWith(letterMatch)) || rawAnswer;
-}
-
-function normalizeQuizItems(items: QuizItem[] | null) {
-  if (!items?.length) return null;
-
-  const normalized = items
-    .map((item) => {
-      const options = (item.options ?? []).map((option) => cleanCardText(option)).filter(Boolean).slice(0, 4);
-      return {
-        question: clipText(cleanCardText(item.question || ""), 220),
-        options,
-        answer: normalizeQuizAnswer(item.answer, options),
-        explanation: clipText(cleanCardText(item.explanation || ""), 220)
-      };
-    })
-    .filter((item) => item.question);
-
-  return normalized.length ? normalized : null;
-}
-
-function parseQuizFallback(text: string) {
-  const cleaned = cleanGeneratedText(text);
-  const blocks = cleaned
-    .split(/\n\s*\n+/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-
-  const questions: QuizItem[] = [];
-  let current: QuizItem | null = null;
-
-  const pushCurrent = () => {
-    if (!current?.question) return;
-    questions.push({
-      question: current.question,
-      options: current.options?.filter(Boolean) ?? [],
-      answer: current.answer,
-      explanation: current.explanation
-    });
-  };
-
-  for (const block of blocks) {
-    const lines = block
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const hasQuestion = lines.some((line) => /^(question\s*\d+|q\d+|\d+[.)])/i.test(line));
-    if (hasQuestion) {
-      pushCurrent();
-      current = { question: "", options: [] };
-    }
-
-    for (const line of lines) {
-      if (!current) {
-        current = { question: "", options: [] };
-      }
-
-      if (/^(question\s*\d+|q\d+|\d+[.)])/i.test(line)) {
-        current.question = cleanCardText(line.replace(/^(question\s*\d+|q\d+|\d+[.)])[:.)-\s]*/i, ""));
-        continue;
-      }
-
-      if (/^[A-D][.)-]/i.test(line)) {
-        current.options = [...(current.options ?? []), cleanCardText(line)];
-        continue;
-      }
-
-      if (/^answer:/i.test(line)) {
-        current.answer = cleanCardText(line.replace(/^answer:/i, ""));
-        continue;
-      }
-
-      if (/^explanation:/i.test(line)) {
-        current.explanation = cleanCardText(line.replace(/^explanation:/i, ""));
-        continue;
-      }
-
-      if (!current.question) {
-        current.question = cleanCardText(line);
-      } else if (!current.explanation) {
-        current.explanation = cleanCardText(line);
-      }
-    }
-  }
-
-  pushCurrent();
-  return questions.length ? questions : null;
-}
-
-function parseOutputCards(text: string, action: AIAction): OutputCard[] {
-  const cleaned = cleanGeneratedText(text);
-  if (!cleaned) return [];
-
-  const lines = cleaned
-    .split(/\n+/)
-    .map(normalizeLine)
-    .filter(Boolean);
-
-  if (!lines.length) return [];
-
-  if (action === "study_plan") {
-    return lines.map((line, index) => {
-      const [title, ...rest] = line.split(/:\s+/);
-      if (/^day\b/i.test(title) && rest.length) {
-        return { title, body: rest.join(": ") };
-      }
-      return { title: `Step ${index + 1}`, body: line };
-    });
-  }
-
-  return lines.map((line, index) => {
-    const [title, ...rest] = line.split(/:\s+/);
-    if (rest.length && title.length < 42) {
-      return { title, body: rest.join(": ") };
-    }
-
-    return {
-      title:
-        action === "hard_mode"
-          ? `Challenge ${index + 1}`
-          : action === "concepts"
-            ? `Concept ${index + 1}`
-            : action === "summary"
-              ? `Key Point ${index + 1}`
-              : `Study Note ${index + 1}`,
-      body: line
-    };
-  });
-}
-
-function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
-  const count = Math.max(3, Math.min(draft.count, draft.action === "exam" ? 18 : 12));
-  const sourceList = files.map((file) => file.file_name).join(", ");
-  const focus = draft.focus.trim() || "the most important ideas across all uploaded files";
-  const difficulty = draft.difficulty === "exam" ? "exam-level" : "foundation-level";
-  const preface = `Use only the uploaded study sources. Base the output on these files: ${sourceList}. Focus on ${focus}. Keep the output ${difficulty}. Do not paste source metadata, filenames, URLs, AI context, or prompt instructions unless the user needs a citation. Do not output placeholders. Produce the final student-facing study material only.`;
-
-  switch (draft.action) {
-    case "quiz":
-      return `${preface} Generate ${count} high-quality multiple-choice questions like a real study platform. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Every question must test a specific fact, method, formula, misconception, source detail, or exam skill from the uploaded material. Avoid generic options like "source", "definition", "examples", or "types". Make distractors plausible, not silly. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief but useful. Return only a JSON array with this exact shape and no markdown: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
-    case "flashcards":
-      return `${preface} Generate ${count} strong active-recall flashcards. Each front must be a real term, question, formula, process, date, quote, rule, or recall cue from the sources, not a generic word. The back should be concise, accurate, and phrased like a student-friendly memory answer. Keep each front under 14 words and each back under 45 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
-    case "exam":
-      if (draft.examMode === "practice") {
-        return `${preface} Generate ${Math.max(4, Math.min(12, count))} original exam-style practice questions in markdown, not a full exam. Include mark allocations, space for working, and a compact mark scheme at the end. Questions must be source-specific, realistic, and useful for quick revision. If the material is mathematical, include method-based questions and formulas where helpful. Do not copy real past-paper questions.`;
-      }
-      return `${preface} Generate a long original ${focus} mock exam in markdown with around ${Math.max(36, count + 22)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the feel of a real GCSE, A-Level, school, university, or international mock paper rather than a short worksheet, while creating new questions instead of copying past papers. Use source-specific wording, not generic filler. If the material is mathematical, include method-based questions, multi-step problems, formulas, diagrams or tables when helpful, and require working.`;
-    case "notes":
-      return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, curriculum-aware, and much more detailed than a summary. Teach the topic like a patient tutor: clear chapter sections, short paragraphs, definitions, formulas, worked examples, common mistakes, callouts, diagrams/tables where useful, and practice questions with hints and answers. Include enough depth that a student can revise from it without needing the original source open. Include formulaBlocks only when formulas genuinely matter. Include scienceSimulation only when the source is clearly science/STEM and an interactive simulation would actually help understanding, such as particles, waves, circuits, forces, energy transfer, rates of reaction, diffusion, osmosis, or cells. Do not include any simulation for non-science or where a simulation would feel forced. Return JSON with title, subject, level, estimatedTime, sections, callouts, formulaBlocks, workedExamples, practiceQuestions, diagrams, scienceSimulation or simulationSpec, and sourceNotes.`;
-    case "summary":
-      return `${preface} Return a full revision summary in markdown. Use these sections in order: ## What this topic is about, ## Key points to remember, ## Step-by-step explanation, ## What to memorise, ## Quick self-check. Keep it concise but complete, use short paragraphs or bullets where helpful, and use a table only when the source naturally contains comparisons, formulas, or dates.`;
-    case "insights":
-      return `${preface} Return a short performance report with weak spots, misconceptions, and next-best study actions. Use a markdown table when it helps.`;
-    case "hard_mode":
-      return `${preface} Return a markdown table with ${count} likely exam traps. Use the columns Trap | Why students fall for it | Correct move | Self-check.`;
-    case "study_plan":
-      return `${preface} Return a ${count}-step study plan as a markdown table with the columns Day | Focus | Task | Check.`;
-    case "concepts":
-      return `${preface} Return either a concise markdown table or a mermaid diagram when it helps explain the topic links. If neither helps, return ${count} lines in the format "Concept: why it matters".`;
-    default:
-      return preface;
-  }
-}
-
-function looksRichOutput(text: string) {
-  return /```mermaid/i.test(text) || /\|.+\|/.test(text) || /^#{1,3}\s/m.test(text);
-}
-
-function trustBadgeTone(trustLabel: string) {
-  if (trustLabel === "Verified") {
-    return "bg-[rgba(121,247,199,0.18)] text-[var(--accent-mint)]";
-  }
-
-  if (trustLabel === "Scholar") {
-    return "bg-[rgba(57,208,255,0.18)] text-[var(--accent-sky)]";
-  }
-
-  if (trustLabel === "Trusted") {
-    return "bg-[rgba(255,209,102,0.18)] text-[var(--accent-gold)]";
-  }
-
-  return "bg-white/10 text-[var(--fg)]";
-}
-
-function createEmptyMetrics(): StudyMetrics {
-  return {
-    quizAnswered: 0,
-    quizCorrect: 0,
-    flashcardsFlipped: 0,
-    toolRuns: {
-      summary: 0,
-      notes: 0,
-      flashcards: 0,
-      quiz: 0,
-      exam: 0,
-      insights: 0,
-      hard_mode: 0,
-      study_plan: 0,
-      concepts: 0
-    },
-    recentQuizResults: []
-  };
-}
-
-function buildPerformanceSummary(metrics: StudyMetrics) {
-  const toolSummary = Object.entries(metrics.toolRuns)
-    .filter(([, count]) => count > 0)
-    .map(([action, count]) => `${action.replace(/_/g, " ")}: ${count}`)
-    .join(", ");
-
-  return [
-    `Quiz answers checked: ${metrics.quizAnswered}`,
-    `Quiz answers correct: ${metrics.quizCorrect}`,
-    `Flashcards flipped: ${metrics.flashcardsFlipped}`,
-    toolSummary ? `Tool usage: ${toolSummary}` : "",
-    metrics.recentQuizResults.length
-      ? `Recent quiz misses: ${metrics.recentQuizResults
-          .filter((item) => !item.isCorrect)
-          .slice(0, 3)
-          .map((item) => item.question)
-          .join(" | ")}`
-      : ""
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function parseMarkdownTableRows(text: string) {
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("|") && line.endsWith("|"));
-
-  if (lines.length < 3) return [];
-
-  const rows = lines
-    .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()))
-    .filter((row) => row.some(Boolean));
-
-  if (rows.length < 3) return [];
-  return rows;
-}
-
-function parseRevisionSchedule(text: string): RevisionScheduleItem[] {
-  const rows = parseMarkdownTableRows(text);
-
-  if (rows.length) {
-    const [header, divider, ...body] = rows;
-    const normalizedHeader = header.map((cell) => cell.toLowerCase());
-    if (divider.every((cell) => /^:?-{3,}:?$/.test(cell))) {
-      const dayIndex = normalizedHeader.findIndex((cell) => cell.includes("day") || cell.includes("week"));
-      const focusIndex = normalizedHeader.findIndex((cell) => cell.includes("focus"));
-      const taskIndex = normalizedHeader.findIndex((cell) => cell.includes("task") || cell.includes("study"));
-      const checkIndex = normalizedHeader.findIndex((cell) => cell.includes("check"));
-
-      if (dayIndex >= 0 && focusIndex >= 0) {
-        return body.map((row) => ({
-          day: row[dayIndex] || `Day ${body.indexOf(row) + 1}`,
-          focus: row[focusIndex] || "Focus",
-          task: row[taskIndex] || row[focusIndex] || "",
-          check: row[checkIndex] || "Do a quick recall check."
-        }));
-      }
-    }
-  }
-
-  return parseOutputCards(text, "study_plan").map((card, index) => ({
-    day: /^day|^week/i.test(card.title) ? card.title : `Day ${index + 1}`,
-    focus: card.title,
-    task: card.body,
-    check: "Summarise it aloud and self-test."
-  }));
-}
-
-function parseExamQuestions(text: string): ExamQuestion[] {
-  const cleaned = cleanGeneratedText(text);
-  if (!cleaned) return [];
-
-  const questionOnlySection = cleaned
-    .split(/\n#{1,6}\s*mark scheme\b/i)[0]
-    .split(/\nmark scheme\b/i)[0]
-    .trim();
-
-  const matches = Array.from(
-    questionOnlySection.matchAll(
-      /(?:^|\n)(?:question\s*)?(\d+[a-z]?)[.)]\s+([\s\S]*?)(?=(?:\n(?:question\s*)?\d+[a-z]?[.)]\s)|(?:\n#{1,6}\s)|$)/gim
-    )
-  );
-
-  return matches
-    .map((match) => {
-      const prompt = match[2].trim().replace(/\n{3,}/g, "\n\n");
-      const marksMatch = prompt.match(/(\d+\s*(?:marks?|pts?))/i);
-      return {
-        number: match[1],
-        prompt: prompt.replace(/\((\d+\s*(?:marks?|pts?))\)/i, "").trim(),
-        marks: marksMatch?.[1] || ""
-      };
-    })
-    .filter((item) => item.prompt);
-}
 
 function sanitizeFileBaseName(value: string) {
   return value
@@ -1052,6 +376,13 @@ export function StudyWorkspace({
   const [showQuizResults, setShowQuizResults] = useState(false);
   /** Pro / Flash / Auto. Persisted locally; the server resolves it finally. */
   const [modelChoice, setModelChoice] = useState<ChatModelChoice>("auto");
+  /** How the tutor should teach: explain, socratic, exam, and so on. */
+  const [learningMode, setLearningMode] = useState<LearningModeId>(DEFAULT_LEARNING_MODE);
+  /**
+   * Whether this question may be looked up, and how thoroughly. Persisted, so a
+   * student who prefers notes-only is not silently searched on every reload.
+   */
+  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
   /**
    * Set while the tutor is looking something up. The decision comes from the
    * same pure function the API route uses, so this label can never describe a
@@ -1286,6 +617,64 @@ export function StudyWorkspace({
       if (stored) setModelChoice(normalizeModelChoice(stored));
     } catch {
       // Storage unavailable — Auto is a safe default.
+    }
+  }, []);
+
+  /**
+   * Change the tutor's model and remember it.
+   *
+   * Written through immediately rather than in an effect, so the next request
+   * can never be built from a stale value. localStorage is the fallback because
+   * it works for signed-out previews too; a failure here only costs
+   * persistence, never the choice itself.
+   */
+  const changeModelChoice = useCallback((next: ChatModelChoice) => {
+    const normalized = normalizeModelChoice(next);
+    setModelChoice(normalized);
+    try {
+      localStorage.setItem(modelChoiceStorageKey, normalized);
+    } catch {
+      // Storage unavailable — the choice still applies to this session.
+    }
+  }, []);
+
+  /** Restore the tutor mode before the first send, then remember every change. */
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(learningModeStorageKey);
+      if (stored) setLearningMode(normalizeLearningMode(stored));
+    } catch {
+      // Storage unavailable — Explain is a safe default.
+    }
+  }, []);
+
+  const changeLearningMode = useCallback((next: LearningModeId) => {
+    const normalized = normalizeLearningMode(next);
+    setLearningMode(normalized);
+    try {
+      localStorage.setItem(learningModeStorageKey, normalized);
+    } catch {
+      // Storage unavailable — the mode still applies to this session.
+    }
+  }, []);
+
+  /** Restore the web-search choice, then remember every change. */
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(webSearchModeStorageKey);
+      if (stored) setWebSearchMode(normalizeWebSearchMode(stored));
+    } catch {
+      // Storage unavailable — Auto is the conservative default.
+    }
+  }, []);
+
+  const changeWebSearchMode = useCallback((next: WebSearchMode) => {
+    const normalized = normalizeWebSearchMode(next);
+    setWebSearchMode(normalized);
+    try {
+      localStorage.setItem(webSearchModeStorageKey, normalized);
+    } catch {
+      // Storage unavailable — the choice still applies to this session.
     }
   }, []);
 
@@ -3920,11 +3309,16 @@ ${visualScreenContext}` : ""
           .join("\n\n");
 
     setMessages((current) => [...current, { role: "user", content: question }]);
-    setChatResearchStage(
-      shouldResearchWeb(question, { hasSourceContext: sourceEnabledCount > 0 })
-        ? WEB_RESEARCH_STAGE_LABEL
-        : null
-    );
+
+    /*
+     * The stage the student sees is computed with the same pure planner the
+     * route runs, so the label can only ever describe work that will actually
+     * happen — including deep research, which gets its own wording.
+     */
+    const researchPlan = planWebResearch(webSearchMode, question, {
+      hasSourceContext: sourceEnabledCount > 0
+    });
+    setChatResearchStage(researchPlan.search ? stageLabelForRun(researchPlan) : null);
     setChatLoading(true);
     setScreenAwarePulse(true);
     autoSwitchTab("chat");
@@ -3953,6 +3347,8 @@ ${visualScreenContext}` : ""
             screenContext,
             mode: "chat",
             modelChoice,
+            learningMode,
+            webSearchMode,
             sessionId: activeSessionId ?? undefined
           }
         })
@@ -4068,7 +3464,7 @@ ${visualScreenContext}` : ""
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, modelChoice, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, learningMode, loading, messages, modelChoice, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -6381,11 +5777,6 @@ ${visualScreenContext}` : ""
                           .reverse()
                           .find((item) => item.role === "user")
                       : undefined;
-                  const assistantActionId = `chat-message-${index}`;
-                  const reasoningText = sanitizeDisplayText(message.reasoning || "", "");
-                  const thoughtSeconds = message.startedAt
-                    ? Math.max(1, Math.round(((message.completedAt || Date.now()) - message.startedAt) / 1000))
-                    : null;
                   // The server names the model that actually answered, so this
                   // label is reported fact, not a guess at what was requested.
                   const answeredWith = message.meta
@@ -6399,142 +5790,32 @@ ${visualScreenContext}` : ""
                     : "";
 
                   return (
-                    <m.div
+                    <ChatMessageItem
                       key={`${message.role}-${index}`}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`rounded-[24px] px-4 py-3 ${
-                        message.role === "user"
-                          ? "ml-auto max-w-[88%] bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
-                          : "max-w-[95%] bg-white/16"
-                      }`}
-                    >
-                      {message.role === "user" ? (
-                        <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
-                      ) : !message.content.trim() ? (
-                        <ChatThinkingIndicator
-                          reasoning={reasoningText}
-                          startedAt={message.startedAt}
-                          tierLabel={answeredWith}
-                          stageLabel={chatResearchStage}
-                        />
-                      ) : (
-                        <>
-                          {reasoningText ? (
-                            <details className="mb-3 rounded-[18px] border border-[color:var(--surface-border)] bg-[color:var(--surface-1)] px-3 py-2 text-xs">
-                              <summary className="cursor-pointer list-none text-[color:var(--text-3)] transition-colors hover:text-[color:var(--text-1)]">
-                                {answeredWith ? `${answeredWith} · ` : ""}
-                                Thought{thoughtSeconds ? ` for ${thoughtSeconds}s` : ""}
-                              </summary>
-                              <p className="mt-2 max-h-56 overflow-y-auto whitespace-pre-wrap text-[color:var(--text-3)]">
-                                {reasoningText}
-                              </p>
-                            </details>
-                          ) : null}
-                          <RichStudyText
-                            content={sanitizeDisplayText(message.content, "Unable to generate that reply.")}
-                            onAction={(text) => void submitChatQuestion(text)}
-                          />
-                          {message.meta?.sources?.length ? (
-                            <div className="mt-3 rounded-[18px] border border-[color:var(--surface-border)] bg-[color:var(--surface-1)] p-3">
-                              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--text-3)]">
-                                <Globe2 className="h-3 w-3" aria-hidden="true" />
-                                Live web sources used
-                              </p>
-                              <ul className="mt-2 space-y-1.5">
-                                {message.meta.sources.map((source, sourceIndex) => (
-                                  <li key={`${source.url}-${sourceIndex}`} className="flex items-start gap-2 text-xs leading-5">
-                                    <span className="mt-px shrink-0 font-mono text-[color:var(--accent-sky)]">
-                                      [{sourceIndex + 1}]
-                                    </span>
-                                    <a
-                                      href={source.url}
-                                      target="_blank"
-                                      rel="noreferrer noopener"
-                                      className="min-w-0 flex-1 text-[color:var(--text-2)] underline decoration-dotted underline-offset-2 transition-colors hover:text-[color:var(--text-1)]"
-                                    >
-                                      <span className="break-words">{source.title || source.url}</span>
-                                      <span className="ml-1 whitespace-nowrap text-[color:var(--text-3)]">
-                                        · {source.source || source.url}
-                                      </span>
-                                    </a>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ) : null}
-                          <div className="mt-3 flex justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!navigator.clipboard) return;
-                                void navigator.clipboard.writeText(message.content).then(() => {
-                                  setCopyingStudioId(assistantActionId);
-                                  window.setTimeout(() => setCopyingStudioId(null), 1200);
-                                });
-                              }}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/16 hover:text-white"
-                              aria-label="Copy assistant response"
-                              title="Copy response"
-                            >
-                              {copyingStudioId === assistantActionId ? <CheckCircle2 className="h-4 w-4 text-[var(--accent-mint)]" /> : <Copy className="h-4 w-4" />}
-                            </button>
-                            <ReadAloudButton content={message.content} />
-                            <ShareAnswerButton content={message.content} />
-                            {previousUserMessage ? (
-                              <div className="group relative">
-                                <button
-                                  type="button"
-                                  onClick={() => void submitChatQuestion(previousUserMessage.content)}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/16 hover:text-white"
-                                  aria-label="Retry assistant response"
-                                  title="Retry response"
-                                >
-                                  <RefreshCw className="h-4 w-4" />
-                                </button>
-                                <div className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-72 rounded-[20px] border border-white/12 bg-[rgba(8,14,28,0.96)] p-3 opacity-0 shadow-2xl transition group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-                                  <button
-                                    type="button"
-                                    onClick={() => void submitChatQuestion(previousUserMessage.content)}
-                                    className="flex w-full items-center gap-2 rounded-[14px] bg-white/10 px-3 py-2 text-left text-xs font-semibold transition hover:bg-white/16"
-                                  >
-                                    <RefreshCw className="h-3.5 w-3.5" />
-                                    Retry
-                                  </button>
-                                  <form
-                                    className="mt-2 space-y-2"
-                                    onSubmit={(event) => {
-                                      event.preventDefault();
-                                      const form = event.currentTarget;
-                                      const formData = new FormData(form);
-                                      const instructions = String(formData.get("retryInstructions") || "").trim();
-                                      if (!instructions) return;
-                                      form.reset();
-                                      void submitChatQuestion(
-                                        `${previousUserMessage.content}\n\nRedo the previous answer. Additional instruction: ${instructions}`
-                                      );
-                                    }}
-                                  >
-                                    <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50" htmlFor={`${assistantActionId}-instructions`}>
-                                      Add instructions for this retry
-                                    </label>
-                                    <input
-                                      id={`${assistantActionId}-instructions`}
-                                      name="retryInstructions"
-                                      className="min-h-10 w-full rounded-[14px] border border-white/12 bg-white/10 px-3 py-2 text-xs outline-none transition focus:border-[var(--accent-sky)]"
-                                      placeholder="e.g. make it shorter or add examples"
-                                    />
-                                    <Button type="submit" size="sm" variant="secondary" className="w-full justify-center text-xs">
-                                      Retry with instructions
-                                    </Button>
-                                  </form>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </>
-                      )}
-                    </m.div>
+                      role={message.role}
+                      content={
+                        message.role === "ai"
+                          ? sanitizeDisplayText(message.content, "Unable to generate that reply.")
+                          : message.content
+                      }
+                      reasoning={message.reasoning || ""}
+                      answeredWith={answeredWith}
+                      reason={message.meta?.reason}
+                      sources={message.meta?.sources}
+                      startedAt={message.startedAt}
+                      completedAt={message.completedAt}
+                      stageLabel={chatResearchStage}
+                      research={message.meta?.research}
+                      previousQuestion={previousUserMessage?.content}
+                      onRetry={(question, instructions) =>
+                        void submitChatQuestion(
+                          instructions
+                            ? `${question}\n\nRedo the previous answer. Additional instruction: ${instructions}`
+                            : question
+                        )
+                      }
+                      onAskFollowUp={(text) => void submitChatQuestion(text)}
+                    />
                   );
                 })
               )}
@@ -6567,11 +5848,32 @@ ${visualScreenContext}` : ""
             )}
           </div>
 
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-4 space-y-2">
+            {/*
+             * The model picker sits directly above the composer, so the tier is
+             * chosen at the moment the question is written. It is the same
+             * control the rest of the product describes, and the value is sent
+             * with the request and resolved again on the server.
+             */}
+            <ModelSelector
+              value={modelChoice}
+              onChange={changeModelChoice}
+              previewPrompt={chat}
+              disabled={chatLoading}
+            />
+
+            <LearningModeSelector
+              value={learningMode}
+              onChange={changeLearningMode}
+              disabled={chatLoading}
+            />
+
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
                 onKeyDown={onChatKeyDown}
+                aria-label="Ask your tutor"
                 placeholder={sourceEnabledCount ? "Ask your tutor..." : "Say hi, or upload files for source-grounded tutoring"}
                 className="min-h-11 w-full rounded-[20px] border border-white/20 bg-white/20 px-4 py-3 text-sm outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
               />
@@ -6579,6 +5881,7 @@ ${visualScreenContext}` : ""
                 {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
               </Button>
             </div>
+          </div>
           </div>
 
           <div className="hidden">
@@ -6650,6 +5953,11 @@ ${visualScreenContext}` : ""
               </p>
             </div>
 
+            {/*
+             * Research Mode. This is the real control, not an advertisement for
+             * one: each option is a mode the server implements, and choosing it
+             * changes what the next question does.
+             */}
             <div className="mt-4 rounded-[24px] border border-[rgba(255,209,102,0.16)] bg-[linear-gradient(135deg,rgba(255,209,102,0.08),rgba(57,208,255,0.08))] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -6657,33 +5965,50 @@ ${visualScreenContext}` : ""
                     Research Mode
                   </p>
                   <p className="mt-2 text-sm font-semibold">
-                    {effectiveSiteSettings.researchModeLocked ? "Locked for Pro" : "Available soon in this workspace"}
+                    {webSearchMode === "deep"
+                      ? "Deep research"
+                      : webSearchMode === "on"
+                        ? "Search this question"
+                        : webSearchMode === "off"
+                          ? "Notes only"
+                          : "Auto"}
                   </p>
                   <p className="muted mt-2 text-xs">
-                    {effectiveSiteSettings.researchModeLocked
-                      ? "Multi-source web research, cross-checking, and deeper scholar-style briefs are coming soon."
-                      : "Host settings have unlocked this panel, but the deeper research workflow is still being finished."}
+                    {WEB_SEARCH_MODES.find((mode) => mode.id === webSearchMode)?.blurb}
                   </p>
                 </div>
                 <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-1 text-xs font-medium text-[var(--accent-gold)]">
-                  {effectiveSiteSettings.researchModeLocked ? "Pro" : "Live setting"}
+                  {webSearchMode === "deep" ? "Multi-source" : "Live"}
                 </div>
               </div>
-              <Button
-                onClick={() =>
-                  setStatusNote(
-                    effectiveSiteSettings.researchModeLocked
-                      ? "Research Mode is a Pro feature and is coming soon."
-                      : "Research Mode has been unlocked in settings, but the deeper workflow is still coming soon."
-                  )
-                }
-                variant="ghost"
-                size="sm"
-                className="mt-4 w-full justify-center rounded-[18px] bg-white/10"
-              >
-                <Lock className="h-4 w-4" />
-                {effectiveSiteSettings.researchModeLocked ? "Coming soon" : "Preview status"}
-              </Button>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {WEB_SEARCH_MODES.map((mode) => {
+                  const active = webSearchMode === mode.id;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => changeWebSearchMode(mode.id)}
+                      className={`rounded-[14px] px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                        active
+                          ? "bg-[color:var(--surface-3)] text-[color:var(--accent-gold)]"
+                          : "bg-white/10 hover:bg-white/16"
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="muted mt-3 text-[11px] leading-5">
+                Deep research runs several searches on a deadline, ranks sources by how many
+                queries found them, and quotes any two sources that disagree on a figure or a
+                claim. Answers that used it say how many searches ran and how many domains
+                were checked.
+              </p>
             </div>
 
             <div className="mt-4 flex items-center gap-2">

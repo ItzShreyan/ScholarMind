@@ -35,9 +35,30 @@ const nextConfig: NextConfig = {
     }
   },
   async headers() {
+    /*
+     * Next's development runtime evaluates modules from strings — React Fast
+     * Refresh and the HMR client both do it. Without 'unsafe-eval' the browser
+     * refuses that script, hydration never completes and every lazily-loaded
+     * chunk below the fold (the learning world included) stays on its
+     * placeholder forever. Production bundles are not evaluated, so the
+     * directive is only added in development.
+     */
+    const scriptSrc = [
+      "'self'",
+      "'unsafe-inline'",
+      ...(process.env.NODE_ENV === "development" ? ["'unsafe-eval'"] : []),
+      "https://cdn.jsdelivr.net",
+      "https://cdnjs.cloudflare.com",
+      "https://www.youtube.com",
+      "https://www.gstatic.com",
+      "https://open.spotify.com",
+      "https://sdk.scdn.co",
+      "https://w.soundcloud.com"
+    ].join(" ");
+
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://www.youtube.com https://www.gstatic.com https://open.spotify.com https://sdk.scdn.co https://w.soundcloud.com",
+      `script-src ${scriptSrc}`,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' data: https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.supabase.co https://i.ytimg.com https://i.scdn.co https://i1.sndcdn.com",

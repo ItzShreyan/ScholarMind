@@ -42,6 +42,11 @@ export default async function DashboardPage() {
       <DashboardOverview
         sessions={sessions.map((s) => ({ id: s.id, title: s.title, created_at: s.created_at }))}
         fileCount={fileCount}
+        firstName={
+          typeof user.user_metadata?.first_name === "string" && user.user_metadata.first_name.trim()
+            ? user.user_metadata.first_name.trim()
+            : undefined
+        }
         reviewSummary={reviewStats ? <ReviewSummaryCard stats={reviewStats} /> : null}
       />
       <FocusMusicDock />

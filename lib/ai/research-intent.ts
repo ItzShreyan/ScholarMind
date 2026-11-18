@@ -88,3 +88,132 @@ export function shouldResearchWeb(
 
 /** Shown while the search is running. One source of truth for the wording. */
 export const WEB_RESEARCH_STAGE_LABEL = "Searching the web";
+
+/** Shown while the deeper, multi-source pass is running. */
+export const DEEP_RESEARCH_STAGE_LABEL = "Comparing several sources";
+
+/* -------------------------------------------------------------------------
+ * How much web research the student asked for
+ * -------------------------------------------------------------------------
+ * The student controls this from the composer. It is deliberately a *mode*,
+ * not a toggle, because "search this question" and "do a full research pass"
+ * are different amounts of work and the student should be able to ask for
+ * either without changing a global setting.
+ */
+
+export type WebSearchMode = "auto" | "off" | "on" | "deep";
+
+export const WEB_SEARCH_MODES: Array<{
+  id: WebSearchMode;
+  label: string;
+  blurb: string;
+}> = [
+  {
+    id: "auto",
+    label: "Auto",
+    blurb: "Search only when the question is about something your notes cannot cover."
+  },
+  {
+    id: "on",
+    label: "Search this",
+    blurb: "Look this question up on the web before answering."
+  },
+  {
+    id: "off",
+    label: "Notes only",
+    blurb: "Answer from your uploaded sources and the conversation alone."
+  },
+  {
+    id: "deep",
+    label: "Deep research",
+    blurb: "Several searches, cross-checked evidence, and a cited research brief."
+  }
+];
+
+const MODE_IDS = new Set<string>(WEB_SEARCH_MODES.map((mode) => mode.id));
+
+/** Anything unrecognised becomes Auto rather than failing the request. */
+export function normalizeWebSearchMode(value: unknown): WebSearchMode {
+  return typeof value === "string" && MODE_IDS.has(value) ? (value as WebSearchMode) : "auto";
+}
+
+export type ResearchPlan = {
+  /** No search at all for this turn. */
+  search: false;
+  /** Why not, in the student's terms. */
+  reason: string;
+};
+
+export type ResearchRun = {
+  search: true;
+  /** Deep mode runs several queries and cross-checks the evidence. */
+  depth: "quick" | "deep";
+  reason: string;
+};
+
+/**
+ * Decide what to do for this turn.
+ *
+ * The student's explicit choice wins over the heuristic, except where a search
+ * would return nothing useful — a two-word greeting sent to a search engine
+ * wastes time and adds noise. In those cases the turn is simply answered
+ * without research, and the reason says so.
+ */
+export function planWebResearch(
+  mode: WebSearchMode,
+  question: string,
+  options: ResearchIntentOptions
+): ResearchPlan | ResearchRun {
+  const text = question.trim();
+
+  if (mode === "off") {
+    return { search: false, reason: "Notes only: web search is switched off for this question." };
+  }
+
+  if (text.length < 3) {
+    return { search: false, reason: "There is nothing specific enough here to look up." };
+  }
+
+  if (mode === "on") {
+    // "Search this" still cannot search for a greeting or a pronoun-only
+    // question, because there is no subject to search for.
+    if (CASUAL_SIGNALS.test(text)) {
+      return { search: false, reason: "This is a greeting, so there is nothing to look up." };
+    }
+    return { search: true, depth: "quick", reason: "You asked for this question to be looked up." };
+  }
+
+  if (mode === "deep") {
+    if (CASUAL_SIGNALS.test(text) || text.split(/\s+/).length < 3) {
+      return { search: false, reason: "A short message does not give deep research anything to work with." };
+    }
+    return {
+      search: true,
+      depth: "deep",
+      reason: "You asked for a multi-source research brief on this question."
+    };
+  }
+
+  // Auto: the heuristic decides, and its answer is the reason.
+  if (shouldResearchWeb(text, options)) {
+    return {
+      search: true,
+      depth: "quick",
+      reason: options.hasSourceContext
+        ? "This asks about something your uploaded material may not cover."
+        : "This studio has no sources yet, so the question is looked up instead."
+    };
+  }
+
+  return {
+    search: false,
+    reason: options.hasSourceContext
+      ? "This can be answered from your uploaded material."
+      : "This does not need anything looked up."
+  };
+}
+
+/** The stage label for a run, so the indicator never describes work not done. */
+export function stageLabelForRun(run: ResearchRun): string {
+  return run.depth === "deep" ? DEEP_RESEARCH_STAGE_LABEL : WEB_RESEARCH_STAGE_LABEL;
+}

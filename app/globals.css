@@ -614,9 +614,18 @@ html[data-motion="off"] .panel {
   -webkit-backdrop-filter: none;
 }
 
-/* Large decorative blurs become flat colour fields instead of blurring. */
+/*
+ * Large decorative blurs are light, not structure.
+ *
+ * These are removed outright on the reduced tiers rather than un-blurred:
+ * `filter: none` leaves a hard-edged coloured disc exactly where a soft glow
+ * used to be, which is more distracting than the glow and reads as a rendering
+ * fault. They are absolutely positioned decoration, so removing them cannot
+ * move anything.
+ */
 html:not([data-motion="full"]) [class*="blur-3xl"],
 html:not([data-motion="full"]) [class*="blur-2xl"] {
+  opacity: 0;
   filter: none !important;
 }
 
@@ -1032,4 +1041,775 @@ html[data-motion="off"] ::after {
   background: #ffffff;
   color: var(--editorial-fg);
   border-color: var(--editorial-border);
+}
+/* ==========================================================================
+   STUDY TEXT — the tutor's answer, typeset
+   --------------------------------------------------------------------------
+   The single most-read surface in the product. Styled in CSS rather than a wall
+   of Tailwind arbitrary values so that:
+
+     - the same classes work on the dark product shell and on the ivory reading
+       surface (`.reading-surface` / `.editorial` re-point the tokens),
+     - paragraph rhythm, list spacing and equation padding are defined once,
+     - `compact` answers in a narrow panel and full answers in a document panel
+       share every rule and differ only in measure.
+
+   Nothing here uses a hard-coded colour: every value is a token, so the light
+   theme and the ivory reading surface both come out correct.
+   ========================================================================== */
+
+.rich-study-text {
+  color: var(--text-1);
+  font-size: 1rem;
+  line-height: 1.75;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Comfortable measure. A 90-character line is unreadable at 17px. */
+.rich-study-text > * {
+  max-width: 72ch;
+}
+
+.rich-study-text-compact {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+
+.rich-study-text > *:first-child { margin-top: 0; }
+.rich-study-text > *:last-child { margin-bottom: 0; }
+
+/* ---- Headings ---------------------------------------------------------- */
+.rich-study-text h1,
+.rich-study-text h2,
+.rich-study-text h3,
+.rich-study-text h4 {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  line-height: 1.25;
+}
+
+.rich-study-text h1 {
+  font-size: 1.5rem;
+  margin: 1.75rem 0 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.rich-study-text h2 {
+  font-size: 1.25rem;
+  margin: 1.75rem 0 0.625rem;
+}
+
+.rich-study-text h3 {
+  font-size: 1.0625rem;
+  margin: 1.375rem 0 0.5rem;
+}
+
+.rich-study-text h4 {
+  font-size: 0.9375rem;
+  margin: 1.125rem 0 0.375rem;
+  letter-spacing: 0;
+  color: var(--text-2);
+}
+
+/* ---- Prose ------------------------------------------------------------- */
+.rich-study-text p {
+  margin: 0.75rem 0;
+}
+
+.rich-study-text strong {
+  font-weight: 650;
+  color: var(--text-1);
+}
+
+.rich-study-text em {
+  font-style: italic;
+}
+
+.rich-study-text del {
+  color: var(--text-3);
+}
+
+.rich-study-text hr {
+  margin: 1.5rem 0;
+  border: 0;
+  border-top: 1px solid var(--surface-border);
+}
+
+/* ---- Lists ------------------------------------------------------------- */
+.rich-study-text ul,
+.rich-study-text ol {
+  margin: 0.75rem 0;
+  padding-left: 1.375rem;
+}
+
+.rich-study-text ul { list-style: disc; }
+.rich-study-text ol { list-style: decimal; }
+
+.rich-study-text li {
+  margin: 0.3rem 0;
+  padding-left: 0.25rem;
+}
+
+.rich-study-text li::marker {
+  color: var(--accent-sky);
+}
+
+.rich-study-text li > ul,
+.rich-study-text li > ol {
+  margin: 0.3rem 0;
+}
+
+/* GFM task lists */
+.rich-study-text li input[type="checkbox"] {
+  margin-right: 0.5rem;
+  accent-color: var(--accent-coral);
+}
+
+/* ---- Inline code (blocks are rendered by StudyCodeBlock) --------------- */
+.rich-study-text :not(pre) > code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.875em;
+  padding: 0.1em 0.35em;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent-sky) 12%, transparent);
+  color: var(--accent-gold);
+  white-space: break-spaces;
+}
+
+/* ---- Links ------------------------------------------------------------- */
+.study-link {
+  color: var(--accent-sky);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--accent-sky) 45%, transparent);
+  transition: text-decoration-color var(--motion-fast) var(--ease-standard);
+}
+
+.study-link:hover { text-decoration-color: var(--accent-sky); }
+
+.study-link-icon {
+  display: inline-block;
+  width: 0.7em;
+  height: 0.7em;
+  margin-left: 0.2em;
+  vertical-align: baseline;
+  opacity: 0.65;
+}
+
+/* A link we refused to render: still readable, visibly not a link. */
+.study-link-blocked {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-3);
+  color: var(--text-2);
+}
+
+/* ---- Code blocks ------------------------------------------------------- */
+.study-code {
+  margin: 1.125rem 0;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.study-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.5rem 0.5rem 0.875rem;
+  border-bottom: 1px solid var(--surface-border);
+  background: color-mix(in srgb, var(--text-1) 4%, transparent);
+}
+
+.study-code-lang {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.study-code-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 32px;
+  padding: 0 0.625rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-3);
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
+}
+
+.study-code-copy:hover {
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--text-1) 8%, transparent);
+}
+
+.study-code-pre {
+  margin: 0;
+  padding: 0.875rem 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--text-2);
+  tab-size: 2;
+}
+
+.study-code-pre code { font-family: inherit; }
+
+/* ---- Tables ------------------------------------------------------------ */
+.study-table-wrap {
+  margin: 1.125rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  /* A focusable scroll region needs a visible affordance. */
+  scrollbar-width: thin;
+}
+
+.study-table-wrap:focus-visible {
+  outline: 2px solid var(--accent-sky);
+  outline-offset: 2px;
+}
+
+.study-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.study-table th,
+.study-table td {
+  padding: 0.5rem 0.875rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--surface-border);
+}
+
+.study-table th {
+  position: sticky;
+  top: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text-1) 5%, var(--surface-1));
+  white-space: nowrap;
+}
+
+.study-table tr:last-child td { border-bottom: 0; }
+
+.study-table tbody tr:hover td {
+  background: color-mix(in srgb, var(--text-1) 3%, transparent);
+}
+
+/* ---- Blockquotes (non-callout) ---------------------------------------- */
+.rich-study-text blockquote {
+  margin: 1.125rem 0;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 2px solid var(--surface-border);
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.rich-study-text blockquote > * { max-width: 68ch; }
+
+/* ---- Callouts ---------------------------------------------------------- */
+.study-callout {
+  margin: 1.25rem 0;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--surface-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-1) 3%, transparent);
+}
+
+.study-callout-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.4rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.study-callout-body > *:first-child { margin-top: 0; }
+.study-callout-body > *:last-child { margin-bottom: 0; }
+
+.study-callout[data-tone="info"] { border-left-color: var(--info); }
+.study-callout[data-tone="info"] .study-callout-label { color: var(--info); }
+
+.study-callout[data-tone="mint"] { border-left-color: var(--accent-mint); }
+.study-callout[data-tone="mint"] .study-callout-label { color: var(--accent-mint); }
+
+.study-callout[data-tone="amber"] { border-left-color: var(--warning); }
+.study-callout[data-tone="amber"] .study-callout-label { color: var(--warning); }
+
+.study-callout[data-tone="danger"] { border-left-color: var(--danger); }
+.study-callout[data-tone="danger"] .study-callout-label { color: var(--danger); }
+
+/* ---- Mathematics ------------------------------------------------------- */
+/*
+ * Equations are the one thing that genuinely overflows. A long derivation gets
+ * its own horizontal scroll rather than widening the whole panel and creating a
+ * page-level scrollbar.
+ */
+.rich-study-text .katex {
+  font-size: 1.04em;
+}
+
+.rich-study-text .katex-display {
+  margin: 1.125rem 0;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent-sky) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-sky) 16%, transparent);
+}
+
+.rich-study-text .katex-display > .katex {
+  text-align: left;
+}
+
+/* Long unbroken strings (URLs, hashes, chemical names) never push the layout. */
+.rich-study-text a,
+.rich-study-text code,
+.rich-study-text .katex-display {
+  overflow-wrap: anywhere;
+}
+
+/* ---- Diagrams ---------------------------------------------------------- */
+.study-diagram {
+  margin: 1.25rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-1) 2%, transparent);
+}
+
+.study-diagram-caption {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.study-diagram-canvas {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.study-diagram-canvas svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.study-diagram-loading {
+  min-height: 72px;
+}
+
+.study-diagram-fallback .study-code-pre {
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+/* ---- Images ------------------------------------------------------------ */
+.study-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--surface-border);
+}
+
+/* ==========================================================================
+   STUDY TEXT ON IVORY
+   --------------------------------------------------------------------------
+   Answers rendered inside `.reading-surface` or `.editorial` sit on warm paper.
+   Only the surfaces and the text levels change — the typography, spacing and
+   component structure stay identical, so an answer looks like the same document
+   in both environments.
+   ========================================================================== */
+
+.reading-surface .rich-study-text,
+.editorial .rich-study-text {
+  color: var(--editorial-fg);
+}
+
+.reading-surface .rich-study-text h1,
+.reading-surface .rich-study-text h2,
+.reading-surface .rich-study-text h3,
+.editorial .rich-study-text h1,
+.editorial .rich-study-text h2,
+.editorial .rich-study-text h3 {
+  color: var(--editorial-fg);
+}
+
+.reading-surface .rich-study-text h4,
+.editorial .rich-study-text h4 {
+  color: var(--editorial-muted);
+}
+
+.reading-surface .rich-study-text strong,
+.editorial .rich-study-text strong {
+  color: var(--editorial-fg);
+}
+
+.reading-surface .rich-study-text h1,
+.editorial .rich-study-text h1 {
+  border-bottom-color: var(--editorial-border);
+}
+
+.reading-surface .rich-study-text hr,
+.editorial .rich-study-text hr {
+  border-top-color: var(--editorial-border);
+}
+
+.reading-surface .rich-study-text li::marker,
+.editorial .rich-study-text li::marker {
+  color: var(--editorial-accent);
+}
+
+.reading-surface .rich-study-text :not(pre) > code,
+.editorial .rich-study-text :not(pre) > code {
+  background: rgba(24, 33, 42, 0.07);
+  color: var(--editorial-accent);
+}
+
+.reading-surface .study-link,
+.editorial .study-link {
+  color: var(--editorial-accent);
+  text-decoration-color: rgba(156, 108, 52, 0.4);
+}
+
+.reading-surface .study-code,
+.editorial .study-code {
+  background: var(--editorial-bg-raise);
+  border-color: var(--editorial-border);
+}
+
+.reading-surface .study-code-header,
+.editorial .study-code-header {
+  background: rgba(24, 33, 42, 0.04);
+  border-bottom-color: var(--editorial-border);
+}
+
+.reading-surface .study-code-lang,
+.editorial .study-code-lang {
+  color: var(--editorial-muted);
+}
+
+.reading-surface .study-code-copy,
+.editorial .study-code-copy {
+  color: var(--editorial-muted);
+}
+
+.reading-surface .study-code-copy:hover,
+.editorial .study-code-copy:hover {
+  color: var(--editorial-fg);
+  background: rgba(24, 33, 42, 0.06);
+}
+
+.reading-surface .study-code-pre,
+.editorial .study-code-pre {
+  color: var(--editorial-fg-soft);
+}
+
+.reading-surface .study-table-wrap,
+.editorial .study-table-wrap {
+  border-color: var(--editorial-border);
+}
+
+.reading-surface .study-table th,
+.reading-surface .study-table td,
+.editorial .study-table th,
+.editorial .study-table td {
+  border-bottom-color: var(--editorial-border);
+}
+
+.reading-surface .study-table th,
+.editorial .study-table th {
+  color: var(--editorial-muted);
+  background: rgba(24, 33, 42, 0.05);
+}
+
+.reading-surface .rich-study-text blockquote,
+.editorial .rich-study-text blockquote {
+  border-left-color: var(--editorial-border);
+  color: var(--editorial-fg-soft);
+}
+
+.reading-surface .study-callout,
+.editorial .study-callout {
+  background: rgba(24, 33, 42, 0.035);
+  border-color: var(--editorial-border);
+}
+
+.reading-surface .rich-study-text .katex-display,
+.editorial .rich-study-text .katex-display {
+  background: rgba(24, 33, 42, 0.045);
+  border-color: var(--editorial-border);
+}
+
+.reading-surface .study-diagram,
+.editorial .study-diagram {
+  border-color: var(--editorial-border);
+  background: rgba(24, 33, 42, 0.03);
+}
+
+/* ---- Narrow viewports -------------------------------------------------- */
+@media (max-width: 480px) {
+  .rich-study-text {
+    font-size: 0.9375rem;
+    line-height: 1.7;
+  }
+
+  .rich-study-text h1 { font-size: 1.3125rem; }
+  .rich-study-text h2 { font-size: 1.125rem; }
+  .rich-study-text h3 { font-size: 1rem; }
+
+  .rich-study-text .katex-display {
+    padding: 0.625rem 0.75rem;
+  }
+}
+/* ===========================================================================
+ * LANDING: EDITORIAL BAND + THE STUDY ROOM
+ * ---------------------------------------------------------------------------
+ * The landing page has exactly one ivory surface and exactly one cinematic
+ * surface. Both are defined here rather than inline so they stay consistent
+ * with the tokens above and so the motion can be switched off in one place.
+ * ========================================================================= */
+
+/* Warm ivory reading band. Ivory in both themes — it is paper, not a theme. */
+.editorial-band {
+  background-color: var(--editorial-bg);
+  color: var(--editorial-fg);
+}
+
+/* The wall behind the campus window: ink at the edges, warm lamp light low. */
+.room-wall {
+  background:
+    radial-gradient(58rem 26rem at 12% 118%, rgba(220, 165, 102, 0.16), transparent 66%),
+    radial-gradient(44rem 22rem at 88% -18%, rgba(136, 183, 206, 0.12), transparent 62%),
+    linear-gradient(178deg, #05090d 0%, #080d12 42%, #0b131a 100%);
+}
+
+/* Amber light spilling out of the window onto the wall. */
+.room-spill {
+  background: radial-gradient(closest-side, rgba(220, 165, 102, 0.22), rgba(220, 165, 102, 0.06) 58%, transparent 78%);
+}
+
+/* Dust in the lamp light. Six motes, slow, low contrast — never distracting. */
+.room-mote {
+  animation: room-drift 18s linear infinite;
+}
+
+@keyframes room-drift {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.55;
+  }
+  84% {
+    opacity: 0.35;
+  }
+  100% {
+    transform: translate3d(1.5rem, -7rem, 0);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-mote {
+    animation: none;
+    opacity: 0.28;
+  }
+}
+
+html[data-motion="reduced"] .room-mote,
+html[data-motion="off"] .room-mote {
+  animation: none;
+  opacity: 0.28;
+}
+/* ===========================================================================
+ * LANDING: REVEAL, LOADER AND SCROLL AFFORDANCES
+ * ---------------------------------------------------------------------------
+ * These four classes are consumed by the experience components and were never
+ * defined. They are written here rather than inline because the reduced-motion
+ * overrides at the bottom have to be able to switch all of them off together.
+ * ========================================================================= */
+
+/*
+ * Scroll entrance. Deliberately a one-way transition: the IntersectionObserver
+ * in Reveal disconnects after the first hit, so nothing re-animates on the way
+ * back up the page and nothing keeps costing anything once it has played.
+ */
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 42px, 0);
+  filter: blur(8px);
+  transition:
+    opacity 1.2s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 1.2s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  filter: blur(0);
+}
+
+/*
+ * Server-rendered and pre-observer state. `Reveal` only adds `.reveal` markup
+ * once it knows an observer exists, but if JS never boots the content must
+ * still be readable, so this is the default appearance.
+ */
+.reveal-static {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+/*
+ * Loader stagger. Each element gets its own `animation-delay` inline; the
+ * shared keyframe just provides the movement.
+ */
+.loader-step {
+  animation: loader-step-in 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.loader-step.is-out {
+  animation: none;
+}
+
+@keyframes loader-step-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
+/* The travelling segment of the hero scroll indicator. */
+.scroll-travel {
+  animation: scroll-travel 2.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+@keyframes scroll-travel {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  22% {
+    opacity: 1;
+  }
+  78% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(250%);
+    opacity: 0;
+  }
+}
+
+/*
+ * Reduced motion: the reveal becomes a plain element in its final state, the
+ * loader contents are simply visible, and the scroll indicator stops travelling.
+ * Nothing disappears — it just stops moving.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    transition: none;
+  }
+
+  .loader-step,
+  .scroll-travel {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+html[data-motion="reduced"] .reveal,
+html[data-motion="off"] .reveal {
+  opacity: 1;
+  transform: none;
+  filter: none;
+  transition: none;
+}
+
+html[data-motion="reduced"] .loader-step,
+html[data-motion="off"] .loader-step,
+html[data-motion="reduced"] .scroll-travel,
+html[data-motion="off"] .scroll-travel {
+  animation: none;
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+/* ===========================================================================
+ * LANDING: THE STARBURST
+ * ---------------------------------------------------------------------------
+ * The closing section draws the brand mark as twelve rays and rotates it. It is
+ * decoration — the headline carries the meaning — so it is slow (one turn every
+ * two minutes), it is switched off with every other decorative loop on the
+ * reduced tiers, and it is never the only thing marking a state.
+ * ========================================================================= */
+
+.starburst {
+  transform-origin: 50% 50%;
+  animation: starburst-turn 120s linear infinite;
+}
+
+@keyframes starburst-turn {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .starburst {
+    animation: none;
+  }
+}
+
+html:not([data-motion="full"]) .starburst {
+  animation: none;
 }
