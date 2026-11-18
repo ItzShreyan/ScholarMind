@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { m, AnimatePresence } from "framer-motion";
 import {
   Play, Pause, SkipBack, SkipForward, Volume2, X, Music, ExternalLink,
-  LogOut, Radio, Search, ChevronUp, ListMusic, ArrowLeft, ChevronDown,
+  LogOut, Radio, Search, ChevronUp, ArrowLeft, ChevronDown,
   Repeat, Repeat1, Plus, Trash2, Save, Upload, Forward, Rewind,
   FolderOpen, ListOrdered, Zap
 } from "lucide-react";
@@ -128,7 +128,6 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   const [uploadedTrackDuration, setUploadedTrackDuration] = useState(0);
   const [uploadedTrackCurrentTime, setUploadedTrackCurrentTime] = useState(0);
   const [panelView, setPanelView] = useState<PanelView>("now-playing");
-  const [showPanel, setShowPanel] = useState(false);
   const [loopMode, setLoopMode] = useState<LoopMode>("none");
   const progressBarRef = useRef<HTMLDivElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -900,7 +899,7 @@ const progressPct = uploadedTrackDuration > 0
       <BeatReactiveBorder signal={beatSignal} enabled={beatReactiveEnabled} />
       <AnimatePresence mode="wait">
       {isMinimized ? (
-        <motion.div
+        <m.div
           key="minimized"
           initial={{ opacity: 0, y: 20, scale: 0.9 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -909,12 +908,12 @@ const progressPct = uploadedTrackDuration > 0
           className="fixed bottom-3 right-3 z-40 sm:bottom-6 sm:right-6"
           onClick={() => setIsMinimized(false)}
         >
-          <motion.div
+          <m.div
             className="flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border border-white/20 bg-gradient-to-r from-[rgba(255,209,102,0.2)] to-[rgba(57,208,255,0.2)] px-3 py-2 backdrop-blur-md transition-colors hover:border-white/40 sm:gap-3 sm:px-4"
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
           >
-            <motion.div
+            <m.div
               animate={{ rotate: isPlaying ? 360 : 0 }}
               transition={{ duration: 2, repeat: isPlaying ? Infinity : 0, ease: "linear" }}
             >
@@ -925,7 +924,7 @@ const progressPct = uploadedTrackDuration > 0
               ) : (
                 <Music className="h-4 w-4 text-[var(--accent-sky)]" />
               )}
-            </motion.div>
+            </m.div>
             <span className="max-w-[90px] truncate text-xs font-semibold text-white/80 sm:max-w-[120px]">
               {currentTrackTitle}
             </span>
@@ -937,7 +936,7 @@ const progressPct = uploadedTrackDuration > 0
             {systemAudio && !hasSpotify && !isUploadActive ? (
               <span className="text-[10px] text-white/40 whitespace-nowrap">• {systemAudio.source}</span>
             ) : null}
-            <motion.div
+            <m.div
               className="h-2 w-2 rounded-full"
               animate={{
                 backgroundColor: isPlaying
@@ -946,10 +945,10 @@ const progressPct = uploadedTrackDuration > 0
               }}
               transition={{ duration: 1.5, repeat: isPlaying ? Infinity : 0, ease: "easeInOut" }}
             />
-          </motion.div>
-        </motion.div>
+          </m.div>
+        </m.div>
       ) : (
-        <motion.div
+        <m.div
           key="expanded"
           initial={{ opacity: 0, y: 20, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -978,21 +977,21 @@ const progressPct = uploadedTrackDuration > 0
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { setPanelView("now-playing"); setShowPanel(true); }}
+                onClick={() => { setPanelView("now-playing"); }}
                 className={`p-1.5 rounded-full transition-colors ${panelView === "now-playing" ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/10"}`}
                 title="Now Playing"
               >
                 <Music className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => { setPanelView("queue"); setShowPanel(true); }}
+                onClick={() => { setPanelView("queue"); }}
                 className={`p-1.5 rounded-full transition-colors ${panelView === "queue" ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/10"}`}
                 title="Play Queue"
               >
                 <ListOrdered className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => { setPanelView("playlists"); setShowPanel(true); }}
+                onClick={() => { setPanelView("playlists"); }}
                 className={`p-1.5 rounded-full transition-colors ${panelView === "playlists" || panelView === "playlist-tracks" ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/10"}`}
                 title="Playlists"
               >
@@ -1000,7 +999,7 @@ const progressPct = uploadedTrackDuration > 0
               </button>
               {hasSpotify && spotifyState?.ready ? (
                 <button
-                  onClick={() => { setPanelView("search"); setShowPanel(true); }}
+                  onClick={() => { setPanelView("search"); }}
                   className={`p-1.5 rounded-full transition-colors ${panelView === "search" ? "bg-white/15 text-white" : "text-white/60 hover:bg-white/10"}`}
                   title="Search Spotify"
                 >
@@ -1008,7 +1007,7 @@ const progressPct = uploadedTrackDuration > 0
                 </button>
               ) : null}
               {spotifyState?.connected ? (
-                <motion.button
+                <m.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={handleUnlink}
@@ -1017,10 +1016,10 @@ const progressPct = uploadedTrackDuration > 0
                   className="p-1.5 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
                 >
                   <LogOut className="h-3.5 w-3.5 text-[var(--accent-coral)]" />
-                </motion.button>
+                </m.button>
               ) : null}
               {/* Beat-reactive border toggle */}
-              <motion.button
+              <m.button
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={() => {
@@ -1044,7 +1043,7 @@ const progressPct = uploadedTrackDuration > 0
                 title={beatReactiveEnabled ? "Disable beat-reactive border" : "Enable beat-reactive border"}
               >
                 <Zap className="h-3.5 w-3.5" />
-              </motion.button>
+              </m.button>
               <button
                 onClick={() => setIsMinimized(true)}
                 title="Collapse music player"
@@ -1091,7 +1090,7 @@ const progressPct = uploadedTrackDuration > 0
               {/* Track Info */}
               {currentTrack || (hasSpotify && spotifyState?.track) || systemAudio ? (
                 <div className="mb-3">
-                  <motion.div
+                  <m.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ duration: 0.4 }}
@@ -1109,7 +1108,7 @@ const progressPct = uploadedTrackDuration > 0
                         Track {currentQueueIndex + 1} of {uploadedTracks.length} in queue
                       </p>
                     )}
-                  </motion.div>
+                  </m.div>
                 </div>
               ) : (
                 <div className="mb-3 text-center py-2">
@@ -1168,7 +1167,7 @@ const progressPct = uploadedTrackDuration > 0
               {isUploadActive || (hasSpotify && !spotifyState?.premiumRequired) ? (
                 <div className="flex items-center justify-center gap-2 mb-3">
                   {isUploadActive ? (
-                    <motion.button
+                    <m.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={skipBackward}
@@ -1176,11 +1175,11 @@ const progressPct = uploadedTrackDuration > 0
                       title="Backward 10s"
                     >
                       <Rewind className="h-3.5 w-3.5 text-white/70" />
-                    </motion.button>
+                    </m.button>
                   ) : <div className="w-8 h-8" />}
 
                   {isUploadActive ? (
-                    <motion.button
+                    <m.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={playPrev}
@@ -1189,9 +1188,9 @@ const progressPct = uploadedTrackDuration > 0
                       title="Previous track"
                     >
                       <SkipBack className="h-4 w-4 text-white/80" />
-                    </motion.button>
+                    </m.button>
                   ) : hasSpotify ? (
-                    <motion.button
+                    <m.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={() => spotifyPreviousTrack()}
@@ -1199,10 +1198,10 @@ const progressPct = uploadedTrackDuration > 0
                       className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
                     >
                       <SkipBack className="h-4 w-4 text-white/80" />
-                    </motion.button>
+                    </m.button>
                   ) : null}
 
-                  <motion.button
+                  <m.button
                     whileHover={{ scale: 1.15 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => {
@@ -1222,10 +1221,10 @@ const progressPct = uploadedTrackDuration > 0
                     ) : (
                       <Play className="h-5 w-5 text-black ml-0.5" />
                     )}
-                  </motion.button>
+                  </m.button>
 
                   {isUploadActive ? (
-                    <motion.button
+                    <m.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={playNext}
@@ -1234,9 +1233,9 @@ const progressPct = uploadedTrackDuration > 0
                       title="Next track"
                     >
                       <SkipForward className="h-4 w-4 text-white/80" />
-                    </motion.button>
+                    </m.button>
                   ) : hasSpotify ? (
-                    <motion.button
+                    <m.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={() => spotifyNextTrack()}
@@ -1244,11 +1243,11 @@ const progressPct = uploadedTrackDuration > 0
                       className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
                     >
                       <SkipForward className="h-4 w-4 text-white/80" />
-                    </motion.button>
+                    </m.button>
                   ) : null}
 
                   {isUploadActive ? (
-                    <motion.button
+                    <m.button
                       whileHover={{ scale: 1.1 }}
                       whileTap={{ scale: 0.95 }}
                       onClick={skipForward}
@@ -1256,7 +1255,7 @@ const progressPct = uploadedTrackDuration > 0
                       title="Forward 10s"
                     >
                       <Forward className="h-3.5 w-3.5 text-white/70" />
-                    </motion.button>
+                    </m.button>
                   ) : <div className="w-8 h-8" />}
                 </div>
               ) : null}
@@ -1264,7 +1263,7 @@ const progressPct = uploadedTrackDuration > 0
               {/* Extra Controls Row */}
               {isUploadActive && (
                 <div className="flex items-center justify-between mb-2">
-                  <motion.button
+                  <m.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.95 }}
                     onClick={cycleLoopMode}
@@ -1274,7 +1273,7 @@ const progressPct = uploadedTrackDuration > 0
                     title={loopMode === "none" ? "No repeat" : loopMode === "all" ? "Repeat all" : "Repeat one"}
                   >
                     {loopMode === "one" ? <Repeat1 className="h-4 w-4" /> : <Repeat className="h-4 w-4" />}
-                  </motion.button>
+                  </m.button>
                   <button
                     onClick={() => setShowSavePlaylist(true)}
                     className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold transition hover:bg-white/16"
@@ -1420,7 +1419,7 @@ const progressPct = uploadedTrackDuration > 0
                   >
                     <div className="w-5 text-center">
                       {index === currentQueueIndex && isPlaying ? (
-                        <motion.div
+                        <m.div
                           className="h-1.5 w-1.5 rounded-full bg-[var(--accent-mint)] mx-auto"
                           animate={{ scale: [1, 1.5, 1] }}
                           transition={{ duration: 0.8, repeat: Infinity }}
@@ -1750,7 +1749,7 @@ const progressPct = uploadedTrackDuration > 0
               </div>
             </div>
           )}
-        </motion.div>
+        </m.div>
       )}
     </AnimatePresence>
     </>

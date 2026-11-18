@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "verify:ai-tools": "node scripts/verify-ai-tools.mjs",
+    "verify:model-routing": "node scripts/verify-model-routing.mjs",
     "verify:uploads": "node scripts/verify-upload-formats.mjs"
   },
   "dependencies": {

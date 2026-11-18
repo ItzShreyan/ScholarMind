@@ -1,4 +1,5 @@
 import type { AIImageAttachment } from "@/types";
+import { CHAT_MODELS, resolveChatModel, type ChatModelChoice } from "@/lib/ai/models";
 
 export type OpenRouterContentPart =
   | { type: "text"; text: string }
@@ -28,30 +29,38 @@ export function buildOpenRouterContent(
   ];
 }
 
+/**
+ * Resolve the model for a request.
+ *
+ * The registry in `lib/ai/models.ts` owns every id. This wrapper exists so the
+ * provider layer keeps its original, simple call shape.
+ *
+ * - Any request carrying images goes to the vision model: the Pro model is
+ *   text-only and cannot see an image.
+ * - Study-tool generation (JSON quizzes, flashcards, notes, exams) always uses
+ *   the study model, which is chosen for reliable structured output.
+ * - Chat honours the caller's Pro/Flash/Auto choice.
+ */
 export function getOpenRouterModel(
   imageAttachments?: AIImageAttachment[],
-  purpose: "chat" | "study" = "study"
-) {
-  if (imageAttachments?.length) {
-    // Keep image requests on the NVIDIA Nano Omni model so multimodal input
-    // continues to work with the same provider used for image understanding.
-    return (
-      process.env.OPENROUTER_VISION_MODEL?.trim() ||
-      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
-    );
+  purpose: "chat" | "study" = "study",
+  options?: { choice?: ChatModelChoice; prompt?: string }
+): string {
+  const hasImages = Boolean(imageAttachments?.length);
+
+  if (hasImages) {
+    return resolveChatModel("auto", "", true).modelId;
   }
 
-  if (purpose === "chat") {
-    return (
-      process.env.OPENROUTER_CHAT_MODEL?.trim() ||
-      process.env.OPENROUTER_MODEL?.trim() ||
-      "nvidia/nemotron-3-ultra-550b-a55b:free"
-    );
+  if (purpose === "study") {
+    // Study generation (notes, exams, quizzes, flashcards) is genuinely heavy
+    // work with structured output, so it always uses the stronger model.
+    return CHAT_MODELS.pro.id;
   }
 
-  return (
-    process.env.OPENROUTER_STUDY_MODEL?.trim() ||
-    process.env.OPENROUTER_MODEL?.trim() ||
-    "openai/gpt-oss-20b:free"
-  );
+  return resolveChatModel(
+    options?.choice ?? "auto",
+    options?.prompt ?? "",
+    false
+  ).modelId;
 }

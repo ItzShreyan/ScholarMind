@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useScroll, useTransform } from "framer-motion";
+import { m, useScroll, useTransform } from "framer-motion";
 import { useRef } from "react";
-import { ShieldCheck, Lock, Eye, AlertTriangle, RefreshCw, FileCheck, ArrowLeft, ExternalLink, Server, Search, Ban, Zap } from "lucide-react";
+import { ShieldCheck, Lock, Eye, AlertTriangle, RefreshCw, FileCheck, ArrowLeft, Server, Search, Ban, Zap } from "lucide-react";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
 
@@ -77,7 +77,7 @@ const howSteps = [
 
 function FadeInSection({ children, delay = 0, className = "" }: { children: React.ReactNode; delay?: number; className?: string }) {
   return (
-    <motion.div
+    <m.div
       initial={{ opacity: 0, y: 28 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, margin: "-80px" }}
@@ -85,7 +85,7 @@ function FadeInSection({ children, delay = 0, className = "" }: { children: Reac
       className={className}
     >
       {children}
-    </motion.div>
+    </m.div>
   );
 }
 
@@ -135,29 +135,29 @@ export default function SecurityPage() {
         className="relative overflow-hidden border-b border-white/10 bg-hero-glow"
       >
         <div className="mesh-overlay pointer-events-none absolute inset-0" />
-        <motion.div
+        <m.div
           style={{ rotateX: heroRotateX, rotateY: heroRotateY, y: heroY }}
           className="perspective-stage mx-auto max-w-4xl px-4 py-20 text-center sm:py-28"
         >
-          <motion.div
+          <m.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, delay: 0.1 }}
             className="mb-6 inline-block"
           >
             <SecurityBadge />
-          </motion.div>
+          </m.div>
 
-          <motion.h1
+          <m.h1
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
             className="text-4xl font-semibold sm:text-6xl"
           >
             Built on a security-first foundation
-          </motion.h1>
+          </m.h1>
 
-          <motion.p
+          <m.p
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
@@ -168,9 +168,9 @@ export default function SecurityPage() {
             API throttling, and optional Arcjet protection. Supabase row-level security
             keeps signed-in users scoped to their own studios, files, chat history,
             and settings.
-          </motion.p>
+          </m.p>
 
-          <motion.div
+          <m.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.4 }}
@@ -185,8 +185,8 @@ export default function SecurityPage() {
                 Read the Privacy Policy
               </Button>
             </Link>
-          </motion.div>
-        </motion.div>
+          </m.div>
+        </m.div>
       </section>
 
       <div className="mx-auto max-w-6xl space-y-6 px-4 pt-12">
@@ -207,7 +207,7 @@ export default function SecurityPage() {
 
             <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {engines.map((engine, index) => (
-                <motion.div
+                <m.div
                   key={engine.title}
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
@@ -223,7 +223,7 @@ export default function SecurityPage() {
                   </span>
                   <p className="mt-4 text-sm font-semibold">{engine.title}</p>
                   <p className="muted mt-2 text-xs leading-6">{engine.description}</p>
-                </motion.div>
+                </m.div>
               ))}
             </div>
           </div>
@@ -242,7 +242,7 @@ export default function SecurityPage() {
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {howSteps.map((step, index) => (
-                <motion.div
+                <m.div
                   key={step.number}
                   initial={{ opacity: 0, x: index % 2 === 0 ? -30 : 30 }}
                   whileInView={{ opacity: 1, x: 0 }}
@@ -255,7 +255,7 @@ export default function SecurityPage() {
                   </span>
                   <p className="mt-2 text-sm font-semibold">{step.title}</p>
                   <p className="muted mt-2 text-xs leading-6">{step.body}</p>
-                </motion.div>
+                </m.div>
               ))}
             </div>
           </div>
@@ -273,7 +273,7 @@ export default function SecurityPage() {
             </h2>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              <motion.div
+              <m.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 whileInView={{ opacity: 1, scale: 1 }}
                 viewport={{ once: true }}
@@ -295,9 +295,9 @@ export default function SecurityPage() {
                     Upload validation — file safety before processing
                   </li>
                 </ul>
-              </motion.div>
+              </m.div>
 
-              <motion.div
+              <m.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 whileInView={{ opacity: 1, scale: 1 }}
                 viewport={{ once: true }}
@@ -319,7 +319,7 @@ export default function SecurityPage() {
                     Personal data is accessible only via Supabase RLS
                   </li>
                 </ul>
-              </motion.div>
+              </m.div>
             </div>
 
             <div className="mt-5 rounded-[22px] bg-white/8 px-5 py-4 text-xs leading-6 text-[var(--muted)]">
@@ -334,7 +334,7 @@ export default function SecurityPage() {
         {/* CTA */}
         <FadeInSection delay={0.1}>
           <div className="panel panel-border rounded-[34px] bg-hero-glow p-8 text-center sm:p-12">
-            <motion.div
+            <m.div
               initial={{ opacity: 0, y: 10 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
@@ -361,7 +361,7 @@ export default function SecurityPage() {
                   </Button>
                 </Link>
               </div>
-            </motion.div>
+            </m.div>
           </div>
         </FadeInSection>
       </div>

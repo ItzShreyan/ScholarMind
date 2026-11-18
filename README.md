@@ -26,15 +26,41 @@ ScholarMind is a Open Source production-structured AI study companion Project bu
 
 ## Local Setup
 
-1. Install Node.js 20+ and npm.
-2. Copy env file:
-   - `cp .env.example .env.local`
-3. Fill all required environment variables in `.env.local`.
-4. Install dependencies:
-   - `npm install`
-5. Run dev server:
-   - `npm run dev`
-6. Open `http://localhost:3000`
+Requires Node.js 20+ and npm (this repo ships a single `package-lock.json`; use
+npm, not pnpm or yarn).
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Create your local env file and fill it in
+cp .env.example .env.local
+#    Minimum to boot:        NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
+#    Minimum for AI routes:  OPENROUTER_API_KEY (or GEMINI_API_KEY as fallback)
+#    Never commit .env.local  — it is gitignored.
+
+# 3. Run the dev server
+npm run dev
+#    → http://localhost:3000
+```
+
+### Build and verification
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # next lint
+npm run build       # production build
+npm run start       # serve the production build
+
+# Feature-specific checks
+npm run verify:ai-tools   # AI provider keys + model registry reachability
+npm run verify:uploads    # upload format handling
+```
+
+Every one of these is expected to pass on a clean checkout. `.env.example`
+documents every variable the app reads, including the Pro / Flash / Vision /
+Study model overrides — each of which has a working default in
+`lib/ai/models.ts`.
 
 ## Supabase Setup
 

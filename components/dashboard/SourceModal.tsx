@@ -7,11 +7,10 @@ import {
   ExternalLink,
   Globe2,
   LoaderCircle,
-  Plus,
   Upload,
   X
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { Button } from "@/components/ui/Button";
 import { uploadAcceptAttribute } from "@/lib/documents/formats";
 
@@ -162,7 +161,7 @@ export function SourceModal({
                   <p className="muted text-xs">{Math.round(uploadProgress)}%</p>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-black/10">
-                  <motion.div
+                  <m.div
                     className="h-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                     animate={{ width: `${uploadProgress}%` }}
                   />

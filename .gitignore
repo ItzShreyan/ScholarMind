@@ -6,5 +6,8 @@ dist
 coverage
 *.log
 
+# TypeScript incremental build info — regenerated on every `tsc`, never committed
+tsconfig.tsbuildinfo
+
 # Local Netlify folder
 .netlify

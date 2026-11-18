@@ -8,12 +8,22 @@ import { BrandLink } from "@/components/common/BrandLink";
 import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { isHostOwner } from "@/lib/host";
 
+/*
+ * The six destinations that actually exist.
+ *
+ * There is deliberately no separate "Library" entry: the library *is* the
+ * studio's source panel, and duplicating it in the nav would send the student
+ * to a second door for the same room. The learning world lives on the landing
+ * page, so it is linked at its anchor rather than pretending to be a route.
+ */
 const navItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/studio", label: "Studio" },
+  { href: "/#places", label: "Learning world", external: true },
+  { href: "/review", label: "Revision" },
   { href: "/schedule", label: "Schedule" },
   { href: "/settings", label: "Settings" }
-];
+] as const;
 
 export function DashboardHeader({ email, firstName }: { email?: string; firstName?: string }) {
   const pathname = usePathname();

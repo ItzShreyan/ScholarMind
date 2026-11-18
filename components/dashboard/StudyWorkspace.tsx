@@ -37,23 +37,54 @@ import {
   WandSparkles,
   X
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import confetti from "canvas-confetti";
+import { m } from "framer-motion";
 import dynamic from "next/dynamic";
 import type { SourceModalProps } from "@/components/dashboard/SourceModal";
 
+/*
+ * Heavy, not-on-first-paint panels are loaded on demand.
+ *
+ * `FileViewer` pulls in xlsx, pdfjs and mammoth; `AINotesConsole` pulls in the
+ * markdown/mermaid/KaTeX render stack. Neither is needed to see the workspace
+ * shell, so neither is in the initial route bundle. Each gets a Skeleton in its
+ * final footprint so the panel never jumps when the real component arrives.
+ */
 const SourceModal = dynamic<SourceModalProps>(
   () => import("@/components/dashboard/SourceModal").then((m) => ({ default: m.SourceModal })),
   { ssr: false }
 );
 const WorkspaceTimer = dynamic(() => import("@/components/dashboard/WorkspaceTimer").then((m) => ({ default: m.WorkspaceTimer })), { ssr: false });
+const FileViewer = dynamic(() => import("@/components/dashboard/FileViewer").then((m) => ({ default: m.FileViewer })), {
+  ssr: false,
+  loading: () => <SkeletonPanel title="document" lines={6} className="m-3" />
+});
+const AINotesConsole = dynamic(() => import("@/components/dashboard/AINotesConsole").then((m) => ({ default: m.AINotesConsole })), {
+  ssr: false,
+  loading: () => <SkeletonPanel title="study notes" lines={8} className="m-3" />
+});
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
-import { SpotifyPlaybackPanel } from "@/components/dashboard/SpotifyPlaybackPanel";
-import { AINotesConsole } from "@/components/dashboard/AINotesConsole";
-import { FileViewer } from "@/components/dashboard/FileViewer";
+import { ChatMessageItem } from "@/components/dashboard/chat/ChatMessageItem";
 import type { PreviewKind } from "@/components/dashboard/FileViewer";
+import { SkeletonPanel } from "@/components/ui/Skeleton";
+import { toast } from "@/lib/toast";
+import { fireConfetti } from "@/lib/confetti";
 import { SecurityBadge } from "@/components/common/SecurityBadge";
 import { Button } from "@/components/ui/Button";
+import { CHAT_MODELS, normalizeModelChoice, type ChatModelChoice } from "@/lib/ai/models";
+import { ModelSelector } from "@/components/dashboard/ModelSelector";
+import { LearningModeSelector } from "@/components/dashboard/LearningModeSelector";
+import {
+  DEFAULT_LEARNING_MODE,
+  normalizeLearningMode,
+  type LearningModeId
+} from "@/lib/ai/learning-modes";
+import {
+  normalizeWebSearchMode,
+  planWebResearch,
+  stageLabelForRun,
+  WEB_SEARCH_MODES,
+  type WebSearchMode
+} from "@/lib/ai/research-intent";
 import { defaultExamGeneratorWeeklyLimit, defaultFreePreviewDailyLimit } from "@/lib/ai/preview";
 import { defaultUserPreferences } from "@/lib/preferences/defaults";
 import { buildStudyContext } from "@/lib/ai/source-context";
@@ -68,160 +99,67 @@ import {
   uploadAcceptAttribute
 } from "@/lib/documents/formats";
 
-type Session = { id: string; title: string };
-type FileItem = {
-  id: string;
-  file_name: string;
-  extracted_text: string;
-  file_type: string;
-  storage_path: string;
-  source_enabled?: boolean;
-};
-type ChatMessage = { role: "user" | "ai"; content: string; reasoning?: string; startedAt?: number; completedAt?: number };
-type ChatThread = {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-  updatedAt: number;
-};
-type AIAction =
-  | "summary"
-  | "flashcards"
-  | "quiz"
-  | "notes"
-  | "exam"
-  | "insights"
-  | "hard_mode"
-  | "study_plan"
-  | "concepts";
-
-type ToolDraft = {
-  action: AIAction;
-  count: number;
-  difficulty: "foundation" | "exam";
-  examMode?: "full" | "practice";
-  focus: string;
-};
-
-type QuizItem = {
-  question: string;
-  options?: string[];
-  answer?: string;
-  explanation?: string;
-};
-
-type FlashcardItem = {
-  front: string;
-  back: string;
-};
-
-type QuizResult = {
-  question: string;
-  selected: string;
-  correct: string;
-  isCorrect: boolean;
-  explanation: string;
-};
-
-type OutputCard = {
-  title: string;
-  body: string;
-};
-
-type ExamQuestion = {
-  number: string;
-  prompt: string;
-  marks: string;
-};
-
-type ToolHistoryItem = {
-  id: string;
-  action: AIAction;
-  title: string;
-  label: string;
-  preview: string;
-  output: string;
-  createdAt: number;
-};
-
-type WorkspaceDynamicTab = {
-  id: string;
-  label: string;
-  kind: "source" | "canvas-source" | "output" | "canvas-output" | "search" | "browse" | "canvas-browse";
-  closable: true;
-  action?: AIAction;
-  output?: string;
-  file?: FileItem;
-  previewKind?: "text" | "table" | "pdf" | "image" | "audio" | "word" | "presentation";
-  text?: string;
-  url?: string | null;
-  html?: string;
-  query?: string;
-  results?: WebSourceItem[];
-};
-
-type PreviewState = {
-  open: boolean;
-  loading: boolean;
-  file: FileItem | null;
-  kind: "text" | "table" | "pdf" | "image" | "audio" | "word" | "presentation";
-  text: string;
-  url: string | null;
-  error: string;
-};
-
-type WebSourceItem = {
-  id: string;
-  title: string;
-  url: string;
-  snippet: string;
-  source: string;
-  trustLabel: string;
-};
-
-type StudyMetrics = {
-  quizAnswered: number;
-  quizCorrect: number;
-  flashcardsFlipped: number;
-  toolRuns: Record<AIAction, number>;
-  recentQuizResults: QuizResult[];
-};
-
-type RevisionScheduleItem = {
-  day: string;
-  focus: string;
-  task: string;
-  check: string;
-};
-
-type SourceSearchEngine = "scholar" | "google" | "duckduckgo";
-type CopiedSourceClipboard = {
-  sourceSessionId: string;
-  sourceStudioTitle: string;
-  copiedAt: number;
-};
-type CanvasTool = "mouse" | "text" | "highlight" | "draw" | "eraser";
-type CanvasAnnotation = {
-  id: string;
-  tabId: string;
-  tool: Exclude<CanvasTool, "mouse">;
-  text: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  createdAt: number;
-};
-type CanvasPoint = { x: number; y: number; pressure: number };
-type CanvasStroke = {
-  id: string;
-  tabId: string;
-  tool: "highlight" | "draw";
-  color: string;
-  width: number;
-  points: CanvasPoint[];
-  createdAt: number;
-};
+/*
+ * The data contract and every pure parsing/formatting rule now live in
+ * `lib/studio/*`, where they can be read and tested without mounting a
+ * 7,000-line component. What remains here is the workspace itself.
+ */
+import type {
+  AIAction,
+  CanvasAnnotation,
+  CanvasPoint,
+  CanvasStroke,
+  CanvasTool,
+  ChatMessage,
+  ChatModelMeta,
+  ChatThread,
+  CopiedSourceClipboard,
+  ExamQuestion,
+  FileItem,
+  FlashcardItem,
+  OutputCard,
+  PreviewState,
+  QuizItem,
+  QuizResult,
+  RecentWebsite,
+  RevisionScheduleItem,
+  Session,
+  SourceSearchEngine,
+  StudyMetrics,
+  ToolDraft,
+  ToolHistoryItem,
+  WebSourceItem,
+  WorkspaceDynamicTab
+} from "@/lib/studio/types";
+import { buildPerformanceSummary, createEmptyMetrics } from "@/lib/studio/metrics";
+import { parseJsonBlock, parseSSEChunk, readJsonResponse } from "@/lib/studio/api";
+import {
+  cleanGeneratedText,
+  clipText,
+  normalizeAIResponseText,
+  normalizeAIText,
+  normalizeErrorMessage,
+  normalizeLine,
+  sanitizeDisplayText,
+  summarizeGeneratedOutput
+} from "@/lib/studio/text";
+import {
+  detectCanvasAssistRequest,
+  detectChatToolRequest,
+  extractUrlFromText,
+  extractWebUrlFromSourceText,
+  isTutorSmallTalk
+} from "@/lib/studio/intent";
+import {
+  cleanCardText,
+  normalizeFlashcards,
+  normalizeQuizItems,
+  parseFlashcardsFallback,
+  parseOutputCards,
+  parseQuizFallback
+} from "@/lib/studio/quiz";
+import { buildToolPrompt, createToolDraft, looksRichOutput, trustBadgeTone } from "@/lib/studio/tools";
+import { parseExamQuestions, parseMarkdownTableRows, parseRevisionSchedule } from "@/lib/studio/schedule";
 
 const desktopLeftPanelDefault = 360;
 const desktopRightPanelDefault = 520;
@@ -237,17 +175,14 @@ const chatThreadsStoragePrefix = "scholarmind_chat_threads:";
 const recentWebsitesStoragePrefix = "scholarmind_recent_websites:";
 const maxRecentWebsites = 6;
 
-type RecentWebsite = {
-  url: string;
-  label: string;
-  visitedAt: number;
-};
-
 const focusTracks: Array<{ title: string; artist: string; mood: string; color: string }> = [];
 
-const musicProviders = [
-  { key: "spotify", name: "Spotify", logo: "S", href: "/api/music/spotify/login", note: "Connect account • Free accounts have limited playback", unavailable: false }
-];
+/** Where the student's Pro / Flash / Auto preference is remembered. */
+const modelChoiceStorageKey = "scholarmind_model_choice";
+/** Where the student's tutor mode is remembered. */
+const learningModeStorageKey = "scholarmind_learning_mode";
+/** Where the student's web-search choice is remembered. */
+const webSearchModeStorageKey = "scholarmind_web_search_mode";
 
 const actionButtons: { key: AIAction; label: string; copy: string }[] = [
   { key: "summary", label: "Summary", copy: "Condense the uploaded material into fast revision notes." },
@@ -269,577 +204,6 @@ const toolTones: Record<AIAction, string> = {
   concepts: "border-[rgba(121,247,199,0.24)] bg-[rgba(121,247,199,0.08)]"
 };
 
-function createToolDraft(action: AIAction): ToolDraft {
-  return {
-    action,
-    count: action === "flashcards" ? 8 : action === "quiz" ? 6 : action === "study_plan" ? 7 : action === "exam" ? 14 : action === "notes" ? 8 : 5,
-    difficulty: action === "hard_mode" || action === "exam" ? "exam" : "foundation",
-    examMode: action === "exam" ? "full" : undefined,
-    focus: ""
-  };
-}
-
-function parseJsonBlock<T>(text: string): T | null {
-  // Strip BOM, reasoning preamble, and clean up
-  let cleaned = extractStructuredOutput(text).replace(/^\uFEFF/, "").trim();
-  if (!cleaned) return null;
-
-  // Recursively strip trailing commas: keep going until no more matches
-  const stripTrailingCommas = (s: string): string => {
-    const result = s.replace(/,\s*([\]}])/g, "$1");
-    return result === s ? result : stripTrailingCommas(result);
-  };
-  cleaned = stripTrailingCommas(cleaned);
-
-  // Try direct parse first
-  try {
-    return JSON.parse(cleaned) as T;
-  } catch {
-    // fall through
-  }
-
-  // Try extracting from code fences
-  const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fencedMatch) {
-    const jsonStr = stripTrailingCommas(fencedMatch[1].trim());
-    try {
-      return JSON.parse(jsonStr) as T;
-    } catch {
-      // fall through
-    }
-  }
-
-  // Try extracting balanced array or object from the raw text
-  const bracketMatch = cleaned.match(/(\[[\s\S]*\]|\{[\s\S]*\})/);
-  if (bracketMatch) {
-    const jsonStr = stripTrailingCommas(bracketMatch[1]);
-    try {
-      return JSON.parse(jsonStr) as T;
-    } catch {
-      // fall through
-    }
-  }
-
-  return null;
-}
-
-function cleanGeneratedText(text: string) {
-  return extractStructuredOutput(text)
-    .replace(/^Local fallback response\s*/i, "")
-    .replace(/```(?:json)?/gi, "")
-    .trim();
-}
-
-function normalizeAIText(value: unknown): string {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed && trimmed !== "[object Object]" && trimmed !== "{}" ? trimmed : "";
-  }
-  if (value === null || value === undefined) return "";
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const preferred = [record.error, record.message, record.text, record.content];
-    for (const item of preferred) {
-      const normalized = normalizeAIText(item);
-      if (normalized) return normalized;
-    }
-    try {
-      const json = JSON.stringify(value);
-      return json === "{}" ? "" : json;
-    } catch {
-      return "";
-    }
-  }
-  return String(value).trim();
-}
-
-function normalizeErrorMessage(value: unknown, fallback = "Unexpected error") {
-  const normalized = normalizeAIText(value);
-  if (!normalized || normalized === "[object Object]" || normalized === "{}") {
-    return fallback;
-  }
-  return normalized;
-}
-
-function sanitizeDisplayText(value: unknown, fallback: string) {
-  const normalized = normalizeErrorMessage(value, fallback);
-  return normalized === "[object Object]" ? fallback : normalized;
-}
-
-function normalizeAIResponseText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(normalizeAIResponseText).filter(Boolean).join("\n");
-  if (typeof value === "object" && value !== null) {
-    const record = value as Record<string, unknown>;
-    const candidate = normalizeAIText(record.text ?? record.content ?? record.error ?? record.message);
-    return candidate || JSON.stringify(value);
-  }
-  return normalizeAIText(value);
-}
-
-function parseSSEChunk(chunk: string): { content: string; reasoning: string } {
-  const lines = chunk.split(/\r?\n/);
-  let content = "";
-  let reasoning = "";
-  for (const line of lines) {
-    if (!line.startsWith("data:")) continue;
-    const payload = line.replace(/^data:\s*/, "").trim();
-    if (payload === "[DONE]") continue;
-    try {
-      const data = JSON.parse(payload);
-      const delta = data?.choices?.[0]?.delta;
-      content += normalizeAIText(delta?.content);
-      reasoning += normalizeAIText(delta?.reasoning);
-    } catch {
-      // not JSON: ignore
-    }
-  }
-  return { content, reasoning };
-}
-
-function normalizeLine(line: string) {
-  return line
-    .replace(/^[-*]\s+/, "")
-    .replace(/^\d+\.\s+/, "")
-    .trim();
-}
-
-function clipText(text: string, limit: number) {
-  return text.length > limit ? `${text.slice(0, limit).trim()}...` : text;
-}
-
-function summarizeGeneratedOutput(text: string) {
-  return clipText(
-    cleanGeneratedText(text)
-      .replace(/\n+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim(),
-    180
-  );
-}
-
-function isTutorSmallTalk(text: string) {
-  const normalized = text.trim().toLowerCase();
-  return /^(hi|hey|hello|yo|hiya|good morning|good afternoon|good evening)\b/.test(normalized) ||
-    /how are you( doing)?/i.test(normalized) ||
-    /what'?s up/i.test(normalized);
-}
-
-function detectChatToolRequest(text: string): AIAction | null {
-  const normalized = text.toLowerCase();
-  if (!/\b(make|build|create|generate|turn|give me)\b/.test(normalized)) return null;
-  if (/\bflashcards?\b/.test(normalized)) return "flashcards";
-  if (/\bquiz\b|\bmcq\b|\bmultiple[- ]choice\b/.test(normalized)) return "quiz";
-  if (/\bexam\b|\bmock paper\b|\btest paper\b/.test(normalized)) return "exam";
-  if (/\b(ai notes|long notes|textbook notes|study notes|detailed notes)\b/.test(normalized)) return "notes";
-  if (/\bsummary\b|\bsummarise\b|\bsummarize\b/.test(normalized)) return "summary";
-  return null;
-}
-
-function extractUrlFromText(text: string) {
-  const match = text.match(/https?:\/\/[^\s)]+/i);
-  return match?.[0]?.replace(/[.,;]+$/, "") || null;
-}
-
-function extractWebUrlFromSourceText(text: string) {
-  const labeled = text.match(/Source URL:\s*(https?:\/\/[^\s]+)/i);
-  if (labeled?.[1]) return labeled[1].trim();
-  return extractUrlFromText(text);
-}
-
-function getSearchUrl(query: string) {
-  return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query.trim())}`;
-}
-
-function detectCanvasAssistRequest(text: string): "highlight" | "text" | null {
-  const lower = text.toLowerCase();
-  if (!/\b(highlight|annotate|annotation|mark up|markup|text box|add a note|mark this)\b/.test(lower)) {
-    return null;
-  }
-  if (/\bhighlight\b/.test(lower)) return "highlight";
-  return "text";
-}
-
-async function readJsonResponse(response: Response) {
-  const text = await response.text();
-
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch {
-    const statusMessage = response.status ? ` (${response.status})` : "";
-    throw new Error(
-      response.ok
-        ? `The server returned an unreadable response${statusMessage}. Restart the dev server and try again.`
-        : `The server returned an unexpected response${statusMessage}.`
-    );
-  }
-}
-
-function cleanCardText(text: string) {
-  return cleanGeneratedText(text)
-    .replace(/^question:\s*/i, "")
-    .replace(/^source:\s*[^\n]+/gim, "")
-    .replace(/^source title:\s*[^\n]+/gim, "")
-    .replace(/^source url:\s*[^\n]+/gim, "")
-    .replace(/^summary:\s*[^\n]+/gim, "")
-    .replace(/^trust:\s*[^\n]+/gim, "")
-    .replace(/https?:\/\/\S+/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeFlashcards(items: FlashcardItem[] | null) {
-  if (!items?.length) return null;
-
-  const normalized = items
-    .map((item, index) => {
-      const front = clipText(cleanCardText(item.front || `Flashcard ${index + 1}`), 96);
-      const back = clipText(cleanCardText(item.back || ""), 220);
-      return {
-        front: front || `Flashcard ${index + 1}`,
-        back: back || "Review the uploaded sources and try generating this flashcard again."
-      };
-    })
-    .filter((item) => item.front || item.back);
-
-  return normalized.length ? normalized : null;
-}
-
-function parseFlashcardsFallback(text: string) {
-  const cleaned = cleanGeneratedText(text);
-  const matches = Array.from(
-    cleaned.matchAll(/(?:Flashcard\s*\d+)?\s*Front:\s*([\s\S]+?)\s*Back:\s*([\s\S]+?)(?=(?:Flashcard\s*\d+)?\s*Front:|$)/gi)
-  );
-
-  if (!matches.length) return null;
-
-  return matches.map((match) => ({
-    front: cleanCardText(match[1]),
-    back: cleanCardText(match[2])
-  }));
-}
-
-function normalizeQuizAnswer(answer: string | undefined, options: string[]) {
-  const rawAnswer = cleanCardText(answer || "");
-  if (!rawAnswer) return "";
-
-  const letterMatch = rawAnswer.match(/^[A-D]/i)?.[0]?.toUpperCase();
-  if (!letterMatch) return rawAnswer;
-
-  return options.find((option) => option.trim().toUpperCase().startsWith(letterMatch)) || rawAnswer;
-}
-
-function normalizeQuizItems(items: QuizItem[] | null) {
-  if (!items?.length) return null;
-
-  const normalized = items
-    .map((item) => {
-      const options = (item.options ?? []).map((option) => cleanCardText(option)).filter(Boolean).slice(0, 4);
-      return {
-        question: clipText(cleanCardText(item.question || ""), 220),
-        options,
-        answer: normalizeQuizAnswer(item.answer, options),
-        explanation: clipText(cleanCardText(item.explanation || ""), 220)
-      };
-    })
-    .filter((item) => item.question);
-
-  return normalized.length ? normalized : null;
-}
-
-function parseQuizFallback(text: string) {
-  const cleaned = cleanGeneratedText(text);
-  const blocks = cleaned
-    .split(/\n\s*\n+/)
-    .map((block) => block.trim())
-    .filter(Boolean);
-
-  const questions: QuizItem[] = [];
-  let current: QuizItem | null = null;
-
-  const pushCurrent = () => {
-    if (!current?.question) return;
-    questions.push({
-      question: current.question,
-      options: current.options?.filter(Boolean) ?? [],
-      answer: current.answer,
-      explanation: current.explanation
-    });
-  };
-
-  for (const block of blocks) {
-    const lines = block
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const hasQuestion = lines.some((line) => /^(question\s*\d+|q\d+|\d+[.)])/i.test(line));
-    if (hasQuestion) {
-      pushCurrent();
-      current = { question: "", options: [] };
-    }
-
-    for (const line of lines) {
-      if (!current) {
-        current = { question: "", options: [] };
-      }
-
-      if (/^(question\s*\d+|q\d+|\d+[.)])/i.test(line)) {
-        current.question = cleanCardText(line.replace(/^(question\s*\d+|q\d+|\d+[.)])[:.)-\s]*/i, ""));
-        continue;
-      }
-
-      if (/^[A-D][.)-]/i.test(line)) {
-        current.options = [...(current.options ?? []), cleanCardText(line)];
-        continue;
-      }
-
-      if (/^answer:/i.test(line)) {
-        current.answer = cleanCardText(line.replace(/^answer:/i, ""));
-        continue;
-      }
-
-      if (/^explanation:/i.test(line)) {
-        current.explanation = cleanCardText(line.replace(/^explanation:/i, ""));
-        continue;
-      }
-
-      if (!current.question) {
-        current.question = cleanCardText(line);
-      } else if (!current.explanation) {
-        current.explanation = cleanCardText(line);
-      }
-    }
-  }
-
-  pushCurrent();
-  return questions.length ? questions : null;
-}
-
-function parseOutputCards(text: string, action: AIAction): OutputCard[] {
-  const cleaned = cleanGeneratedText(text);
-  if (!cleaned) return [];
-
-  const lines = cleaned
-    .split(/\n+/)
-    .map(normalizeLine)
-    .filter(Boolean);
-
-  if (!lines.length) return [];
-
-  if (action === "study_plan") {
-    return lines.map((line, index) => {
-      const [title, ...rest] = line.split(/:\s+/);
-      if (/^day\b/i.test(title) && rest.length) {
-        return { title, body: rest.join(": ") };
-      }
-      return { title: `Step ${index + 1}`, body: line };
-    });
-  }
-
-  return lines.map((line, index) => {
-    const [title, ...rest] = line.split(/:\s+/);
-    if (rest.length && title.length < 42) {
-      return { title, body: rest.join(": ") };
-    }
-
-    return {
-      title:
-        action === "hard_mode"
-          ? `Challenge ${index + 1}`
-          : action === "concepts"
-            ? `Concept ${index + 1}`
-            : action === "summary"
-              ? `Key Point ${index + 1}`
-              : `Study Note ${index + 1}`,
-      body: line
-    };
-  });
-}
-
-function parseTablePreview(text: string) {
-  const lines = text
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (!lines.length) return [];
-
-  const delimiter = lines.some((line) => line.includes("\t")) ? "\t" : ",";
-  return lines.slice(0, 30).map((line) => line.split(delimiter).map((cell) => cell.trim()));
-}
-
-function buildToolPrompt(draft: ToolDraft, files: FileItem[]) {
-  const count = Math.max(3, Math.min(draft.count, draft.action === "exam" ? 18 : 12));
-  const sourceList = files.map((file) => file.file_name).join(", ");
-  const focus = draft.focus.trim() || "the most important ideas across all uploaded files";
-  const difficulty = draft.difficulty === "exam" ? "exam-level" : "foundation-level";
-  const preface = `Use only the uploaded study sources. Base the output on these files: ${sourceList}. Focus on ${focus}. Keep the output ${difficulty}. Do not paste source metadata, filenames, URLs, AI context, or prompt instructions unless the user needs a citation. Do not output placeholders. Produce the final student-facing study material only.`;
-
-  switch (draft.action) {
-    case "quiz":
-      return `${preface} Generate ${count} high-quality multiple-choice questions like a real study platform. Use the student profile in the context to match their country, curriculum stage, exam board, and tier where provided. Every question must test a specific fact, method, formula, misconception, source detail, or exam skill from the uploaded material. Avoid generic options like "source", "definition", "examples", or "types". Make distractors plausible, not silly. Keep each option short, give exactly 4 options, make the answer match one option exactly, and keep the explanation brief but useful. Return only a JSON array with this exact shape and no markdown: [{"question":"...","options":["A. ...","B. ...","C. ...","D. ..."],"answer":"A. ...","explanation":"..."}].`;
-    case "flashcards":
-      return `${preface} Generate ${count} strong active-recall flashcards. Each front must be a real term, question, formula, process, date, quote, rule, or recall cue from the sources, not a generic word. The back should be concise, accurate, and phrased like a student-friendly memory answer. Keep each front under 14 words and each back under 45 words. Do not paste raw source paragraphs or repeat the file name. Return only JSON with this exact shape: [{"front":"...","back":"..."}].`;
-    case "exam":
-      if (draft.examMode === "practice") {
-        return `${preface} Generate ${Math.max(4, Math.min(12, count))} original exam-style practice questions in markdown, not a full exam. Include mark allocations, space for working, and a compact mark scheme at the end. Questions must be source-specific, realistic, and useful for quick revision. If the material is mathematical, include method-based questions and formulas where helpful. Do not copy real past-paper questions.`;
-      }
-      return `${preface} Generate a long original ${focus} mock exam in markdown with around ${Math.max(36, count + 22)} questions. Include a front-page title, time allowed, total marks, short instructions, clearly numbered questions, mark allocations, multiple sections, and a compact mark scheme table at the end. Aim for the feel of a real GCSE, A-Level, school, university, or international mock paper rather than a short worksheet, while creating new questions instead of copying past papers. Use source-specific wording, not generic filler. If the material is mathematical, include method-based questions, multi-step problems, formulas, diagrams or tables when helpful, and require working.`;
-    case "notes":
-      return `${preface} Generate long-form AI Notes as valid JSON only. Make it textbook-quality, source-grounded, curriculum-aware, and much more detailed than a summary. Teach the topic like a patient tutor: clear chapter sections, short paragraphs, definitions, formulas, worked examples, common mistakes, callouts, diagrams/tables where useful, and practice questions with hints and answers. Include enough depth that a student can revise from it without needing the original source open. Include formulaBlocks only when formulas genuinely matter. Include scienceSimulation only when the source is clearly science/STEM and an interactive simulation would actually help understanding, such as particles, waves, circuits, forces, energy transfer, rates of reaction, diffusion, osmosis, or cells. Do not include any simulation for non-science or where a simulation would feel forced. Return JSON with title, subject, level, estimatedTime, sections, callouts, formulaBlocks, workedExamples, practiceQuestions, diagrams, scienceSimulation or simulationSpec, and sourceNotes.`;
-    case "summary":
-      return `${preface} Return a full revision summary in markdown. Use these sections in order: ## What this topic is about, ## Key points to remember, ## Step-by-step explanation, ## What to memorise, ## Quick self-check. Keep it concise but complete, use short paragraphs or bullets where helpful, and use a table only when the source naturally contains comparisons, formulas, or dates.`;
-    case "insights":
-      return `${preface} Return a short performance report with weak spots, misconceptions, and next-best study actions. Use a markdown table when it helps.`;
-    case "hard_mode":
-      return `${preface} Return a markdown table with ${count} likely exam traps. Use the columns Trap | Why students fall for it | Correct move | Self-check.`;
-    case "study_plan":
-      return `${preface} Return a ${count}-step study plan as a markdown table with the columns Day | Focus | Task | Check.`;
-    case "concepts":
-      return `${preface} Return either a concise markdown table or a mermaid diagram when it helps explain the topic links. If neither helps, return ${count} lines in the format "Concept: why it matters".`;
-    default:
-      return preface;
-  }
-}
-
-function looksRichOutput(text: string) {
-  return /```mermaid/i.test(text) || /\|.+\|/.test(text) || /^#{1,3}\s/m.test(text);
-}
-
-function trustBadgeTone(trustLabel: string) {
-  if (trustLabel === "Verified") {
-    return "bg-[rgba(121,247,199,0.18)] text-[var(--accent-mint)]";
-  }
-
-  if (trustLabel === "Scholar") {
-    return "bg-[rgba(57,208,255,0.18)] text-[var(--accent-sky)]";
-  }
-
-  if (trustLabel === "Trusted") {
-    return "bg-[rgba(255,209,102,0.18)] text-[var(--accent-gold)]";
-  }
-
-  return "bg-white/10 text-[var(--fg)]";
-}
-
-function createEmptyMetrics(): StudyMetrics {
-  return {
-    quizAnswered: 0,
-    quizCorrect: 0,
-    flashcardsFlipped: 0,
-    toolRuns: {
-      summary: 0,
-      notes: 0,
-      flashcards: 0,
-      quiz: 0,
-      exam: 0,
-      insights: 0,
-      hard_mode: 0,
-      study_plan: 0,
-      concepts: 0
-    },
-    recentQuizResults: []
-  };
-}
-
-function buildPerformanceSummary(metrics: StudyMetrics) {
-  const toolSummary = Object.entries(metrics.toolRuns)
-    .filter(([, count]) => count > 0)
-    .map(([action, count]) => `${action.replace(/_/g, " ")}: ${count}`)
-    .join(", ");
-
-  return [
-    `Quiz answers checked: ${metrics.quizAnswered}`,
-    `Quiz answers correct: ${metrics.quizCorrect}`,
-    `Flashcards flipped: ${metrics.flashcardsFlipped}`,
-    toolSummary ? `Tool usage: ${toolSummary}` : "",
-    metrics.recentQuizResults.length
-      ? `Recent quiz misses: ${metrics.recentQuizResults
-          .filter((item) => !item.isCorrect)
-          .slice(0, 3)
-          .map((item) => item.question)
-          .join(" | ")}`
-      : ""
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function parseMarkdownTableRows(text: string) {
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("|") && line.endsWith("|"));
-
-  if (lines.length < 3) return [];
-
-  const rows = lines
-    .map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()))
-    .filter((row) => row.some(Boolean));
-
-  if (rows.length < 3) return [];
-  return rows;
-}
-
-function parseRevisionSchedule(text: string): RevisionScheduleItem[] {
-  const rows = parseMarkdownTableRows(text);
-
-  if (rows.length) {
-    const [header, divider, ...body] = rows;
-    const normalizedHeader = header.map((cell) => cell.toLowerCase());
-    if (divider.every((cell) => /^:?-{3,}:?$/.test(cell))) {
-      const dayIndex = normalizedHeader.findIndex((cell) => cell.includes("day") || cell.includes("week"));
-      const focusIndex = normalizedHeader.findIndex((cell) => cell.includes("focus"));
-      const taskIndex = normalizedHeader.findIndex((cell) => cell.includes("task") || cell.includes("study"));
-      const checkIndex = normalizedHeader.findIndex((cell) => cell.includes("check"));
-
-      if (dayIndex >= 0 && focusIndex >= 0) {
-        return body.map((row) => ({
-          day: row[dayIndex] || `Day ${body.indexOf(row) + 1}`,
-          focus: row[focusIndex] || "Focus",
-          task: row[taskIndex] || row[focusIndex] || "",
-          check: row[checkIndex] || "Do a quick recall check."
-        }));
-      }
-    }
-  }
-
-  return parseOutputCards(text, "study_plan").map((card, index) => ({
-    day: /^day|^week/i.test(card.title) ? card.title : `Day ${index + 1}`,
-    focus: card.title,
-    task: card.body,
-    check: "Summarise it aloud and self-test."
-  }));
-}
-
-function parseExamQuestions(text: string): ExamQuestion[] {
-  const cleaned = cleanGeneratedText(text);
-  if (!cleaned) return [];
-
-  const questionOnlySection = cleaned
-    .split(/\n#{1,6}\s*mark scheme\b/i)[0]
-    .split(/\nmark scheme\b/i)[0]
-    .trim();
-
-  const matches = Array.from(
-    questionOnlySection.matchAll(
-      /(?:^|\n)(?:question\s*)?(\d+[a-z]?)[.)]\s+([\s\S]*?)(?=(?:\n(?:question\s*)?\d+[a-z]?[.)]\s)|(?:\n#{1,6}\s)|$)/gim
-    )
-  );
-
-  return matches
-    .map((match) => {
-      const prompt = match[2].trim().replace(/\n{3,}/g, "\n\n");
-      const marksMatch = prompt.match(/(\d+\s*(?:marks?|pts?))/i);
-      return {
-        number: match[1],
-        prompt: prompt.replace(/\((\d+\s*(?:marks?|pts?))\)/i, "").trim(),
-        marks: marksMatch?.[1] || ""
-      };
-    })
-    .filter((item) => item.prompt);
-}
 
 function sanitizeFileBaseName(value: string) {
   return value
@@ -884,6 +248,8 @@ export function StudyWorkspace({
   const planLaunchAttemptRef = useRef<string | null>(null);
   const defaultToolAppliedRef = useRef(false);
   const musicStateLoadedRef = useRef(false);
+  /** Aborts the in-flight chat stream when the student presses Stop. */
+  const chatAbortRef = useRef<AbortController | null>(null);
   const [sessionList, setSessionList] = useState<Session[]>(sessions);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSessionId);
   const [filesBySession, setFilesBySession] = useState<Record<string, FileItem[]>>(() =>
@@ -950,8 +316,6 @@ export function StudyWorkspace({
   const [selectedTrackIndex, setSelectedTrackIndex] = useState(0);
   const [musicPlaying, setMusicPlaying] = useState(false);
   const [musicRainbowEnabled, setMusicRainbowEnabled] = useState(false);
-  const [musicPanelOpen, setMusicPanelOpen] = useState(false);
-  const [musicSearch, setMusicSearch] = useState("");
   const [spotifyConnected, setSpotifyConnected] = useState(false);
   const [statusNote, setStatusNote] = useState("");
   const [toolUsage, setToolUsage] = useState<{ used: number; limit: number }>({ used: 0, limit: defaultFreePreviewDailyLimit });
@@ -1010,6 +374,21 @@ export function StudyWorkspace({
   const [askAIPopup, setAskAIPopup] = useState<{ text: string; x: number; y: number } | null>(null);
   const [selectedEditorText, setSelectedEditorText] = useState("");
   const [showQuizResults, setShowQuizResults] = useState(false);
+  /** Pro / Flash / Auto. Persisted locally; the server resolves it finally. */
+  const [modelChoice, setModelChoice] = useState<ChatModelChoice>("auto");
+  /** How the tutor should teach: explain, socratic, exam, and so on. */
+  const [learningMode, setLearningMode] = useState<LearningModeId>(DEFAULT_LEARNING_MODE);
+  /**
+   * Whether this question may be looked up, and how thoroughly. Persisted, so a
+   * student who prefers notes-only is not silently searched on every reload.
+   */
+  const [webSearchMode, setWebSearchMode] = useState<WebSearchMode>("auto");
+  /**
+   * Set while the tutor is looking something up. The decision comes from the
+   * same pure function the API route uses, so this label can never describe a
+   * search that did not actually run.
+   */
+  const [chatResearchStage, setChatResearchStage] = useState<string | null>(null);
 
   // On mobile the workspace and chat are mutually exclusive tabs. On desktop the
   // two panels are visible together, which is the only state where a selection
@@ -1027,6 +406,24 @@ export function StudyWorkspace({
       : !isMobileAIChatTabActive
         ? "Open the AI Chat tab to ask about selected text."
         : "";
+
+  /**
+   * One place for failures.
+   *
+   * The status line stays (it is contextual, next to what failed), and the
+   * toast guarantees the failure is noticed even when that line is scrolled
+   * out of view. Nothing in this workspace is allowed to fail silently.
+   */
+  const reportError = useCallback(
+    (
+      message: string,
+      options?: { description?: string; action?: { label: string; onClick: () => void } }
+    ) => {
+      setStatusNote(message);
+      toast.error(message, options);
+    },
+    []
+  );
 
   const persistChatThreads = useCallback((sessionId: string, threads: ChatThread[]) => {
     try {
@@ -1209,6 +606,77 @@ export function StudyWorkspace({
   useEffect(() => {
     setSessionList(sessions);
   }, [sessions]);
+
+  /*
+   * Model preference. Restored before the first send so the picker never shows
+   * a stale choice, and written straight through so a reload keeps it.
+   */
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(modelChoiceStorageKey);
+      if (stored) setModelChoice(normalizeModelChoice(stored));
+    } catch {
+      // Storage unavailable — Auto is a safe default.
+    }
+  }, []);
+
+  /**
+   * Change the tutor's model and remember it.
+   *
+   * Written through immediately rather than in an effect, so the next request
+   * can never be built from a stale value. localStorage is the fallback because
+   * it works for signed-out previews too; a failure here only costs
+   * persistence, never the choice itself.
+   */
+  const changeModelChoice = useCallback((next: ChatModelChoice) => {
+    const normalized = normalizeModelChoice(next);
+    setModelChoice(normalized);
+    try {
+      localStorage.setItem(modelChoiceStorageKey, normalized);
+    } catch {
+      // Storage unavailable — the choice still applies to this session.
+    }
+  }, []);
+
+  /** Restore the tutor mode before the first send, then remember every change. */
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(learningModeStorageKey);
+      if (stored) setLearningMode(normalizeLearningMode(stored));
+    } catch {
+      // Storage unavailable — Explain is a safe default.
+    }
+  }, []);
+
+  const changeLearningMode = useCallback((next: LearningModeId) => {
+    const normalized = normalizeLearningMode(next);
+    setLearningMode(normalized);
+    try {
+      localStorage.setItem(learningModeStorageKey, normalized);
+    } catch {
+      // Storage unavailable — the mode still applies to this session.
+    }
+  }, []);
+
+  /** Restore the web-search choice, then remember every change. */
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(webSearchModeStorageKey);
+      if (stored) setWebSearchMode(normalizeWebSearchMode(stored));
+    } catch {
+      // Storage unavailable — Auto is the conservative default.
+    }
+  }, []);
+
+  const changeWebSearchMode = useCallback((next: WebSearchMode) => {
+    const normalized = normalizeWebSearchMode(next);
+    setWebSearchMode(normalized);
+    try {
+      localStorage.setItem(webSearchModeStorageKey, normalized);
+    } catch {
+      // Storage unavailable — the choice still applies to this session.
+    }
+  }, []);
 
   useEffect(() => {
     try {
@@ -1576,7 +1044,6 @@ export function StudyWorkspace({
 
     if (musicStatus === "spotify_connected") {
       setSpotifyConnected(true);
-      setMusicPanelOpen(true);
       setStatusNote("Spotify connected. Browse your playlists or search for tracks in the music panel.");
     } else if (musicStatus === "spotify_not_connected") {
       setStatusNote("Spotify could not be connected. Check your redirect URL and try again.");
@@ -1896,56 +1363,6 @@ export function StudyWorkspace({
     setShowChatThreads(false);
     setStatusNote("Started a new tutor chat. Recent chats are saved in this studio.");
   }, [snapshotCurrentChat]);
-
-  const openCurrentResultInCanvas = useCallback(() => {
-    if (!output) {
-      setStatusNote("Generate or reopen an output before opening canvas mode.");
-      return;
-    }
-
-    const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
-    upsertWorkspaceTab({
-      id: `canvas-output-${activeAction}`,
-      label: label,
-      kind: "canvas-output",
-      action: activeAction,
-      output,
-      closable: true
-    });
-  }, [activeAction, output, upsertWorkspaceTab]);
-
-  const openCurrentResultInWorkspaceTab = useCallback(() => {
-    if (!output) {
-      setStatusNote("Generate or reopen an output before opening a workspace tab.");
-      return;
-    }
-
-    const label = actionButtons.find((item) => item.key === activeAction)?.label || "AI Output";
-    upsertWorkspaceTab({
-      id: `output-${activeAction}`,
-      label,
-      kind: "output",
-      action: activeAction,
-      output,
-      closable: true
-    });
-  }, [activeAction, output, upsertWorkspaceTab]);
-
-  const openGeneratedResultInWorkspaceTab = useCallback(
-    (action: AIAction, generatedOutput: string, focus = "") => {
-      const label = actionButtons.find((item) => item.key === action)?.label || "AI Output";
-      const focusLabel = focus.trim();
-      upsertWorkspaceTab({
-        id: `output-${action}-${Date.now()}`,
-        label: focusLabel ? `${label}: ${clipText(focusLabel, 24)}` : label,
-        kind: "output",
-        action,
-        output: generatedOutput,
-        closable: true
-      });
-    },
-    [upsertWorkspaceTab]
-  );
 
   const openFileInCanvas = useCallback(
     async (file: FileItem) => {
@@ -2416,7 +1833,7 @@ export function StudyWorkspace({
         }));
       } catch (error) {
         if (!ignore) {
-          setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to load files for this studio."));
+          reportError(formatSupabaseSetupError((error as Error).message || "Unable to load files for this studio."));
         }
       } finally {
         if (!ignore) setFetchingFiles(false);
@@ -2497,12 +1914,6 @@ export function StudyWorkspace({
 
     const onScroll = () => {
       const y = container.scrollTop;
-      const atBottom = y + container.clientHeight >= container.scrollHeight - 100;
-
-      if (y < lastWorkspaceScrollYRef.current - 12) {
-        setMusicPanelOpen(false);
-      }
-
       lastWorkspaceScrollYRef.current = y;
     };
 
@@ -2841,7 +2252,7 @@ export function StudyWorkspace({
 
       setSessionList(Array.isArray(json.sessions) ? json.sessions : []);
     } catch (error) {
-      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to refresh the studio list."));
+      reportError(formatSupabaseSetupError((error as Error).message || "Unable to refresh the studio list."));
     } finally {
       setStudioBrowserRefreshing(false);
     }
@@ -2881,7 +2292,7 @@ export function StudyWorkspace({
       setStatusNote("Studio ready.");
       return nextSession.id;
     } catch (error) {
-      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to prepare a studio."));
+      reportError(formatSupabaseSetupError((error as Error).message || "Unable to prepare a studio."));
       return null;
     }
   };
@@ -2912,7 +2323,7 @@ export function StudyWorkspace({
       );
       setStatusNote(`Studio renamed to ${json.title || nextTitle}.`);
     } catch (error) {
-      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to rename this studio."));
+      reportError(formatSupabaseSetupError((error as Error).message || "Unable to rename this studio."));
     } finally {
       setRenamingStudioId(null);
     }
@@ -2954,7 +2365,7 @@ export function StudyWorkspace({
       setShowStudioBrowser(false);
       setStatusNote(`Deleted ${title}.`);
     } catch (error) {
-      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to delete this studio."));
+      reportError(formatSupabaseSetupError((error as Error).message || "Unable to delete this studio."));
     } finally {
       setDeletingStudioId(null);
     }
@@ -3090,7 +2501,9 @@ export function StudyWorkspace({
       autoSwitchTab("tools");
     } catch (error) {
       const message = formatSupabaseSetupError((error as Error).message || "Upload failed.");
-      setStatusNote(message);
+      reportError(message, {
+        description: "Check the file type and size, then try adding it again."
+      });
       setSourceModalError(message);
     } finally {
       window.setTimeout(() => {
@@ -3134,7 +2547,7 @@ export function StudyWorkspace({
         setSourceModalError("No web sources came back for that topic. Try a more specific search.");
       }
     } catch (error) {
-      setSourceModalError((error as Error).message || "Unable to search the web right now.");
+      reportError((error as Error).message || "Unable to search the web right now.");
     } finally {
       setSourceModalLoading(false);
     }
@@ -3201,7 +2614,7 @@ export function StudyWorkspace({
       });
       setStatusNote(`Found ${results.length} result(s) for “${query}”.`);
     } catch (error) {
-      setWorkspaceSearchError((error as Error).message || "Unable to search sources right now.");
+      reportError((error as Error).message || "Unable to search sources right now.");
     } finally {
       setWorkspaceSearchLoading(false);
     }
@@ -3236,7 +2649,7 @@ export function StudyWorkspace({
         closePreview();
       }
     } catch (error) {
-      setStatusNote((error as Error).message || "Unable to remove this source.");
+      reportError((error as Error).message || "Unable to remove this source.");
     } finally {
       setDeletingFileId(null);
     }
@@ -3278,7 +2691,9 @@ export function StudyWorkspace({
       setSourceModalOpen(false);
       autoSwitchTab("tools");
     } catch (error) {
-      setSourceModalError((error as Error).message || "Unable to import this web source.");
+      const message = (error as Error).message || "Unable to import this web source.";
+      reportError(message, { description: "Link the source again, or upload the material instead." });
+      setSourceModalError(message);
     } finally {
       setImportingSourceId(null);
     }
@@ -3351,7 +2766,7 @@ export function StudyWorkspace({
           `Copied ${typeof json.copiedCount === "number" ? json.copiedCount : 0} source(s) into this studio.`
       );
     } catch (error) {
-      setStatusNote(formatSupabaseSetupError((error as Error).message || "Unable to paste copied sources."));
+      reportError(formatSupabaseSetupError((error as Error).message || "Unable to paste copied sources."));
     } finally {
       setCopyingStudioId(null);
     }
@@ -3395,7 +2810,7 @@ export function StudyWorkspace({
           : `${file.file_name} is excluded from tutor chat, study tools, and revision plans until you re-enable it.`
       );
     } catch (error) {
-      setStatusNote(normalizeErrorMessage(error, "Unable to update this source."));
+      reportError(normalizeErrorMessage(error, "Unable to update this source."));
     } finally {
       setTogglingFileId(null);
     }
@@ -3538,7 +2953,10 @@ export function StudyWorkspace({
       const normalized = sanitizeDisplayText(extractStructuredOutput(rawText), "No response");
       const finalText = normalized || sanitizeDisplayText(rawText, "No response");
       if (!normalized || normalized === "No response") {
-        setStatusNote(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} generated an empty response. Try uploading different sources or rephrasing your focus.`);
+        reportError(
+          `${actionButtons.find((item) => item.key === action)?.label || "Tool"} generated an empty response.`,
+          { description: "Try adding more sources, or narrow the focus of the request." }
+        );
       }
       setOutput(finalText);
       saveToolResult(action, finalText, action === toolDraft.action ? toolDraft.focus : "");
@@ -3586,7 +3004,9 @@ export function StudyWorkspace({
       return finalText;
     } catch (error) {
       const errorMsg = normalizeErrorMessage(error, "Generation failed");
-      setStatusNote(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} failed: ${errorMsg}`);
+      reportError(`${actionButtons.find((item) => item.key === action)?.label || "Tool"} failed: ${errorMsg}`, {
+        description: "Nothing was lost — you can run the tool again."
+      });
       setOutput("");
       return null;
     } finally {
@@ -3889,6 +3309,16 @@ ${visualScreenContext}` : ""
           .join("\n\n");
 
     setMessages((current) => [...current, { role: "user", content: question }]);
+
+    /*
+     * The stage the student sees is computed with the same pure planner the
+     * route runs, so the label can only ever describe work that will actually
+     * happen — including deep research, which gets its own wording.
+     */
+    const researchPlan = planWebResearch(webSearchMode, question, {
+      hasSourceContext: sourceEnabledCount > 0
+    });
+    setChatResearchStage(researchPlan.search ? stageLabelForRun(researchPlan) : null);
     setChatLoading(true);
     setScreenAwarePulse(true);
     autoSwitchTab("chat");
@@ -3902,8 +3332,12 @@ ${visualScreenContext}` : ""
         content: message.content
       }));
 
+      const controller = new AbortController();
+      chatAbortRef.current = controller;
+
       const streamResponse = await fetch("/api/chat", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           input: {
@@ -3912,6 +3346,9 @@ ${visualScreenContext}` : ""
             context: chatContext,
             screenContext,
             mode: "chat",
+            modelChoice,
+            learningMode,
+            webSearchMode,
             sessionId: activeSessionId ?? undefined
           }
         })
@@ -3935,6 +3372,7 @@ ${visualScreenContext}` : ""
       let accumulated = "";
       let accumulatedReasoning = "";
       let streamBuffer = "";
+      let streamMeta: ChatModelMeta | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -3947,6 +3385,20 @@ ${visualScreenContext}` : ""
           const parsedChunk = parseSSEChunk(part);
           accumulated += parsedChunk.content;
           accumulatedReasoning += parsedChunk.reasoning;
+          if (parsedChunk.meta) {
+            streamMeta = parsedChunk.meta;
+            const reported = parsedChunk.meta;
+            // Attach the model label as soon as the server reports it, so the
+            // thinking indicator can name the model while tokens are arriving.
+            setMessages((current) => {
+              const next = [...current];
+              const lastIndex = next.length - 1;
+              if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
+                next[lastIndex] = { ...next[lastIndex], meta: reported };
+              }
+              return next;
+            });
+          }
         }
 
         const safeAccumulated = sanitizeDisplayText(accumulated, "");
@@ -3964,6 +3416,7 @@ ${visualScreenContext}` : ""
         const parsedChunk = parseSSEChunk(streamBuffer);
         accumulated += parsedChunk.content;
         accumulatedReasoning += parsedChunk.reasoning;
+        if (parsedChunk.meta) streamMeta = parsedChunk.meta;
       }
 
       setMessages((current) => {
@@ -3974,6 +3427,7 @@ ${visualScreenContext}` : ""
             ...next[lastIndex],
             content: sanitizeDisplayText(accumulated, "") || next[lastIndex].content,
             reasoning: sanitizeDisplayText(accumulatedReasoning, "") || next[lastIndex].reasoning,
+            meta: streamMeta ?? next[lastIndex].meta,
             completedAt: Date.now()
           };
         }
@@ -3981,7 +3435,11 @@ ${visualScreenContext}` : ""
       });
       setStatusNote("");
     } catch (error) {
-      const message = sanitizeDisplayText(error, "Unable to generate a reply.");
+      // A Stop press is a normal outcome, not a failure — say so plainly.
+      const stopped = error instanceof DOMException && error.name === "AbortError";
+      const message = stopped
+        ? "Stopped. Ask again, or continue from where this answer ended."
+        : sanitizeDisplayText(error, "Unable to generate a reply.");
       setMessages((current) => {
         const next = [...current];
         const lastIndex = next.length - 1;
@@ -3991,14 +3449,22 @@ ${visualScreenContext}` : ""
         }
         return [...current, { role: "ai", content: message }];
       });
-      setStatusNote(message);
+      if (stopped) {
+        setStatusNote(message);
+      } else {
+        reportError(message, {
+          description: "Your message was kept. Try again, or switch model if it keeps failing."
+        });
+      }
       return false;
     } finally {
+      chatAbortRef.current = null;
       setChatLoading(false);
+      setChatResearchStage(null);
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, loading, messages, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, learningMode, loading, messages, modelChoice, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -4203,7 +3669,7 @@ ${visualScreenContext}` : ""
     const canvasCanInteract = isCanvas && (canvasTool === "draw" || canvasTool === "highlight" || canvasTool === "eraser");
 
     return (
-      <motion.div
+      <m.div
         key={workspaceItem.id}
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -4575,7 +4041,7 @@ ${visualScreenContext}` : ""
             Preview not available for this file type.
           </div>
         )}
-      </motion.div>
+      </m.div>
     );
   };
 
@@ -4630,12 +4096,10 @@ ${visualScreenContext}` : ""
       const correctCount = quizResultRows.filter((row) => row.isCorrect).length;
       const scorePercentage = Math.round((correctCount / parsedQuiz.length) * 100);
 
+      // Loaded on demand by lib/confetti.ts, and skipped entirely unless the
+      // motion tier is `full` — see the motion budget in lib/motion-tier.ts.
       const triggerConfetti = () => {
-        confetti({
-          particleCount: 150,
-          spread: 80,
-          origin: { y: 0.6 }
-        });
+        void fireConfetti();
       };
 
       if (showQuizResults) {
@@ -4729,7 +4193,7 @@ ${visualScreenContext}` : ""
             eyebrow: "Quiz Deck",
             caption: "Swipe or move through the questions one by one."
           })}
-          <motion.article
+          <m.article
             key={`${item.question}-${currentIndex}`}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -4830,7 +4294,7 @@ ${visualScreenContext}` : ""
                 {item.explanation ? <p className="muted mt-2 leading-7">{item.explanation}</p> : null}
               </div>
             ) : null}
-          </motion.article>
+          </m.article>
         </div>
       );
     }
@@ -4848,7 +4312,7 @@ ${visualScreenContext}` : ""
             eyebrow: "Flashcard Deck",
             caption: "Tap the card to flip it, then swipe or move to the next one."
           })}
-          <motion.article
+          <m.article
             key={`${item.front}-${currentIndex}-${isOpen ? "back" : "front"}`}
             initial={{ opacity: 0, y: 12, rotateY: isOpen ? 0 : 6 }}
             animate={{ opacity: 1, y: 0, rotateY: 0 }}
@@ -4906,7 +4370,7 @@ ${visualScreenContext}` : ""
                 <ChevronRight className="h-3.5 w-3.5" />
               </Button>
             </div>
-          </motion.article>
+          </m.article>
         </div>
       );
     }
@@ -4930,7 +4394,7 @@ ${visualScreenContext}` : ""
 
           <div className="space-y-3">
             {parsedExamQuestions.map((question, index) => (
-              <motion.article
+              <m.article
                 key={`exam-${question.number}-${index}`}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -4961,7 +4425,7 @@ ${visualScreenContext}` : ""
                     className="mt-3 min-h-[10rem] w-full rounded-[22px] border border-white/14 bg-black/10 px-4 py-4 text-sm outline-none transition focus:border-[var(--accent-sky)]"
                   />
                 </div>
-              </motion.article>
+              </m.article>
             ))}
           </div>
 
@@ -5025,13 +4489,13 @@ ${visualScreenContext}` : ""
             </div>
           </div>
           {output ? (
-            <motion.article
+            <m.article
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className={`rounded-[26px] border px-5 py-5 ${toolTones[activeAction]}`}
             >
               <RichStudyText content={output} />
-            </motion.article>
+            </m.article>
           ) : null}
         </div>
       );
@@ -5039,13 +4503,13 @@ ${visualScreenContext}` : ""
 
     if (activeAction === "summary" && output) {
       return (
-        <motion.article
+        <m.article
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className={`rounded-[26px] border px-5 py-5 ${toolTones[activeAction]}`}
         >
           <RichStudyText content={output} />
-        </motion.article>
+        </m.article>
       );
     }
 
@@ -5055,13 +4519,13 @@ ${visualScreenContext}` : ""
 
     if (output && (looksRichOutput(output) || activeAction !== "summary")) {
       return (
-        <motion.article
+        <m.article
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           className={`rounded-[26px] border px-5 py-5 ${toolTones[activeAction]}`}
         >
           <RichStudyText content={output} />
-        </motion.article>
+        </m.article>
       );
     }
 
@@ -5077,7 +4541,7 @@ ${visualScreenContext}` : ""
             eyebrow: "Study Card",
             caption: "Move through one generated revision card at a time."
           })}
-          <motion.article
+          <m.article
             key={`${card.title}-${currentIndex}`}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -5098,7 +4562,7 @@ ${visualScreenContext}` : ""
                 Next card
               </Button>
             </div>
-          </motion.article>
+          </m.article>
         </div>
       );
     }
@@ -5238,7 +4702,7 @@ ${visualScreenContext}` : ""
             </div>
 
             <div className="mt-4 grid gap-3">
-              <motion.div
+              <m.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="rounded-[24px] bg-white/10 p-4"
@@ -5313,9 +4777,9 @@ ${visualScreenContext}` : ""
                     Reset
                   </Button>
                 </div>
-              </motion.div>
+              </m.div>
 
-              <motion.div
+              <m.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.05 }}
@@ -5353,7 +4817,7 @@ ${visualScreenContext}` : ""
                     {spotifyConnected ? "Spotify connected" : "Connect Spotify"}
                   </a>
                 </div>
-              </motion.div>
+              </m.div>
             </div>
 
             <div className="mt-4 grid gap-2">
@@ -5473,7 +4937,7 @@ ${visualScreenContext}` : ""
               </Button>
             </div>
 
-            <motion.div
+            <m.div
               role="button"
               tabIndex={0}
               animate={dragOver ? { scale: 1.01 } : { scale: 1 }}
@@ -5507,13 +4971,13 @@ ${visualScreenContext}` : ""
                   event.currentTarget.value = "";
                 }}
               />
-            </motion.div>
+            </m.div>
 
             {uploading ? (
               <div className="mt-4 rounded-[22px] bg-white/10 p-3">
                 <p className="mb-2 text-xs font-medium">Uploading files...</p>
                 <div className="h-2 overflow-hidden rounded-full bg-black/10">
-                  <motion.div
+                  <m.div
                     className="h-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                     animate={{ width: `${uploadProgress}%` }}
                   />
@@ -5544,7 +5008,7 @@ ${visualScreenContext}` : ""
               <div className="hide-scrollbar max-h-[24rem] space-y-2 overflow-auto pr-1">
                 {currentFiles.length ? (
                   currentFiles.map((file) => (
-                    <motion.div
+                    <m.div
                       key={file.id}
                       whileHover={{ y: -2 }}
                       className="rounded-[22px] bg-white/14 p-3 transition hover:bg-white/18"
@@ -5607,7 +5071,7 @@ ${visualScreenContext}` : ""
                         ) : null}
                         <p className="muted line-clamp-3 text-xs">{file.extracted_text}</p>
                       </button>
-                    </motion.div>
+                    </m.div>
                   ))
                 ) : (
                   <div className="rounded-[22px] bg-white/12 px-4 py-4 text-sm">
@@ -5647,7 +5111,7 @@ ${visualScreenContext}` : ""
             }`}
           >
             {screenAwarePulse ? (
-              <motion.div
+              <m.div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-0 rounded-[30px] opacity-80"
                 animate={{
@@ -5764,7 +5228,7 @@ ${visualScreenContext}` : ""
                 ))}
               </div>
               {splitPickerOpen ? (
-                <motion.div
+                <m.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="border-b border-white/10 bg-[rgba(8,14,28,0.78)] px-4 py-3"
@@ -5802,11 +5266,11 @@ ${visualScreenContext}` : ""
                       <p className="muted text-sm">Open a note, search result, or AI output first, then split it beside another tab.</p>
                     )}
                   </div>
-                </motion.div>
+                </m.div>
               ) : null}
 
               {splitDragTabId ? (
-                <motion.div
+                <m.div
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
@@ -5840,7 +5304,7 @@ ${visualScreenContext}` : ""
                           : "border-white/18 bg-white/8"
                       }`}
                     >
-                      <motion.div
+                      <m.div
                         animate={{ y: splitDropSide === side ? -4 : 0, scale: splitDropSide === side ? 1.03 : 1 }}
                         transition={{ type: "spring", stiffness: 260, damping: 22 }}
                       >
@@ -5853,10 +5317,10 @@ ${visualScreenContext}` : ""
                         <p className="muted mt-2 max-w-xs text-sm">
                           ScholarMind will keep another open workspace tab on the other side for comparison.
                         </p>
-                      </motion.div>
+                      </m.div>
                     </div>
                   ))}
-                </motion.div>
+                </m.div>
               ) : null}
 
               <div
@@ -6222,7 +5686,7 @@ ${visualScreenContext}` : ""
             </div>
 
             {showChatThreads ? (
-              <motion.div
+              <m.div
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="mt-4 rounded-[24px] border border-white/10 bg-white/8 p-3"
@@ -6258,7 +5722,7 @@ ${visualScreenContext}` : ""
                     </div>
                   )}
                 </div>
-              </motion.div>
+              </m.div>
             ) : null}
 
           <div className="relative mt-4">
@@ -6280,7 +5744,7 @@ ${visualScreenContext}` : ""
               ) : messages.length === 0 ? (
                 <div className="rounded-[24px] bg-white/16 p-5 text-sm">
                   <div className="mx-auto grid h-24 w-24 place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,rgba(255,255,255,0.9),rgba(57,208,255,0.35)_28%,rgba(255,125,89,0.22)_58%,transparent_70%)] shadow-[0_0_50px_rgba(57,208,255,0.28)]">
-                    <motion.div
+                    <m.div
                       className="h-12 w-12 rounded-full border border-white/40 bg-white/12"
                       animate={{ scale: [0.92, 1.08, 0.92], rotate: [0, 8, -8, 0] }}
                       transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
@@ -6313,119 +5777,45 @@ ${visualScreenContext}` : ""
                           .reverse()
                           .find((item) => item.role === "user")
                       : undefined;
-                  const assistantActionId = `chat-message-${index}`;
-                  const reasoningText = sanitizeDisplayText(message.reasoning || "", "");
-                  const thoughtSeconds = message.startedAt
-                    ? Math.max(1, Math.round(((message.completedAt || Date.now()) - message.startedAt) / 1000))
-                    : null;
+                  // The server names the model that actually answered, so this
+                  // label is reported fact, not a guess at what was requested.
+                  const answeredWith = message.meta
+                    ? message.meta.tier === "vision"
+                      ? "Vision"
+                      : message.meta.tier === "pro"
+                        ? CHAT_MODELS.pro.label
+                        : message.meta.tier === "flash"
+                          ? CHAT_MODELS.flash.label
+                          : message.meta.tier
+                    : "";
 
                   return (
-                    <motion.div
+                    <ChatMessageItem
                       key={`${message.role}-${index}`}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`rounded-[24px] px-4 py-3 ${
-                        message.role === "user"
-                          ? "ml-auto max-w-[88%] bg-[linear-gradient(135deg,rgba(255,125,89,0.18),rgba(57,208,255,0.2))]"
-                          : "max-w-[95%] bg-white/16"
-                      }`}
-                    >
-                      {message.role === "user" ? (
-                        <p className="whitespace-pre-wrap text-sm leading-7">{message.content}</p>
-                      ) : !message.content.trim() ? (
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2 text-sm">
-                            <LoaderCircle className="h-4 w-4 animate-spin text-[var(--accent-sky)]" />
-                            <motion.p
-                              className="bg-[linear-gradient(90deg,rgba(255,255,255,0.48),rgba(57,208,255,0.95),rgba(255,255,255,0.48))] bg-[length:220%_100%] bg-clip-text font-semibold text-transparent"
-                              animate={{ backgroundPosition: ["220% 0", "0% 0"] }}
-                              transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
-                            >
-                              Reading sources and drafting a focused answer...
-                            </motion.p>
-                          </div>
-                        </div>
-                      ) : (
-                        <>
-                          {reasoningText ? (
-                            <details className="mb-3 rounded-[18px] border border-white/10 bg-white/8 px-3 py-2 text-xs">
-                              <summary className="cursor-pointer list-none text-white/60 transition hover:text-white/85">
-                                Thought{thoughtSeconds ? ` for ${thoughtSeconds}s` : ""}
-                              </summary>
-                              <p className="mt-2 whitespace-pre-wrap text-white/55">{reasoningText}</p>
-                            </details>
-                          ) : null}
-                          <RichStudyText content={sanitizeDisplayText(message.content, "Unable to generate that reply.")} />
-                          <div className="mt-3 flex justify-end gap-2">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!navigator.clipboard) return;
-                                void navigator.clipboard.writeText(message.content).then(() => {
-                                  setCopyingStudioId(assistantActionId);
-                                  window.setTimeout(() => setCopyingStudioId(null), 1200);
-                                });
-                              }}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/16 hover:text-white"
-                              aria-label="Copy assistant response"
-                              title="Copy response"
-                            >
-                              {copyingStudioId === assistantActionId ? <CheckCircle2 className="h-4 w-4 text-[var(--accent-mint)]" /> : <Copy className="h-4 w-4" />}
-                            </button>
-                            {previousUserMessage ? (
-                              <div className="group relative">
-                                <button
-                                  type="button"
-                                  onClick={() => void submitChatQuestion(previousUserMessage.content)}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/70 transition hover:bg-white/16 hover:text-white"
-                                  aria-label="Retry assistant response"
-                                  title="Retry response"
-                                >
-                                  <RefreshCw className="h-4 w-4" />
-                                </button>
-                                <div className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-72 rounded-[20px] border border-white/12 bg-[rgba(8,14,28,0.96)] p-3 opacity-0 shadow-2xl transition group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
-                                  <button
-                                    type="button"
-                                    onClick={() => void submitChatQuestion(previousUserMessage.content)}
-                                    className="flex w-full items-center gap-2 rounded-[14px] bg-white/10 px-3 py-2 text-left text-xs font-semibold transition hover:bg-white/16"
-                                  >
-                                    <RefreshCw className="h-3.5 w-3.5" />
-                                    Retry
-                                  </button>
-                                  <form
-                                    className="mt-2 space-y-2"
-                                    onSubmit={(event) => {
-                                      event.preventDefault();
-                                      const form = event.currentTarget;
-                                      const formData = new FormData(form);
-                                      const instructions = String(formData.get("retryInstructions") || "").trim();
-                                      if (!instructions) return;
-                                      form.reset();
-                                      void submitChatQuestion(
-                                        `${previousUserMessage.content}\n\nRedo the previous answer. Additional instruction: ${instructions}`
-                                      );
-                                    }}
-                                  >
-                                    <label className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50" htmlFor={`${assistantActionId}-instructions`}>
-                                      Add instructions for this retry
-                                    </label>
-                                    <input
-                                      id={`${assistantActionId}-instructions`}
-                                      name="retryInstructions"
-                                      className="min-h-10 w-full rounded-[14px] border border-white/12 bg-white/10 px-3 py-2 text-xs outline-none transition focus:border-[var(--accent-sky)]"
-                                      placeholder="e.g. make it shorter or add examples"
-                                    />
-                                    <Button type="submit" size="sm" variant="secondary" className="w-full justify-center text-xs">
-                                      Retry with instructions
-                                    </Button>
-                                  </form>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </>
-                      )}
-                    </motion.div>
+                      role={message.role}
+                      content={
+                        message.role === "ai"
+                          ? sanitizeDisplayText(message.content, "Unable to generate that reply.")
+                          : message.content
+                      }
+                      reasoning={message.reasoning || ""}
+                      answeredWith={answeredWith}
+                      reason={message.meta?.reason}
+                      sources={message.meta?.sources}
+                      startedAt={message.startedAt}
+                      completedAt={message.completedAt}
+                      stageLabel={chatResearchStage}
+                      research={message.meta?.research}
+                      previousQuestion={previousUserMessage?.content}
+                      onRetry={(question, instructions) =>
+                        void submitChatQuestion(
+                          instructions
+                            ? `${question}\n\nRedo the previous answer. Additional instruction: ${instructions}`
+                            : question
+                        )
+                      }
+                      onAskFollowUp={(text) => void submitChatQuestion(text)}
+                    />
                   );
                 })
               )}
@@ -6458,11 +5848,32 @@ ${visualScreenContext}` : ""
             )}
           </div>
 
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <div className="mt-4 space-y-2">
+            {/*
+             * The model picker sits directly above the composer, so the tier is
+             * chosen at the moment the question is written. It is the same
+             * control the rest of the product describes, and the value is sent
+             * with the request and resolved again on the server.
+             */}
+            <ModelSelector
+              value={modelChoice}
+              onChange={changeModelChoice}
+              previewPrompt={chat}
+              disabled={chatLoading}
+            />
+
+            <LearningModeSelector
+              value={learningMode}
+              onChange={changeLearningMode}
+              disabled={chatLoading}
+            />
+
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
                 onKeyDown={onChatKeyDown}
+                aria-label="Ask your tutor"
                 placeholder={sourceEnabledCount ? "Ask your tutor..." : "Say hi, or upload files for source-grounded tutoring"}
                 className="min-h-11 w-full rounded-[20px] border border-white/20 bg-white/20 px-4 py-3 text-sm outline-none transition focus:border-[var(--accent-sky)] focus:bg-white/35"
               />
@@ -6470,6 +5881,7 @@ ${visualScreenContext}` : ""
                 {chatLoading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <SendHorizonal className="h-4 w-4" />}
               </Button>
             </div>
+          </div>
           </div>
 
           <div className="hidden">
@@ -6541,6 +5953,11 @@ ${visualScreenContext}` : ""
               </p>
             </div>
 
+            {/*
+             * Research Mode. This is the real control, not an advertisement for
+             * one: each option is a mode the server implements, and choosing it
+             * changes what the next question does.
+             */}
             <div className="mt-4 rounded-[24px] border border-[rgba(255,209,102,0.16)] bg-[linear-gradient(135deg,rgba(255,209,102,0.08),rgba(57,208,255,0.08))] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>
@@ -6548,33 +5965,50 @@ ${visualScreenContext}` : ""
                     Research Mode
                   </p>
                   <p className="mt-2 text-sm font-semibold">
-                    {effectiveSiteSettings.researchModeLocked ? "Locked for Pro" : "Available soon in this workspace"}
+                    {webSearchMode === "deep"
+                      ? "Deep research"
+                      : webSearchMode === "on"
+                        ? "Search this question"
+                        : webSearchMode === "off"
+                          ? "Notes only"
+                          : "Auto"}
                   </p>
                   <p className="muted mt-2 text-xs">
-                    {effectiveSiteSettings.researchModeLocked
-                      ? "Multi-source web research, cross-checking, and deeper scholar-style briefs are coming soon."
-                      : "Host settings have unlocked this panel, but the deeper research workflow is still being finished."}
+                    {WEB_SEARCH_MODES.find((mode) => mode.id === webSearchMode)?.blurb}
                   </p>
                 </div>
                 <div className="rounded-full bg-[rgba(255,209,102,0.12)] px-3 py-1 text-xs font-medium text-[var(--accent-gold)]">
-                  {effectiveSiteSettings.researchModeLocked ? "Pro" : "Live setting"}
+                  {webSearchMode === "deep" ? "Multi-source" : "Live"}
                 </div>
               </div>
-              <Button
-                onClick={() =>
-                  setStatusNote(
-                    effectiveSiteSettings.researchModeLocked
-                      ? "Research Mode is a Pro feature and is coming soon."
-                      : "Research Mode has been unlocked in settings, but the deeper workflow is still coming soon."
-                  )
-                }
-                variant="ghost"
-                size="sm"
-                className="mt-4 w-full justify-center rounded-[18px] bg-white/10"
-              >
-                <Lock className="h-4 w-4" />
-                {effectiveSiteSettings.researchModeLocked ? "Coming soon" : "Preview status"}
-              </Button>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {WEB_SEARCH_MODES.map((mode) => {
+                  const active = webSearchMode === mode.id;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => changeWebSearchMode(mode.id)}
+                      className={`rounded-[14px] px-3 py-2 text-left text-xs font-semibold transition-colors ${
+                        active
+                          ? "bg-[color:var(--surface-3)] text-[color:var(--accent-gold)]"
+                          : "bg-white/10 hover:bg-white/16"
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <p className="muted mt-3 text-[11px] leading-5">
+                Deep research runs several searches on a deadline, ranks sources by how many
+                queries found them, and quotes any two sources that disagree on a figure or a
+                claim. Answers that used it say how many searches ran and how many domains
+                were checked.
+              </p>
             </div>
 
             <div className="mt-4 flex items-center gap-2">
@@ -6596,7 +6030,7 @@ ${visualScreenContext}` : ""
                   </p>
                   <div className="mt-4 flex gap-2">
                     {[0, 1, 2].map((item) => (
-                      <motion.div
+                      <m.div
                         key={item}
                         className="h-2 flex-1 rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                         animate={{ opacity: [0.25, 1, 0.25], scaleX: [0.96, 1.02, 0.96] }}
@@ -6777,7 +6211,7 @@ ${visualScreenContext}` : ""
                       <p className="muted text-xs">{Math.round(uploadProgress)}%</p>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-black/10">
-                      <motion.div
+                      <m.div
                         className="h-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                         animate={{ width: `${uploadProgress}%` }}
                       />
@@ -7079,7 +6513,7 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
                         <p className="text-sm font-semibold">Generating from your uploaded sources...</p>
                         <div className="mt-4 flex gap-2">
                           {[0, 1, 2].map((item) => (
-                            <motion.div
+                            <m.div
                               key={item}
                               className="h-2 flex-1 rounded-full bg-[linear-gradient(135deg,var(--accent-coral),var(--accent-sky))]"
                               animate={{ opacity: [0.25, 1, 0.25], scaleX: [0.96, 1.02, 0.96] }}
@@ -7120,7 +6554,7 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
       ) : null}
 
       {askAIPopup ? (
-        <motion.div
+        <m.div
           ref={askAIPopupRef}
           initial={{ opacity: 0, y: 10, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -7156,7 +6590,7 @@ Scholar mode is the default, and you can switch to DuckDuckGo if you want a wide
               {askAIDisabledReason}
             </p>
           ) : null}
-        </motion.div>
+        </m.div>
       ) : null}
 
       {preview.open ? (

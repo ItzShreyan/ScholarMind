@@ -9,14 +9,13 @@ import {
   getOpenRouterModel,
   type OpenRouterContent
 } from "@/lib/ai/providers/openrouter-content";
+import { VISION_MODEL } from "@/lib/ai/models";
 import { getSiteUrl } from "@/lib/site-url";
 
 type OpenRouterMessage = {
   role: "user" | "assistant";
   content: OpenRouterContent;
 };
-
-const openRouterVisionModel = "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free";
 
 type WorkspaceScreenshotDescriptionInput = {
   imageBase64: string;
@@ -66,7 +65,7 @@ export async function describeWorkspaceScreenshot({
           "X-Title": "ScholarMind"
         },
         body: JSON.stringify({
-          model: openRouterVisionModel,
+          model: VISION_MODEL.id,
           messages,
           temperature: 0.15,
           max_tokens: 700,

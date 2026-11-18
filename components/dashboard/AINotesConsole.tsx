@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { m } from "framer-motion";
 import { Atom, BookOpen, Download, FlaskConical, Waves } from "lucide-react";
 import { RichStudyText } from "@/components/dashboard/RichStudyText";
 import { Button } from "@/components/ui/Button";
@@ -354,7 +354,7 @@ export function AINotesConsole({ content }: { content: string }) {
             </div>
             <div className="mt-4 space-y-2">
               {sections.map((section, index) => (
-                <motion.button
+                <m.button
                   key={`${section.heading}-${index}`}
                   type="button"
                   onClick={() => scrollToSection(index)}
@@ -367,7 +367,7 @@ export function AINotesConsole({ content }: { content: string }) {
                   }`}
                 >
                   {index + 1}. {section.heading}
-                </motion.button>
+                </m.button>
               ))}
             </div>
           </div>
@@ -386,7 +386,7 @@ export function AINotesConsole({ content }: { content: string }) {
         <div ref={contentScrollRef} className="hide-scrollbar max-h-[75vh] overflow-auto p-5 md:p-8">
           <div className="mx-auto max-w-4xl space-y-7">
             {sections.map((section, index) => (
-              <motion.section
+              <m.section
                 key={`${section.heading}-${index}`}
                 ref={(element) => {
                   sectionRefs.current[index] = element;
@@ -425,7 +425,7 @@ export function AINotesConsole({ content }: { content: string }) {
                     </table>
                   </div>
                 ) : null}
-              </motion.section>
+              </m.section>
             ))}
 
             {safeItems(notes.callouts).map((callout, index) => (

@@ -1,14 +1,16 @@
+# Security headers live in next.config.ts (async headers()), which is the single
+# source of truth for both local `next start` and Netlify. Do not add a second
+# [[headers]] block here: a duplicate set drifts out of sync with the app, and
+# the narrower of the two silently wins.
+#
+# The one exception is /api/browse-proxy, which must send
+# `X-Frame-Options: SAMEORIGIN` rather than the app-wide DENY so proxied pages
+# can render inside the sandboxed studio browser. That override sits next to the
+# CSP override in next.config.ts, so both policies for that route stay together.
+
 [build]
   command = "npm run build"
   publish = ".next"
 
-[[headers]]
-  for = "/*"
-  [headers.values]
-    Strict-Transport-Security = "max-age=31536000; includeSubDomains; preload"
-    X-Frame-Options = "DENY"
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
-    Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-    Cross-Origin-Opener-Policy = "same-origin"
-    Cross-Origin-Resource-Policy = "same-origin"
+[build.environment]
+  NEXT_TELEMETRY_DISABLED = "1"

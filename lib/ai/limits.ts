@@ -2,7 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   defaultChatDailyLimit,
   defaultExamGeneratorWeeklyLimit,
-  defaultExamPracticeWeeklyLimit,
   defaultFreePreviewDailyLimit,
   defaultFreePreviewHourlyLimit,
   defaultToolDailyLimit
@@ -526,7 +525,9 @@ export async function releaseExamUsage({
 }
 
 export function formatAiLimitMessage(
-  hourlyLimit = freePreviewHourlyLimit,
+  // Kept as the first positional argument so existing call sites stay valid;
+  // the free-preview copy is expressed in daily terms only.
+  _hourlyLimit = freePreviewHourlyLimit,
   dailyLimit = defaultToolDailyLimit,
   usage?: AiUsageSummary
 ) {

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { LoaderCircle, ZoomIn, ZoomOut, ChevronLeft, ChevronRight } from "lucide-react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { WorkBook, WorkSheet } from "xlsx";
-import * as XLSX from "xlsx";
 
 export type PreviewKind = "pdf" | "image" | "table" | "word" | "audio" | "text" | "presentation";
 
@@ -78,22 +77,35 @@ function ImageRenderer({ url, fileName }: { url: string; fileName?: string }) {
 
 /* ─── Spreadsheet renderer: client-side xlsx parsing with sheet tabs ─── */
 
+type SpreadsheetCell = string | number | boolean;
+
+/**
+ * `xlsx` is ~800 KB of parser. Loading it at module scope put it in the shared
+ * studio bundle for every document open, including PDFs and images that can
+ * never use it. It is fetched on demand here instead, once per session.
+ */
+let xlsxModulePromise: Promise<typeof import("xlsx")> | null = null;
+function loadXlsx(): Promise<typeof import("xlsx")> {
+  if (!xlsxModulePromise) xlsxModulePromise = import("xlsx");
+  return xlsxModulePromise;
+}
+
 function SpreadsheetRenderer({ url, fileName, text }: { url: string; fileName?: string; text: string }) {
   const [workbook, setWorkbook] = useState<WorkBook | null>(null);
   const [activeSheet, setActiveSheet] = useState(0);
+  const [rows, setRows] = useState<SpreadsheetCell[][]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [, forceUpdate] = useState(0);
 
+  // Fetch + parse the workbook. On any failure we fall through to the
+  // pre-extracted text preview rather than showing an empty table.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setError("");
 
     (async () => {
       try {
-        // Try to fetch and parse the file from its signed URL
         if (url) {
+          const XLSX = await loadXlsx();
           const response = await fetch(url);
           const buffer = await response.arrayBuffer();
           const wb = XLSX.read(buffer, { type: "array", cellText: true, cellDates: true });
@@ -101,37 +113,52 @@ function SpreadsheetRenderer({ url, fileName, text }: { url: string; fileName?: 
           setWorkbook(wb);
           setActiveSheet(0);
         }
-      } catch (_err) {
-        if (cancelled) return;
-        // Fall back to the pre-extracted text
-        setError("");
+      } catch {
+        // Fall back to the pre-extracted text.
       } finally {
-        if (cancelled) return;
-        setLoading(false);
-        forceUpdate((n) => n + 1);
+        if (!cancelled) setLoading(false);
       }
     })();
 
     return () => { cancelled = true; };
   }, [url]);
 
+  // Sheet switch: re-parse only the sheet that is now on screen.
+  useEffect(() => {
+    const currentSheetName = workbook?.SheetNames[activeSheet];
+    const currentSheet: WorkSheet | undefined = currentSheetName
+      ? workbook?.Sheets[currentSheetName]
+      : undefined;
+
+    if (!currentSheet) {
+      setRows([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const XLSX = await loadXlsx();
+        const parsed = XLSX.utils.sheet_to_json(currentSheet, {
+          header: 1,
+          blankrows: false,
+          raw: false,
+          defval: ""
+        }) as SpreadsheetCell[][];
+        if (!cancelled) setRows(parsed);
+      } catch {
+        if (!cancelled) setRows([]);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [workbook, activeSheet]);
+
+  const sheetNames = workbook?.SheetNames ?? [];
+
   // Fall back to text preview if xlsx parsing fails or no url
   if (!loading && (!workbook || !workbook.SheetNames.length)) {
     return <TextPreview text={text} fileName={fileName} />;
-  }
-
-  const sheetNames = workbook?.SheetNames ?? [];
-  const currentSheetName = sheetNames[activeSheet] ?? "";
-  const currentSheet: WorkSheet | undefined = workbook?.Sheets[currentSheetName];
-
-  // Parse rows using sheet_to_json
-  let rows: Array<Array<string | number | boolean>> = [];
-  if (currentSheet && workbook) {
-    try {
-      rows = XLSX.utils.sheet_to_json(currentSheet, { header: 1, blankrows: false, raw: false, defval: "" }) as Array<Array<string | number | boolean>>;
-    } catch {
-      rows = [];
-    }
   }
 
   return (
@@ -170,8 +197,6 @@ function SpreadsheetRenderer({ url, fileName, text }: { url: string; fileName?: 
             <LoaderCircle className="h-5 w-5 animate-spin text-[var(--accent-sky)]" />
             Loading spreadsheet...
           </div>
-        ) : error ? (
-          <div className="text-sm text-[var(--accent-coral)] py-8 text-center">{error}</div>
         ) : rows.length === 0 ? (
           <div className="text-sm text-white/60 py-8 text-center">No data found in this sheet.</div>
         ) : (
@@ -372,7 +397,6 @@ function PdfRenderer({ url, fileName }: { url: string; fileName?: string }) {
   const canvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const pageRendersInFlight = useRef<Set<number>>(new Set());
   const numPagesRef = useRef(0);
-  const [, forceRender] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
