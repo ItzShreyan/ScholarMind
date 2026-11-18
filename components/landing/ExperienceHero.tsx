@@ -29,7 +29,7 @@ export function ExperienceHero({ entered, onScrollToLibrary }: ExperienceHeroPro
       id="world"
       data-world-stage="0"
       aria-label="ScholarMind learning world"
-      className="relative isolate flex min-h-[100svh] w-full flex-col justify-end overflow-hidden pt-24"
+      className="hero-viewport relative isolate flex w-full flex-col justify-end overflow-hidden pt-20 sm:pt-24"
     >
       {/*
         The scrim. Dense behind the headline, open at the top-right where the

@@ -199,6 +199,12 @@ html.light {
   --editorial-border: rgba(24, 33, 42, 0.12);
 }
 
+@supports not (overflow-x: clip) {
+  body {
+    overflow-x: hidden;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -206,7 +212,20 @@ html {
 body {
   position: relative;
   min-height: 100vh;
-  overflow-x: hidden;
+  /*
+   * `clip`, not `hidden`.
+   *
+   * `overflow-x: hidden` forces `overflow-y` to compute to `auto`, which makes
+   * <body> a scroll container. Every `position: sticky` descendant then sticks
+   * to that container — which never scrolls — instead of the viewport, so the
+   * landing header scrolled up the page and cut across the hero headline.
+   * `clip` clips on the same axis without creating a scroll container, so
+   * sticky works and horizontal overflow is still cut.
+   *
+   * Engines without `clip` keep the old behaviour rather than gaining a
+   * horizontal scrollbar.
+   */
+  overflow-x: clip;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-body), sans-serif;
@@ -642,8 +661,7 @@ html:not([data-motion="full"]) .playful-bob,
 html:not([data-motion="full"]) .playful-pop,
 html:not([data-motion="full"]) .playful-sway,
 html:not([data-motion="full"]) .stagger-child,
-html:not([data-motion="full"]) .motion-infinite,
-html:not([data-motion="full"]) .world-hotspot-ring {
+html:not([data-motion="full"]) .motion-infinite {
   animation: none !important;
 }
 
@@ -778,6 +796,18 @@ html[data-motion="off"] ::after {
    LEARNING WORLD UI
    ========================================================================== */
 
+/*
+ * The opening section is one viewport tall — *minus whatever is already above
+ * it*. The site announcement banner streams in above `{children}`, so a plain
+ * `100svh` hero started that far down and pushed its own call to action below
+ * the fold on every viewport short enough to notice. `--banner-offset` is
+ * measured by the landing experience; with no banner it is 0 and this is the
+ * same 100svh it always was.
+ */
+.hero-viewport {
+  min-height: calc(100svh - var(--banner-offset, 0px));
+}
+
 .world-stage {
   position: relative;
   isolation: isolate;
@@ -785,80 +815,6 @@ html[data-motion="off"] ::after {
     radial-gradient(ellipse 62% 52% at 50% 34%, rgba(220, 165, 102, 0.16), transparent 66%),
     radial-gradient(ellipse 70% 46% at 50% 96%, rgba(136, 183, 206, 0.2), transparent 70%),
     linear-gradient(180deg, #0a1017 0%, #080d12 58%, #060a0e 100%);
-}
-
-.world-canvas {
-  display: block;
-  width: 100%;
-  height: 100%;
-  touch-action: none;
-  cursor: grab;
-}
-
-.world-canvas:active { cursor: grabbing; }
-
-/* Hotspot labels are real DOM buttons layered over the canvas. */
-.world-hotspot {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 44px;
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(243, 240, 233, 0.18);
-  background: rgba(8, 13, 18, 0.72);
-  color: var(--text-1);
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-  transition:
-    border-color var(--motion-fast) var(--ease-standard),
-    background-color var(--motion-fast) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
-}
-
-.world-hotspot:hover,
-.world-hotspot:focus-visible {
-  border-color: rgba(220, 165, 102, 0.6);
-  background: rgba(8, 13, 18, 0.9);
-  transform: translate(-50%, -50%) scale(1.03);
-}
-
-.world-hotspot[data-active="true"] {
-  border-color: var(--accent-coral);
-  background: rgba(23, 35, 45, 0.94);
-}
-
-.world-hotspot-dot {
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 999px;
-  background: var(--accent-coral);
-  box-shadow: 0 0 0 3px rgba(220, 165, 102, 0.16);
-}
-
-@keyframes world-hotspot-ring {
-  0% { opacity: 0.55; transform: scale(0.85); }
-  70% { opacity: 0; transform: scale(1.6); }
-  100% { opacity: 0; transform: scale(1.6); }
-}
-
-.world-hotspot-ring {
-  position: absolute;
-  inset: -2px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--accent-coral);
-  animation: world-hotspot-ring 2.8s ease-out infinite;
-  pointer-events: none;
-}
-
-/* Non-WebGL fallback: a plain, complete list of the same destinations. */
-.world-fallback-card {
-  background: linear-gradient(180deg, var(--panel-top), var(--panel-bottom)), var(--surface-strong);
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-lg);
 }
 
 /* ==========================================================================
@@ -1608,53 +1564,6 @@ html[data-motion="off"] ::after {
   color: var(--editorial-fg);
 }
 
-/* The wall behind the campus window: ink at the edges, warm lamp light low. */
-.room-wall {
-  background:
-    radial-gradient(58rem 26rem at 12% 118%, rgba(220, 165, 102, 0.16), transparent 66%),
-    radial-gradient(44rem 22rem at 88% -18%, rgba(136, 183, 206, 0.12), transparent 62%),
-    linear-gradient(178deg, #05090d 0%, #080d12 42%, #0b131a 100%);
-}
-
-/* Amber light spilling out of the window onto the wall. */
-.room-spill {
-  background: radial-gradient(closest-side, rgba(220, 165, 102, 0.22), rgba(220, 165, 102, 0.06) 58%, transparent 78%);
-}
-
-/* Dust in the lamp light. Six motes, slow, low contrast — never distracting. */
-.room-mote {
-  animation: room-drift 18s linear infinite;
-}
-
-@keyframes room-drift {
-  0% {
-    transform: translate3d(0, 0, 0);
-    opacity: 0;
-  }
-  12% {
-    opacity: 0.55;
-  }
-  84% {
-    opacity: 0.35;
-  }
-  100% {
-    transform: translate3d(1.5rem, -7rem, 0);
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .room-mote {
-    animation: none;
-    opacity: 0.28;
-  }
-}
-
-html[data-motion="reduced"] .room-mote,
-html[data-motion="off"] .room-mote {
-  animation: none;
-  opacity: 0.28;
-}
 /* ===========================================================================
  * LANDING: REVEAL, LOADER AND SCROLL AFFORDANCES
  * ---------------------------------------------------------------------------

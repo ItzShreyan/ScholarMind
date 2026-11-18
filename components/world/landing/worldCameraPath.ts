@@ -47,9 +47,17 @@ export type CameraKeyframe = {
 export const CAMERA_KEYFRAMES: readonly CameraKeyframe[] = [
   {
     // 00 · Establish the whole world, three-quarter view, slightly high.
+    //
+    // Distance is set by the island, not by taste: the disc is 24 units across
+    // and the practice ring sits on the camera side, so it projects larger than
+    // its plan radius. At the previous ~29 units and a 38° FOV the vertical
+    // extent was 20 units and the ring and the water edge were cropped off the
+    // right and bottom of every desktop frame. ~35 units fits the island with
+    // air around it and still fills the right half of the screen, which is the
+    // half the hero copy does not occupy.
     progress: 0,
-    position: [16.5, 13.5, 21.5],
-    target: [0, 2.1, 0],
+    position: [19.5, 15.0, 25.5],
+    target: [0.4, 2.4, 0],
     fov: 38
   },
   {
@@ -75,8 +83,10 @@ export const CAMERA_KEYFRAMES: readonly CameraKeyframe[] = [
   },
   {
     // 04 · Pull back and up: the network needs the whole island in frame.
+    // Same arithmetic as keyframe 00 — the constellation is drawn around the
+    // island's full radius, so a frame that crops the island crops the graphic.
     progress: 4,
-    position: [0.5, 17.5, 23],
+    position: [0.5, 20.0, 27.0],
     target: [0, 3.2, 0],
     fov: 40
   },

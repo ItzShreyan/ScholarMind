@@ -163,6 +163,39 @@ export function ScholarMindExperience() {
   }, [motionReduced]);
 
   /* ---------------------------------------------------------------------- */
+  /* The announcement banner above the page                                  */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * `MaintenanceBanner` streams in above `{children}`, so a hero sized to a
+   * plain `100svh` started that far down the document and pushed its own call
+   * to action under the fold. Publishing the banner's measured height lets
+   * `.hero-viewport` subtract exactly the right amount — including when the
+   * message wraps to two lines on a phone. With no banner there is no element,
+   * the variable is never set, and the hero is a full viewport again.
+   */
+  React.useEffect(() => {
+    const banner = document.querySelector("[data-site-banner]");
+    if (!(banner instanceof HTMLElement)) return;
+
+    const root = document.documentElement;
+
+    const apply = () => {
+      root.style.setProperty("--banner-offset", `${banner.getBoundingClientRect().height}px`);
+    };
+
+    apply();
+
+    const observer = new ResizeObserver(apply);
+    observer.observe(banner);
+
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--banner-offset");
+    };
+  }, []);
+
+  /* ---------------------------------------------------------------------- */
   /* Entrance                                                                */
   /* ---------------------------------------------------------------------- */
 

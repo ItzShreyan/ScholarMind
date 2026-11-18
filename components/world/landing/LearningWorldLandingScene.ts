@@ -10,7 +10,7 @@ import {
   type CameraSample
 } from "@/components/world/landing/worldCameraPath";
 import { disposeBuildContext, createBuildContext } from "@/components/world/landing/worldGeometry";
-import { getLearningWorldColors, createWorldMaterials, LANDMARK_ORIGIN, type WorldMaterials } from "@/components/world/landing/worldMaterials";
+import { getLearningWorldColors, createWorldMaterials, type WorldMaterials } from "@/components/world/landing/worldMaterials";
 import { getWorldQuality, prefersReducedMotion, type WorldQuality } from "@/components/world/landing/worldPerformance";
 import { clamp, damp, easeOutCubic } from "@/components/world/landing/worldMath";
 import {
@@ -39,7 +39,6 @@ import {
 type SceneOptions = {
   onReady?: () => void;
   onFailure?: (reason: string) => void;
-  onProgressFrame?: (progress: number) => void;
 };
 
 const LANDMARK_IDS: readonly WorldLandmarkId[] = [
@@ -489,20 +488,3 @@ export class LearningWorldLandingScene {
 const floatPosition = new THREE.Vector3();
 const floatTarget = new THREE.Vector3();
 const fogScratch = new THREE.Color();
-
-/** Exposed so the React layer can place labels without knowing the scene internals. */
-export const LANDING_LANDMARK_ANCHORS: Record<WorldLandmarkId, [number, number, number]> = {
-  hub: [LANDMARK_ORIGIN.hub[0], LANDMARK_ORIGIN.hub[1] + 7.9, LANDMARK_ORIGIN.hub[2]],
-  library: [LANDMARK_ORIGIN.library[0], LANDMARK_ORIGIN.library[1] + 8.6, LANDMARK_ORIGIN.library[2]],
-  observatory: [
-    LANDMARK_ORIGIN.observatory[0],
-    LANDMARK_ORIGIN.observatory[1] + 5.6,
-    LANDMARK_ORIGIN.observatory[2]
-  ],
-  practice: [
-    LANDMARK_ORIGIN.practice[0],
-    LANDMARK_ORIGIN.practice[1] + 3.6,
-    LANDMARK_ORIGIN.practice[2]
-  ],
-  garden: [LANDMARK_ORIGIN.garden[0], LANDMARK_ORIGIN.garden[1] + 3.1, LANDMARK_ORIGIN.garden[2]]
-};

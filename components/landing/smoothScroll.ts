@@ -23,6 +23,8 @@ export type SmoothScrollController = {
 
 const INTERPOLATION = 0.09;
 const SETTLE_EPSILON = 0.5;
+/** Pixels per line, for the `deltaMode === 1` wheel events Firefox sends. */
+const WHEEL_LINE_HEIGHT = 16;
 
 export function createSmoothScroll(options: { disabled?: boolean } = {}): SmoothScrollController {
   if (typeof window === "undefined") {
@@ -38,11 +40,39 @@ export function createSmoothScroll(options: { disabled?: boolean } = {}): Smooth
   /** Set while the loop itself is writing scrollTop, to ignore our own event. */
   let programmatic = false;
 
-  const maxScroll = () =>
-    Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  /**
+   * Cached document height.
+   *
+   * `scrollHeight` forces a layout read, and a trackpad flick fires a wheel
+   * event on every frame. Measuring once per scrolling burst instead of once
+   * per event keeps the handler off the layout path; a resize, a programmatic
+   * scroll and the end of a burst all refresh it.
+   */
+  let maxScrollValue = 0;
+
+  const refreshMaxScroll = () => {
+    maxScrollValue = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    return maxScrollValue;
+  };
+
+  const maxScroll = () => (maxScrollValue > 0 ? maxScrollValue : refreshMaxScroll());
 
   const prefersReduced = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /**
+   * Wheel distance in pixels.
+   *
+   * Firefox reports wheel and trackpad deltas in *lines* (`deltaMode === 1`),
+   * not pixels. Adding the raw number to a pixel target made one notch worth
+   * about three pixels there — the page read as frozen. Chrome and Safari send
+   * pixels and pass through untouched.
+   */
+  const wheelPixels = (event: WheelEvent) => {
+    if (event.deltaMode === 1) return event.deltaY * WHEEL_LINE_HEIGHT;
+    if (event.deltaMode === 2) return event.deltaY * window.innerHeight;
+    return event.deltaY;
+  };
 
   /** True when the event target belongs to something that must scroll natively. */
   const isNativeTarget = (eventTarget: EventTarget | null) => {
@@ -82,7 +112,8 @@ export function createSmoothScroll(options: { disabled?: boolean } = {}): Smooth
 
     event.preventDefault();
 
-    target = clamp(target + event.deltaY, 0, maxScroll());
+    if (!frame) refreshMaxScroll();
+    target = clamp(target + wheelPixels(event), 0, maxScroll());
 
     if (!frame) frame = requestAnimationFrame(animate);
   };
@@ -96,6 +127,7 @@ export function createSmoothScroll(options: { disabled?: boolean } = {}): Smooth
   };
 
   const onResize = () => {
+    refreshMaxScroll();
     target = clamp(target, 0, maxScroll());
   };
 
@@ -107,6 +139,7 @@ export function createSmoothScroll(options: { disabled?: boolean } = {}): Smooth
     scrollTo(position: number) {
       if (disposed) return;
 
+      refreshMaxScroll();
       target = clamp(position, 0, maxScroll());
 
       if (prefersReduced() || options.disabled) {
