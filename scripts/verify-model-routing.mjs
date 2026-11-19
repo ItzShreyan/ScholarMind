@@ -263,8 +263,13 @@ section("Vision is a separate route");
 const vision = resolveChatModel("pro", "Read this diagram", true);
 check("an image request routes to vision, not the chosen tier", vision.tier === "vision");
 check(
-  "an image never routes to the text-only Pro model",
-  vision.modelId !== CHAT_MODELS.pro.id && vision.modelId !== CHAT_MODELS.flash.id,
+  "an image never routes to the text-only Flash model",
+  vision.modelId !== CHAT_MODELS.flash.id,
+  `got ${vision.modelId}`
+);
+check(
+  "vision routes natively to multimodal Nemotron Super VL",
+  vision.modelId === "nvidia/nemotron-3.5-super-vl:free",
   `got ${vision.modelId}`
 );
 check("vision works even when auto was chosen", resolveChatModel("auto", "hi", true).tier === "vision");

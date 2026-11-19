@@ -117,12 +117,12 @@ export const openrouterProviderV2: AIProvider = {
     const hasImages = Boolean(input.imageAttachments?.length);
     const isStudy = input.action !== "chat";
 
-    // For study tools, prioritize the fastest models:
-    // When text-only: Flash model (baidu/ernie-5.5-flash) -> Nemotron Super VL -> Flint
-    // When images present: Nemotron Super VL (multimodal, fast) -> Gemma -> Vision model
+    // Model candidates:
+    // When images are present: Nemotron Super VL natively handles multimodal vision first.
+    // When text-only: Flash model (baidu/ernie-5.5-flash) -> Nemotron Super VL -> Flint.
     const candidateModels: string[] = isStudy
       ? hasImages
-        ? ["nvidia/nemotron-3.5-super-vl:free", "google/gemma-4-26b-a4b-it:free", VISION_MODEL.id]
+        ? getModelChain("vision")
         : getModelChain("study")
       : hasImages
         ? getModelChain("vision")

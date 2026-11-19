@@ -112,20 +112,20 @@ const FLASH_MODEL: ModelSummary = {
 };
 
 /**
- * Vision — Nemotron 3 Nano Omni reads text, images, video and audio in one
- * multimodal pass. Only used when a request actually carries an image.
+ * Vision — Nemotron 3.5 Super VL reads text and images natively in one
+ * multimodal pass with 1.0M context.
  */
 const VISION_MODEL_SUMMARY: ModelSummary = {
   id: envModel(
     "OPENROUTER_VISION_MODEL",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
+    "nvidia/nemotron-3.5-super-vl:free"
   ),
   label: "Vision",
-  blurb: "Reads images, diagrams and screenshots",
-  spec: "Nemotron 3 Nano Omni · text, image, video, audio · 256k context",
-  contextLength: 256_000,
+  blurb: "Reads images, diagrams and screenshots natively",
+  spec: "Nemotron 3.5 Super VL · text + image multimodal · 1.0M context",
+  contextLength: 1_000_000,
   speed: 4,
-  depth: 3,
+  depth: 5,
   vision: true,
   thinking: true
 };
@@ -170,8 +170,8 @@ export const TIER_FALLBACKS: Record<ModelPurpose, string[]> = {
   ],
   vision: [
     VISION_MODEL_SUMMARY.id,
-    "nvidia/nemotron-3.5-super-vl:free",
-    "google/gemma-4-26b-a4b-it:free"
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
   ],
   study: [
     STUDY_MODEL_SUMMARY.id,

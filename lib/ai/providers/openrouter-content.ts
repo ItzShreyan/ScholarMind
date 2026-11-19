@@ -48,17 +48,15 @@ export function getOpenRouterModel(
 ): string {
   const hasImages = Boolean(imageAttachments?.length);
 
-  if (purpose === "study") {
-    // If image attachments are present, use the fast multimodal model so vision is supported;
-    // otherwise use the Flash model from AI chat for super quick generation.
-    if (hasImages) {
-      return "nvidia/nemotron-3.5-super-vl:free";
-    }
-    return CHAT_MODELS.flash.id;
-  }
-
+  // If images are present, Nemotron Super VL natively handles multimodal vision in both chat and study tools.
   if (hasImages) {
     return resolveChatModel("auto", "", true).modelId;
+  }
+
+  if (purpose === "study") {
+    // Study generation (notes, exams, quizzes, flashcards) uses the flash model
+    // from AI chat so tools generate super quick.
+    return CHAT_MODELS.flash.id;
   }
 
   return resolveChatModel(
