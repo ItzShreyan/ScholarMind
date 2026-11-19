@@ -87,6 +87,7 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
   const [isUploadingAudio, setIsUploadingAudio] = useState(false);
   const [isLocalPlaying, setIsLocalPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const playNextRef = useRef<() => void>(() => {});
   const uploadedTracksRef = useRef<UploadedTrack[]>([]);
 
   useEffect(() => {
@@ -311,9 +312,9 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
         audio.currentTime = 0;
         void audio.play();
       } else if (lMode === "all" && total > 0) {
-        playNextByRef();
+        playNextRef.current();
       } else if (idx < total - 1) {
-        playNextByRef();
+        playNextRef.current();
       } else {
         setIsLocalPlaying(false);
         setCurrentQueueIndex(-1);
@@ -406,6 +407,10 @@ export function DynamicIslandMusicPlayer({ scrollContainerRef: _scrollContainerR
       setUploadError("The audio file could not be played. Please try again.");
     });
   }, [uploadedTracks]);
+
+  useEffect(() => {
+    playNextRef.current = playNextByRef;
+  }, [playNextByRef]);
 
   const playPrev = useCallback(() => {
     const audio = audioRef.current;

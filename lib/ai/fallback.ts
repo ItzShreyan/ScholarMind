@@ -158,7 +158,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
     try {
       const result = await withTimeout(
         primary.generate(inputForProvider(input, primary)),
-        input.imageAttachments?.length ? 25000 : 10000,
+        input.imageAttachments?.length ? 25000 : 20000,
         primary.name
       );
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));
@@ -178,15 +178,15 @@ export async function generateWithFallback(rawInput: AIRequest) {
   const fallbackOrder =
     input.imageAttachments?.length
       ? [
-          providers.openrouter_v2,
-          providers.gemini,
-          providers.groq_v2,
-          providers.groq,
-          providers.together,
-          providers.huggingface
-        ]
+        providers.openrouter_v2,
+        providers.gemini,
+        providers.groq_v2,
+        providers.groq,
+        providers.together,
+        providers.huggingface
+      ]
       : strictRemote
-      ? [
+        ? [
           providers.openrouter_v2,
           providers.groq_v2,
           providers.groq,
@@ -194,17 +194,17 @@ export async function generateWithFallback(rawInput: AIRequest) {
           providers.together,
           providers.huggingface
         ]
-      : openrouterConfigured && openrouterFirstActions.has(String(input.action))
-      ? [providers.openrouter_v2, providers.local]
-      : [
-          providers.groq_v2,
-          providers.groq,
-          providers.gemini,
-          providers.openrouter_v2,
-          providers.together,
-          providers.huggingface,
-          providers.local
-        ];
+        : openrouterConfigured && openrouterFirstActions.has(String(input.action))
+          ? [providers.openrouter_v2, providers.local]
+          : [
+            providers.groq_v2,
+            providers.groq,
+            providers.gemini,
+            providers.openrouter_v2,
+            providers.together,
+            providers.huggingface,
+            providers.local
+          ];
 
   for (const provider of fallbackOrder) {
     if (!provider || provider.name === primary?.name) continue;
@@ -213,7 +213,7 @@ export async function generateWithFallback(rawInput: AIRequest) {
     try {
       const result = await withTimeout(
         provider.generate(inputForProvider(input, provider)),
-        input.imageAttachments?.length ? 25000 : 10000,
+        input.imageAttachments?.length ? 25000 : 20000,
         provider.name
       );
       const normalizedText = extractStructuredOutput(normalizeAIText(result.text));

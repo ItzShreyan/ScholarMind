@@ -93,8 +93,16 @@ export function parseSSEChunk(chunk: string): {
     try {
       const data = JSON.parse(payload);
       const delta = data?.choices?.[0]?.delta;
-      content += normalizeAIText(delta?.content);
-      reasoning += normalizeAIText(delta?.reasoning);
+      if (typeof delta?.content === "string") {
+        content += delta.content;
+      } else if (delta?.content) {
+        content += normalizeAIText(delta.content);
+      }
+      if (typeof delta?.reasoning === "string") {
+        reasoning += delta.reasoning;
+      } else if (delta?.reasoning) {
+        reasoning += normalizeAIText(delta.reasoning);
+      }
 
       // The server labels the answer on its first frame so the UI can name the
       // model that actually replied, including which tier Auto settled on.

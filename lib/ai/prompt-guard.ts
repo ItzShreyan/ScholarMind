@@ -8,7 +8,12 @@
 /** Allowlist of approved model identifiers. */
 const ALLOWED_MODELS = new Set([
   // OpenRouter free models
+  "nvidia/nemotron-3.5-super-vl:free",
   "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "baidu/ernie-5.5-flash-preview:free",
+  "nvidia/nemotron-3.5-lightning:free",
+  "google/gemma-4-31b-it:free",
+  "google/gemma-4-26b-a4b-it:free",
   "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
   "openai/gpt-oss-20b:free",
   // Gemini

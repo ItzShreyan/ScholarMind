@@ -47,12 +47,12 @@ function readDelta(payload: unknown): { content: string; reasoning: string } {
   const delta = choice?.delta;
   if (!delta) return { content: "", reasoning: "" };
 
-  const content = normalizeAIText(delta.content);
-  let reasoning = normalizeAIText(delta.reasoning);
+  const content = typeof delta.content === "string" ? delta.content : (normalizeAIText(delta.content) || "");
+  let reasoning = typeof delta.reasoning === "string" ? delta.reasoning : (normalizeAIText(delta.reasoning) || "");
 
   if (!reasoning && Array.isArray(delta.reasoning_details)) {
     reasoning = (delta.reasoning_details as Array<{ text?: unknown }>)
-      .map((detail) => normalizeAIText(detail?.text))
+      .map((detail) => (typeof detail?.text === "string" ? detail.text : normalizeAIText(detail?.text)))
       .filter(Boolean)
       .join("");
   }
