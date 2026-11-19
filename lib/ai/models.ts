@@ -80,18 +80,18 @@ function envModel(name: string, fallback: string): string {
  * ------------------------------------------------------------------------- */
 
 /**
- * Pro — Nemotron 3 Ultra: 550B MoE with 55B active, hybrid Transformer–Mamba,
- * built for frontier reasoning. Text only, 1M context.
+ * Pro — Nemotron 3.5 Super VL: 1M context, text + vision multimodal,
+ * built for frontier reasoning and visual comprehension.
  */
 const PRO_MODEL: ModelSummary = {
-  id: envModel("OPENROUTER_PRO_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free"),
+  id: envModel("OPENROUTER_PRO_MODEL", "nvidia/nemotron-3.5-super-vl:free"),
   label: "Pro",
-  blurb: "Heavier reasoning, deeper answers, slower",
-  spec: "Nemotron 3 Ultra · 550B MoE (55B active) · 1M context",
+  blurb: "Heavier reasoning, multimodal vision, deep answers",
+  spec: "Nemotron 3.5 Super VL · 1M context · text + image",
   contextLength: 1_000_000,
-  speed: 2,
+  speed: 4,
   depth: 5,
-  vision: false,
+  vision: true,
   thinking: true
 };
 
@@ -131,20 +131,19 @@ const VISION_MODEL_SUMMARY: ModelSummary = {
 };
 
 /**
- * Study — used by the JSON-returning study tools (quiz, flashcards, exam,
- * notes). Strong instruction following is the requirement here, not raw speed
- * or frontier reasoning.
+ * Study — uses the fast Flash model from AI chat for super quick generation
+ * of quizzes, flashcards, notes, study plans, and exam papers.
  */
 const STUDY_MODEL_SUMMARY: ModelSummary = {
-  id: envModel("OPENROUTER_STUDY_MODEL", "google/gemma-4-31b-it:free"),
+  id: envModel("OPENROUTER_STUDY_MODEL", "baidu/ernie-5.5-flash-preview:free"),
   label: "Study",
-  blurb: "Structured output for quizzes, flashcards and exam papers",
-  spec: "Gemma 4 31B Instruct · 262k context · structured output",
-  contextLength: 262_144,
-  speed: 3,
+  blurb: "Fast structured generation for quizzes, flashcards and study tools",
+  spec: "ERNIE 5.5 Flash · 1M context · tuned for speed",
+  contextLength: 1_024_000,
+  speed: 5,
   depth: 4,
-  vision: true,
-  thinking: true
+  vision: false,
+  thinking: false
 };
 
 /** User-facing tiers. `CHAT_MODELS.pro` / `.flash` are the only ones a student
@@ -161,10 +160,8 @@ export const VISION_MODEL: ModelSummary = VISION_MODEL_SUMMARY;
 export const TIER_FALLBACKS: Record<ModelPurpose, string[]> = {
   pro: [
     PRO_MODEL.id,
-    // 1M-context multimodal model; a genuine step down in reasoning depth, but
-    // a working model rather than a dead id.
-    "nvidia/nemotron-3.5-super-vl:free",
-    "google/gemma-4-31b-it:free"
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3.5-lightning:free"
   ],
   flash: [
     FLASH_MODEL.id,
@@ -176,7 +173,11 @@ export const TIER_FALLBACKS: Record<ModelPurpose, string[]> = {
     "nvidia/nemotron-3.5-super-vl:free",
     "google/gemma-4-26b-a4b-it:free"
   ],
-  study: [STUDY_MODEL_SUMMARY.id, "google/gemma-4-26b-a4b-it:free"]
+  study: [
+    STUDY_MODEL_SUMMARY.id,
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-lightning:free"
+  ]
 };
 
 /** The ordered, de-duplicated candidate list for a purpose. */

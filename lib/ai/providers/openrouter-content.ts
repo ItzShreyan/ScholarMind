@@ -53,9 +53,9 @@ export function getOpenRouterModel(
   }
 
   if (purpose === "study") {
-    // Study generation (notes, exams, quizzes, flashcards) is genuinely heavy
-    // work with structured output, so it always uses the stronger model.
-    return CHAT_MODELS.pro.id;
+    // Study generation (notes, exams, quizzes, flashcards) uses the flash model
+    // from AI chat so tools generate super quick.
+    return CHAT_MODELS.flash.id;
   }
 
   return resolveChatModel(

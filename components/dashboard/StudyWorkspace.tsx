@@ -20,7 +20,6 @@ import {
   Globe2,
   Highlighter,
   LoaderCircle,
-  Lock,
   Maximize2,
   MousePointer2,
   Music,
@@ -114,15 +113,12 @@ import type {
   ChatModelMeta,
   ChatThread,
   CopiedSourceClipboard,
-  ExamQuestion,
   FileItem,
   FlashcardItem,
-  OutputCard,
   PreviewState,
   QuizItem,
   QuizResult,
   RecentWebsite,
-  RevisionScheduleItem,
   Session,
   SourceSearchEngine,
   StudyMetrics,
@@ -137,9 +133,7 @@ import {
   cleanGeneratedText,
   clipText,
   normalizeAIResponseText,
-  normalizeAIText,
   normalizeErrorMessage,
-  normalizeLine,
   sanitizeDisplayText,
   summarizeGeneratedOutput
 } from "@/lib/studio/text";
@@ -151,7 +145,6 @@ import {
   isTutorSmallTalk
 } from "@/lib/studio/intent";
 import {
-  cleanCardText,
   normalizeFlashcards,
   normalizeQuizItems,
   parseFlashcardsFallback,
@@ -159,7 +152,7 @@ import {
   parseQuizFallback
 } from "@/lib/studio/quiz";
 import { buildToolPrompt, createToolDraft, looksRichOutput, trustBadgeTone } from "@/lib/studio/tools";
-import { parseExamQuestions, parseMarkdownTableRows, parseRevisionSchedule } from "@/lib/studio/schedule";
+import { parseExamQuestions, parseRevisionSchedule } from "@/lib/studio/schedule";
 
 const desktopLeftPanelDefault = 360;
 const desktopRightPanelDefault = 520;
@@ -276,10 +269,14 @@ export function StudyWorkspace({
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const chatAtBottomRef = useRef(true);
   const [isDesktopViewport, setIsDesktopViewport] = useState(false);
-  const autoSwitchTab = useCallback((next: "files" | "chat" | "tools") => {
-    if (!isDesktopViewport) return;
-    setTab(next);
+  const isDesktopViewportRef = useRef(false);
+  useEffect(() => {
+    isDesktopViewportRef.current = isDesktopViewport;
   }, [isDesktopViewport]);
+  const autoSwitchTab = useCallback((next: "files" | "chat" | "tools") => {
+    if (!isDesktopViewportRef.current) return;
+    setTab(next);
+  }, []);
   const [workspaceTab, setWorkspaceTab] = useState("home");
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceDynamicTab[]>([]);
   const [browseReloadKeys, setBrowseReloadKeys] = useState<Record<string, number>>({});
@@ -1259,7 +1256,7 @@ export function StudyWorkspace({
     } else {
       autoSwitchTab("chat");
     }
-  }, []);
+  }, [autoSwitchTab]);
 
   const recordRecentWebsite = useCallback(
     (url: string, label: string) => {
@@ -1345,7 +1342,7 @@ export function StudyWorkspace({
     setShowChatThreads(false);
     autoSwitchTab("tools");
     setStatusNote(`Restored chat: ${thread.title}`);
-  }, [snapshotCurrentChat]);
+  }, [snapshotCurrentChat, autoSwitchTab]);
 
   const deleteChatThread = useCallback((threadId: string) => {
     if (!activeSessionId) return;
@@ -1401,7 +1398,7 @@ export function StudyWorkspace({
       );
       setStatusNote(`${message} Please try again.`);
     },
-    [upsertWorkspaceTab]
+    [upsertWorkspaceTab, autoSwitchTab]
   );
 
   const openFileInWorkspaceTab = useCallback(
@@ -1509,7 +1506,7 @@ export function StudyWorkspace({
           : current
       );
     },
-    [activeCanvasStroke, canvasTool, eraseStrokesNear, getCanvasPointerPoint]
+    [activeCanvasStroke, canvasTool, getCanvasPointerPoint]
   );
 
   const finishCanvasStroke = useCallback(() => {
@@ -1845,7 +1842,7 @@ export function StudyWorkspace({
     return () => {
       ignore = true;
     };
-  }, [activeSessionId, hasCurrentFiles]);
+  }, [activeSessionId, hasCurrentFiles, reportError]);
 
   useEffect(() => {
     if (!activeSessionId || hasCurrentToolHistory) return;
@@ -2177,7 +2174,29 @@ export function StudyWorkspace({
       output: result.output,
       closable: true
     });
-  }, [upsertWorkspaceTab]);
+  }, [upsertWorkspaceTab, autoSwitchTab]);
+
+  const deleteSavedToolResult = useCallback(
+    async (item: ToolHistoryItem, event?: React.MouseEvent) => {
+      event?.stopPropagation();
+      if (!activeSessionId) return;
+
+      setToolHistoryBySession((current) => ({
+        ...current,
+        [activeSessionId]: (current[activeSessionId] ?? []).filter((entry) => entry.id !== item.id)
+      }));
+
+      try {
+        await fetch(
+          `/api/tool-results?id=${encodeURIComponent(item.id)}&sessionId=${encodeURIComponent(activeSessionId)}`,
+          { method: "DELETE" }
+        );
+      } catch (err) {
+        console.error("Failed to delete tool result:", err);
+      }
+    },
+    [activeSessionId]
+  );
 
   const toolResultCount =
     activeAction === "quiz"
@@ -2698,10 +2717,12 @@ export function StudyWorkspace({
       setImportingSourceId(null);
     }
   };
+  const importWebSourceRef = useRef<(source: WebSourceItem) => Promise<void>>(importWebSource);
+  importWebSourceRef.current = importWebSource;
 
   const saveBrowseAsNote = useCallback(
     async (url: string, label: string) => {
-      await importWebSource({
+      await importWebSourceRef.current({
         id: `browse-save-${Date.now()}`,
         title: label || url,
         url,
@@ -2710,7 +2731,7 @@ export function StudyWorkspace({
         trustLabel: "Web"
       });
     },
-    [importWebSource]
+    []
   );
 
   const copySourcesFromStudio = (sourceSessionId: string, sourceStudioTitle: string) => {
@@ -2941,10 +2962,10 @@ export function StudyWorkspace({
           ? normalizeErrorMessage(json.error, "No response")
           : "The AI took too long to respond. Try again — the first provider attempt is usually faster.";
         if (json?.usage) {
-          setToolUsage({
+          setToolUsage((current) => ({
             used: typeof json.usage.dailyUsed === "number" ? json.usage.dailyUsed : typeof json.usage.used === "number" ? json.usage.used : 0,
-            limit: typeof json.usage.dailyLimit === "number" ? json.usage.dailyLimit : typeof json.usage.limit === "number" ? json.usage.limit : toolUsage.limit
-          });
+            limit: typeof json.usage.dailyLimit === "number" ? json.usage.dailyLimit : typeof json.usage.limit === "number" ? json.usage.limit : current.limit
+          }));
         }
         throw new Error(errorMessage);
       }
@@ -2983,10 +3004,10 @@ export function StudyWorkspace({
         }
       }));
       if (json?.usage) {
-        setToolUsage({
-          used: typeof json.usage.dailyUsed === "number" ? json.usage.dailyUsed : typeof json.usage.used === "number" ? json.usage.used : toolUsage.used,
-          limit: typeof json.usage.dailyLimit === "number" ? json.usage.dailyLimit : typeof json.usage.limit === "number" ? json.usage.limit : toolUsage.limit
-        });
+        setToolUsage((current) => ({
+          used: typeof json.usage.dailyUsed === "number" ? json.usage.dailyUsed : typeof json.usage.used === "number" ? json.usage.used : current.used,
+          limit: typeof json.usage.dailyLimit === "number" ? json.usage.dailyLimit : typeof json.usage.limit === "number" ? json.usage.limit : current.limit
+        }));
       }
       const remainingUsage =
         typeof json.usage?.dailyRemaining === "number"
@@ -3012,7 +3033,7 @@ export function StudyWorkspace({
     } finally {
       setLoading(false);
     }
-  }, [activeSessionId, buildContextForPrompt, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.examMode, toolDraft.focus, upsertWorkspaceTab, updateMetrics]);
+  }, [activeSessionId, autoSwitchTab, buildContextForPrompt, reportError, saveToolResult, sourceEnabledCount, toolDraft.action, toolDraft.examMode, toolDraft.focus, upsertWorkspaceTab, updateMetrics]);
 
   const applyCanvasAssist = useCallback(
     (question: string) => {
@@ -3046,7 +3067,7 @@ export function StudyWorkspace({
       );
       return true;
     },
-    [addCanvasAnnotation, workspaceTab, workspaceTabs]
+    [addCanvasAnnotation, autoSwitchTab, workspaceTab, workspaceTabs]
   );
 
   const executeWorkspaceNavigation = useCallback(
@@ -3113,7 +3134,7 @@ export function StudyWorkspace({
 
       return false;
     },
-    [currentFiles, currentToolHistory, openBrowseInWorkspace, openFileInWorkspaceTab, openSavedToolResult, workspaceTabs]
+    [autoSwitchTab, currentFiles, currentToolHistory, openBrowseInWorkspace, openFileInWorkspaceTab, openSavedToolResult, workspaceTabs]
   );
 
   const submitChatQuestion = useCallback(async (questionInput: string) => {
@@ -3401,12 +3422,15 @@ ${visualScreenContext}` : ""
           }
         }
 
-        const safeAccumulated = sanitizeDisplayText(accumulated, "");
         setMessages((current) => {
           const next = [...current];
           const lastIndex = next.length - 1;
           if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
-            next[lastIndex] = { ...next[lastIndex], content: safeAccumulated, reasoning: sanitizeDisplayText(accumulatedReasoning, "") || next[lastIndex].reasoning };
+            next[lastIndex] = {
+              ...next[lastIndex],
+              content: accumulated,
+              reasoning: accumulatedReasoning || next[lastIndex].reasoning
+            };
           }
           return next;
         });
@@ -3425,8 +3449,8 @@ ${visualScreenContext}` : ""
         if (lastIndex >= 0 && next[lastIndex]?.role === "ai") {
           next[lastIndex] = {
             ...next[lastIndex],
-            content: sanitizeDisplayText(accumulated, "") || next[lastIndex].content,
-            reasoning: sanitizeDisplayText(accumulatedReasoning, "") || next[lastIndex].reasoning,
+            content: accumulated.trim() || next[lastIndex].content,
+            reasoning: accumulatedReasoning || next[lastIndex].reasoning,
             meta: streamMeta ?? next[lastIndex].meta,
             completedAt: Date.now()
           };
@@ -3464,7 +3488,7 @@ ${visualScreenContext}` : ""
       setScreenAwarePulse(false);
     }
     return true;
-  }, [activeSessionId, applyCanvasAssist, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, learningMode, loading, messages, modelChoice, onboarding, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes]);
+  }, [activeSessionId, applyCanvasAssist, autoSwitchTab, buildScreenContext, chatLoading, currentMetrics, currentSession?.title, executeWorkspaceNavigation, learningMode, loading, messages, modelChoice, onboarding, reportError, requestVisibleWorkspaceDescription, runAI, shouldDescribeVisibleWorkspace, sourceEnabledCount, sourceEnabledFiles, startStudyTimer, timerMinutes, webSearchMode]);
 
   const sendChat = async () => {
     const question = chat.trim();
@@ -3558,7 +3582,7 @@ ${visualScreenContext}` : ""
     return () => {
       ignore = true;
     };
-  }, [activeSessionId, hasCurrentFiles, pathname, router, searchParams, sourceEnabledCount, submitChatQuestion]);
+  }, [activeSessionId, autoSwitchTab, hasCurrentFiles, pathname, router, searchParams, sourceEnabledCount, submitChatQuestion]);
 
   const createReminder = async () => {
     if (!sourceEnabledCount) {
@@ -5795,7 +5819,7 @@ ${visualScreenContext}` : ""
                       role={message.role}
                       content={
                         message.role === "ai"
-                          ? sanitizeDisplayText(message.content, "Unable to generate that reply.")
+                          ? (message.content || (message.completedAt ? "Unable to generate that reply." : ""))
                           : message.content
                       }
                       reasoning={message.reasoning || ""}
@@ -6052,11 +6076,18 @@ ${visualScreenContext}` : ""
               <div className="hide-scrollbar max-h-[16rem] space-y-2 overflow-auto pr-1">
                 {currentToolHistory.length ? (
                   currentToolHistory.map((item) => (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openSavedToolResult(item)}
-                      className="w-full rounded-[22px] bg-white/12 p-3 text-left transition hover:bg-white/18"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openSavedToolResult(item);
+                        }
+                      }}
+                      className="group/saved relative w-full cursor-pointer rounded-[22px] bg-white/12 p-3 text-left transition hover:bg-white/18"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -6065,12 +6096,22 @@ ${visualScreenContext}` : ""
                             {new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </p>
                         </div>
-                        <div className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]">
-                          {item.label}
+                        <div className="flex items-center gap-1.5">
+                          <div className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]">
+                            {item.label}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => void deleteSavedToolResult(item, e)}
+                            aria-label={`Delete ${item.title}`}
+                            className="rounded-full p-1 text-[var(--text-3)] opacity-0 transition hover:bg-white/10 hover:text-[var(--accent-coral)] group-hover/saved:opacity-100 focus:opacity-100"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
                         </div>
                       </div>
                       <p className="muted mt-2 line-clamp-3 text-xs">{item.preview}</p>
-                    </button>
+                    </div>
                   ))
                 ) : (
                   <div className="rounded-[22px] bg-white/10 px-4 py-4 text-sm">

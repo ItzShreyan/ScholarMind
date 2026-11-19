@@ -75,7 +75,7 @@ function readCodeClassName(children: React.ReactNode): string | undefined {
 function MarkdownBody({
   markdown,
   components,
-  depth
+  depth: _depth
 }: {
   markdown: string;
   components: Components;

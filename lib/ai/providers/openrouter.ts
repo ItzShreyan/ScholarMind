@@ -24,7 +24,7 @@ export const openRouterProvider: AIProvider = {
             model:
               process.env.OPENROUTER_CHAT_MODEL ||
               process.env.OPENROUTER_MODEL ||
-              "nvidia/nemotron-3-ultra-550b-a55b:free",
+              "nvidia/nemotron-3.5-super-vl:free",
             messages: [{ role: "user", content: buildPrompt(input) }],
             temperature: 0.4,
             max_tokens: 1200,

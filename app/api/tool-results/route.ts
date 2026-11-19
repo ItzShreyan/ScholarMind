@@ -125,3 +125,40 @@ export async function POST(req: Request) {
     );
   }
 }
+
+export async function DELETE(req: Request) {
+  try {
+    const supabase = await createClient();
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+    const sessionId = searchParams.get("sessionId");
+
+    if (!id || !sessionId) {
+      return NextResponse.json({ error: "Missing id or sessionId parameter" }, { status: 400 });
+    }
+
+    const { error } = await supabase
+      .from("study_tool_results")
+      .delete()
+      .eq("id", id)
+      .eq("session_id", sessionId)
+      .eq("user_id", user.id);
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: formatSupabaseSetupError((error as Error).message || "Unable to delete tool result.") },
+      { status: 400 }
+    );
+  }
+}
