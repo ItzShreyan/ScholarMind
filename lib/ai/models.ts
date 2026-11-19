@@ -165,8 +165,8 @@ export const TIER_FALLBACKS: Record<ModelPurpose, string[]> = {
   ],
   flash: [
     FLASH_MODEL.id,
-    "google/gemma-4-26b-a4b-it:free",
-    "nvidia/nemotron-3.5-lightning:free"
+    "nvidia/nemotron-3.5-super-vl:free",
+    "recursive/flint-v1.0:free"
   ],
   vision: [
     VISION_MODEL_SUMMARY.id,
@@ -175,8 +175,8 @@ export const TIER_FALLBACKS: Record<ModelPurpose, string[]> = {
   ],
   study: [
     STUDY_MODEL_SUMMARY.id,
-    "google/gemma-4-26b-a4b-it:free",
-    "nvidia/nemotron-3.5-lightning:free"
+    "nvidia/nemotron-3.5-super-vl:free",
+    "recursive/flint-v1.0:free"
   ]
 };
 
