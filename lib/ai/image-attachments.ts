@@ -57,55 +57,68 @@ export async function loadVisionAttachments(
   const attachments: AIImageAttachment[] = [];
   const warnings: string[] = [];
 
-  for (const file of sources) {
-    const mimeType = inferFileMimeType(file.file_name, file.file_type || undefined);
-    if (!supportedVisionMimeTypes.has(mimeType)) {
-      warnings.push(`${file.file_name} is stored, but its image format is not supported for visual analysis yet.`);
-      continue;
-    }
-
-    try {
-      const { data: blob, error: downloadError } = await supabase.storage
-        .from("study-files")
-        .download(file.storage_path!);
-
-      if (downloadError || !blob) {
-        throw new Error(downloadError?.message || "Storage did not return the image.");
-      }
-      if (blob.size > MAX_IMAGE_BYTES) {
-        warnings.push(`${file.file_name} is too large for direct visual analysis and was skipped.`);
-        continue;
+  const results = await Promise.all(
+    sources.map(async (file) => {
+      const mimeType = inferFileMimeType(file.file_name, file.file_type || undefined);
+      if (!supportedVisionMimeTypes.has(mimeType)) {
+        return {
+          warning: `${file.file_name} is stored, but its image format is not supported for visual analysis yet.`
+        };
       }
 
-      const data = Buffer.from(await blob.arrayBuffer()).toString("base64");
-      const persistedMimeType = blob.type.split(";", 1)[0].trim().toLowerCase();
-      if (persistedMimeType && persistedMimeType !== mimeType) {
-        console.warn("vision_attachment_mime_mismatch", {
+      try {
+        const { data: blob, error: downloadError } = await supabase.storage
+          .from("study-files")
+          .download(file.storage_path!);
+
+        if (downloadError || !blob) {
+          throw new Error(downloadError?.message || "Storage did not return the image.");
+        }
+        if (blob.size > MAX_IMAGE_BYTES) {
+          return {
+            warning: `${file.file_name} is too large for direct visual analysis and was skipped.`
+          };
+        }
+
+        const data = Buffer.from(await blob.arrayBuffer()).toString("base64");
+        const persistedMimeType = blob.type.split(";", 1)[0].trim().toLowerCase();
+        if (persistedMimeType && persistedMimeType !== mimeType) {
+          console.warn("vision_attachment_mime_mismatch", {
+            sessionId,
+            userId,
+            fileName: file.file_name,
+            databaseMimeType: mimeType,
+            storageMimeType: persistedMimeType
+          });
+        }
+        console.info("vision_attachment_loaded", {
           sessionId,
           userId,
           fileName: file.file_name,
-          databaseMimeType: mimeType,
-          storageMimeType: persistedMimeType
+          mimeType,
+          storageMimeType: persistedMimeType || null,
+          size: blob.size
         });
+        return {
+          attachment: { name: file.file_name, mimeType, data }
+        };
+      } catch (error) {
+        console.error("vision_attachment_load_failed", {
+          sessionId,
+          userId,
+          fileName: file.file_name,
+          message: error instanceof Error ? error.message : "Unknown storage download error"
+        });
+        return {
+          warning: `${file.file_name} could not be added for visual analysis.`
+        };
       }
-      console.info("vision_attachment_loaded", {
-        sessionId,
-        userId,
-        fileName: file.file_name,
-        mimeType,
-        storageMimeType: persistedMimeType || null,
-        size: blob.size
-      });
-      attachments.push({ name: file.file_name, mimeType, data });
-    } catch (error) {
-      console.error("vision_attachment_load_failed", {
-        sessionId,
-        userId,
-        fileName: file.file_name,
-        message: error instanceof Error ? error.message : "Unknown storage download error"
-      });
-      warnings.push(`${file.file_name} could not be added for visual analysis.`);
-    }
+    })
+  );
+
+  for (const res of results) {
+    if (res.attachment) attachments.push(res.attachment);
+    if (res.warning) warnings.push(res.warning);
   }
 
   return { attachments, warnings };

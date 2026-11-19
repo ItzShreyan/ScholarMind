@@ -48,6 +48,7 @@ export function getOpenRouterModel(
 ): string {
   const hasImages = Boolean(imageAttachments?.length);
 
+  // If images are present, Nemotron Super VL natively handles multimodal vision in both chat and study tools.
   if (hasImages) {
     return resolveChatModel("auto", "", true).modelId;
   }
