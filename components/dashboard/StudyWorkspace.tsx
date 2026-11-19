@@ -2176,6 +2176,28 @@ export function StudyWorkspace({
     });
   }, [upsertWorkspaceTab, autoSwitchTab]);
 
+  const deleteSavedToolResult = useCallback(
+    async (item: ToolHistoryItem, event?: React.MouseEvent) => {
+      event?.stopPropagation();
+      if (!activeSessionId) return;
+
+      setToolHistoryBySession((current) => ({
+        ...current,
+        [activeSessionId]: (current[activeSessionId] ?? []).filter((entry) => entry.id !== item.id)
+      }));
+
+      try {
+        await fetch(
+          `/api/tool-results?id=${encodeURIComponent(item.id)}&sessionId=${encodeURIComponent(activeSessionId)}`,
+          { method: "DELETE" }
+        );
+      } catch (err) {
+        console.error("Failed to delete tool result:", err);
+      }
+    },
+    [activeSessionId]
+  );
+
   const toolResultCount =
     activeAction === "quiz"
       ? parsedQuiz?.length ?? 0
@@ -6054,11 +6076,18 @@ ${visualScreenContext}` : ""
               <div className="hide-scrollbar max-h-[16rem] space-y-2 overflow-auto pr-1">
                 {currentToolHistory.length ? (
                   currentToolHistory.map((item) => (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openSavedToolResult(item)}
-                      className="w-full rounded-[22px] bg-white/12 p-3 text-left transition hover:bg-white/18"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openSavedToolResult(item);
+                        }
+                      }}
+                      className="group/saved relative w-full cursor-pointer rounded-[22px] bg-white/12 p-3 text-left transition hover:bg-white/18"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -6067,12 +6096,22 @@ ${visualScreenContext}` : ""
                             {new Date(item.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </p>
                         </div>
-                        <div className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]">
-                          {item.label}
+                        <div className="flex items-center gap-1.5">
+                          <div className="rounded-full bg-white/10 px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em]">
+                            {item.label}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => void deleteSavedToolResult(item, e)}
+                            aria-label={`Delete ${item.title}`}
+                            className="rounded-full p-1 text-[var(--text-3)] opacity-0 transition hover:bg-white/10 hover:text-[var(--accent-coral)] group-hover/saved:opacity-100 focus:opacity-100"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
                         </div>
                       </div>
                       <p className="muted mt-2 line-clamp-3 text-xs">{item.preview}</p>
-                    </button>
+                    </div>
                   ))
                 ) : (
                   <div className="rounded-[22px] bg-white/10 px-4 py-4 text-sm">

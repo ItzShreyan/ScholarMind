@@ -13,6 +13,10 @@ export function formatSupabaseSetupError(message: string) {
     return "Reminder storage is not set up in Supabase yet. Run supabase/schema.sql in the Supabase SQL Editor to enable reminders.";
   }
 
+  if (normalized.includes("study_tool_results")) {
+    return "Saved tool outputs are not set up in Supabase yet. Run supabase/schema.sql in the Supabase SQL Editor to enable saved study outputs.";
+  }
+
   if (
     normalized.includes("bucket") ||
     normalized.includes("storage.objects") ||
